@@ -453,6 +453,15 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
         &format!("({left_reply}, {right_reply})"),
         rule.is_async,
     );
+    let dispatch = if rule.is_async {
+        format!(
+            "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{\n{left_unpack}\n{right_unpack}\nlet __join_result = {reaction};\nasync move {{ match __join_result.await {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }} }}\n}})"
+        )
+    } else {
+        format!(
+            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{\n{left_unpack}\n{right_unpack}\nlet __join_result = {reaction};\nmatch __join_result {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }}\n}})"
+        )
+    };
     Ok(format!(
         r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::PairMatcher<{left_type}, {right_type}, {left_reply}, {right_reply}>,
@@ -481,15 +490,7 @@ impl {impl_generics}Clone for {impl_name} {{
     fn __join_dispatch_once(&self) -> bool
 {scope_bounds}{{
         let __join_endpoint = self.clone();
-        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{
-            {left_unpack}
-            {right_unpack}
-            let __join_result = {reaction};
-            match __join_result {{
-                Ok((left, right)) => (Ok(left), Ok(right)),
-                Err(error) => (Err(error.clone()), Err(error)),
-            }}
-        }})
+        {dispatch}
     }}
 }}
 "#,
@@ -506,11 +507,7 @@ impl {impl_generics}Clone for {impl_name} {{
         scope_bounds = scope_bounds,
         left_method = left_method,
         right_method = right_method,
-        left_binding = left_binding,
-        right_binding = right_binding,
-        left_unpack = left_unpack,
-        right_unpack = right_unpack,
-        reaction = reaction,
+        dispatch = dispatch,
     ))
 }
 
@@ -550,6 +547,15 @@ fn generate_unary_endpoint(
     };
     let result = if channel.reply.is_some() { expression.to_string() } else { "()".into() };
     let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
+    let dispatch = if rule.is_async {
+        format!(
+            "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
+        )
+    } else {
+        format!(
+            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
+        )
+    };
     Ok(format!(
 r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::UnaryMatcher<{input_type}, {output_type}>,
@@ -576,10 +582,7 @@ impl {impl_generics}Clone for {impl_name} {{
     fn __join_dispatch_once(&self) -> bool
 {scope_bounds}{{
         let __join_endpoint = self.clone();
-        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{
-            {unpack}
-            {reaction}
-        }})
+        {dispatch}
     }}
 }}
 "#,
@@ -593,17 +596,15 @@ impl {impl_generics}Clone for {impl_name} {{
         output_type = output_type,
         scope_bounds = scope_bounds,
         method = method,
-        binding = binding,
-        unpack = unpack,
-        reaction = reaction,
+        dispatch = dispatch,
     ))
 }
 
 /// Build the result-producing part of a reaction. Synchronous rules use the
 /// explicit `Result` closure that the first compiler slice has always used.
-/// `async when` rules instead let Rust lower an ordinary async block and run
-/// it to completion through the runtime's Future-compatible bridge. The
-/// matcher has already released its queue lock before invoking either form.
+/// `async when` rules instead let Rust lower an ordinary async block. The
+/// matcher has already released its queue lock before handing that future to
+/// the runtime executor. The synchronous form remains a direct Result closure.
 fn reaction_result_body(
     aliases: &str,
     prefix: &str,
@@ -613,7 +614,7 @@ fn reaction_result_body(
 ) -> String {
     if is_async {
         format!(
-            "::joins_runtime::block_on(async {{\n{aliases}{prefix}\nOk::<{result_type}, ::joins_runtime::JoinError>({value})\n}})"
+            "async move {{\n{aliases}{prefix}\nOk::<{result_type}, ::joins_runtime::JoinError>({value})\n}}"
         )
     } else {
         format!(

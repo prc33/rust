@@ -71,6 +71,14 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
     {
         false
     }
+
+    pub fn __join_dispatch_future_at<F, Fut>(&self, _source: SourceLocation, _body: F) -> bool
+    where
+        F: FnOnce(L, R) -> Fut,
+        Fut: std::future::Future<Output = (Result<LO, JoinError>, Result<RO, JoinError>)>,
+    {
+        false
+    }
 }
 
 join impl Native {
