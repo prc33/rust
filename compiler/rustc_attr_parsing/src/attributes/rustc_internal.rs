@@ -136,6 +136,88 @@ impl NoArgsAttributeParser for RustcNoImplicitAutorefsParser {
 
 pub(crate) struct RustcLegacyConstGenericsParser;
 
+/// Parses the marker emitted by the experimental `join impl` builtin
+/// expansion. The marker carries only syntax-level shape. The compiler join
+/// query recovers channel method `DefId`s and resolved types from HIR and type
+/// checking, so this attribute is not a second semantic representation.
+pub(crate) struct RustcJoinEndpointParser;
+
+impl SingleAttributeParser for RustcJoinEndpointParser {
+    const PATH: &[Symbol] = &[sym::rustc_join_endpoint];
+    const ALLOWED_TARGETS: AllowedTargets<'_> =
+        AllowedTargets::AllowList(&[Allow(Target::Impl { of_trait: false })]);
+    const TEMPLATE: AttributeTemplate =
+        template!(List: &["channels = N, rules = N, arity = N, async_rule = 0|1"]);
+    const STABILITY: AttributeStability = unstable!(rustc_attrs);
+
+    fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
+        let list = cx.expect_list(args, cx.attr_span)?;
+        let mut channels = None;
+        let mut rules = None;
+        let mut arity = None;
+        let mut async_rule = None;
+        let mut errored = false;
+
+        for item in list.mixed() {
+            let Some((ident, value)) = cx.expect_name_value(item, item.span(), None) else {
+                errored = true;
+                continue;
+            };
+            let slot = match ident.name {
+                sym::channels => &mut channels,
+                sym::rules => &mut rules,
+                sym::arity => &mut arity,
+                sym::async_rule => &mut async_rule,
+                _ => {
+                    cx.adcx().expected_specific_argument(
+                        ident.span,
+                        &[sym::channels, sym::rules, sym::arity, sym::async_rule],
+                    );
+                    errored = true;
+                    continue;
+                }
+            };
+            *slot = parse_join_endpoint_u32(cx, value).map(|value| {
+                if ident.name == sym::async_rule { u32::from(value != 0) } else { value }
+            });
+        }
+
+        if errored {
+            return None;
+        }
+
+        let Some((channels, rules, arity, async_rule)) =
+            channels.zip(rules).zip(arity).zip(async_rule).map(
+                |(((channels, rules), arity), async_rule)| {
+                    (channels, rules, arity, async_rule != 0)
+                },
+            )
+        else {
+            let attr_span = cx.attr_span;
+            cx.adcx().expected_specific_argument(
+                attr_span,
+                &[sym::channels, sym::rules, sym::arity, sym::async_rule],
+            );
+            return None;
+        };
+
+        Some(AttributeKind::RustcJoinEndpoint { channels, rules, arity, async_rule })
+    }
+}
+
+fn parse_join_endpoint_u32(cx: &mut AcceptContext<'_, '_>, value: &NameValueParser) -> Option<u32> {
+    let literal = value.value_as_lit();
+    let MetaItemLit { kind: LitKind::Int(number, _), .. } = literal else {
+        cx.adcx().expected_integer_literal(value.value_span);
+        return None;
+    };
+    let Ok(number) = u32::try_from(number.0) else {
+        cx.adcx().expected_integer_literal(value.value_span);
+        return None;
+    };
+    Some(number)
+}
+
 impl SingleAttributeParser for RustcLegacyConstGenericsParser {
     const PATH: &[Symbol] = &[sym::rustc_legacy_const_generics];
     const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[Allow(Target::Fn)]);

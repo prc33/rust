@@ -106,14 +106,4 @@ fn main() {
     let _left = endpoint.left(1);
     let _right = endpoint.right(2);
 
-    // The hidden metadata seam is intentionally private to the generated
-    // endpoint. It gives compiler fixtures and `-Zunpretty` an inspectable
-    // syntax-level descriptor while the join lowering remains a built-in
-    // macro (not yet a resolved HIR representation).
-    assert!(Native::__JOIN_METADATA.contains("channel[0] left(value: u32) -> u32"));
-    assert!(Native::__JOIN_METADATA.contains("channel[1] right(value: u32) -> u32"));
-    assert!(Native::__JOIN_METADATA.contains("rule[0] sync"));
-    assert!(Native::__JOIN_METADATA.contains("pattern[0]=channel#0 left"));
-    assert!(Native::__JOIN_METADATA.contains("pattern[1]=channel#1 right"));
-    assert!(AsyncNative::__JOIN_METADATA.contains("rule[0] async"));
 }

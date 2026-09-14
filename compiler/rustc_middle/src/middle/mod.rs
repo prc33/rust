@@ -4,6 +4,7 @@ pub mod debugger_visualizer;
 pub mod deduced_param_attrs;
 pub mod dependency_format;
 pub mod exported_symbols;
+pub mod joins;
 pub mod lang_items;
 pub mod lib_features {
     use rustc_data_structures::unord::UnordMap;

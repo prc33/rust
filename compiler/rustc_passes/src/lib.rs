@@ -25,6 +25,7 @@ pub mod entry;
 mod fake_doc_items;
 pub mod hir_id_validator;
 pub mod input_stats;
+mod joins;
 mod lang_items;
 pub mod layout_test;
 mod lib_features;
@@ -41,6 +42,7 @@ pub fn provide(providers: &mut Providers) {
     diagnostic_items::provide(providers);
     entry::provide(providers);
     lang_items::provide(providers);
+    joins::provide(providers);
     lib_features::provide(providers);
     reachable::provide(providers);
     stability::provide(providers);

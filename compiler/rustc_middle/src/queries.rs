@@ -85,6 +85,7 @@ use crate::middle::dead_code::DeadCodeLivenessSummary;
 use crate::middle::debugger_visualizer::DebuggerVisualizerFile;
 use crate::middle::deduced_param_attrs::DeducedParamAttrs;
 use crate::middle::exported_symbols::{ExportedSymbol, SymbolExportInfo};
+use crate::middle::joins::JoinDefinitions;
 use crate::middle::lib_features::LibFeatures;
 use crate::middle::privacy::EffectiveVisibilities;
 use crate::middle::resolve::{
@@ -248,6 +249,16 @@ rustc_queries! {
         arena_cache
         eval_always
         desc { "getting HIR crate items" }
+    }
+
+    /// Discover the compiler-owned join endpoint descriptors emitted by the
+    /// experimental `join impl` builtin expansion. The provider resolves
+    /// channel method identities and function signatures from HIR/typeck;
+    /// callers must not treat the frontend marker as semantic metadata.
+    query join_definitions(_: ()) -> &'tcx JoinDefinitions<'tcx> {
+        arena_cache
+        eval_always
+        desc { "collecting expanded join endpoint definitions" }
     }
 
     /// The items in a module.

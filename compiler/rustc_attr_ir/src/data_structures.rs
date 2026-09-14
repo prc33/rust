@@ -1296,6 +1296,19 @@ pub enum AttributeKind {
     /// Represents `#[rustc_intrinsic_const_stable_indirect]`
     RustcIntrinsicConstStableIndirect,
 
+    /// Represents the compiler-generated join endpoint contract.
+    ///
+    /// This marker is emitted by the `join impl` builtin expansion and is
+    /// consumed by the compiler-owned join descriptor query. It deliberately
+    /// contains only the shape known before type checking; channel method
+    /// identities and resolved types are recovered from HIR and typing.
+    RustcJoinEndpoint {
+        channels: u32,
+        rules: u32,
+        arity: u32,
+        async_rule: bool,
+    },
+
     /// Represents `#[rustc_legacy_const_generics]`
     RustcLegacyConstGenerics {
         fn_indexes: ThinVec<(usize, Span)>,

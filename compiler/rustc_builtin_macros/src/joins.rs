@@ -414,7 +414,7 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
 
     let prefix =
         rewrite_early_return_maps(definition, &resolved, &prefix, EarlyReturnMode::UnaryOrPair, 0)?;
-    let metadata = join_metadata(definition);
+    let endpoint_attribute = join_endpoint_attribute(definition);
 
     if channels.len() == 1 {
         return generate_unary_endpoint(
@@ -424,7 +424,7 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
             &aliases,
             &prefix,
             &replies,
-            &metadata,
+            &endpoint_attribute,
         );
     }
 
@@ -482,9 +482,8 @@ impl {impl_generics}Clone for {impl_name} {{
     }}
 }}
 
-{impl_attributes}impl {impl_generics}{impl_name} {{
-    #[doc(hidden)]
-    const __JOIN_METADATA: &'static str = {metadata};
+{impl_attributes}{endpoint_attribute}
+impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
         Self {{ matcher: ::joins_runtime::PairMatcher::new() }}
@@ -520,7 +519,7 @@ impl {impl_generics}Clone for {impl_name} {{
         left_method = left_method,
         right_method = right_method,
         dispatch = dispatch,
-        metadata = metadata,
+        endpoint_attribute = endpoint_attribute,
     ))
 }
 
@@ -531,7 +530,7 @@ fn generate_unary_endpoint(
     aliases: &str,
     prefix: &str,
     replies: &[(String, String)],
-    metadata: &str,
+    endpoint_attribute: &str,
 ) -> Result<String, String> {
     let expression = reply_expression(replies, channel)?;
     let input_type = channel_input_type(channel);
@@ -571,7 +570,7 @@ fn generate_unary_endpoint(
         )
     };
     Ok(format!(
-r#"{struct_attributes}{visibility}struct {struct_name} {{
+        r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::UnaryMatcher<{input_type}, {output_type}>,
 }}
 
@@ -581,9 +580,8 @@ impl {impl_generics}Clone for {impl_name} {{
     }}
 }}
 
-{impl_attributes}impl {impl_generics}{impl_name} {{
-    #[doc(hidden)]
-    const __JOIN_METADATA: &'static str = {metadata};
+{impl_attributes}{endpoint_attribute}
+impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
         Self {{ matcher: ::joins_runtime::UnaryMatcher::new() }}
@@ -614,7 +612,7 @@ impl {impl_generics}Clone for {impl_name} {{
         scope_bounds = scope_bounds,
         method = method,
         dispatch = dispatch,
-        metadata = metadata,
+        endpoint_attribute = endpoint_attribute,
     ))
 }
 
@@ -692,9 +690,9 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let methods = method_definitions.join("\n\n    ");
     let rules = rule_definitions.join("\n        ");
-    let metadata = join_metadata(definition);
+    let endpoint_attribute = join_endpoint_attribute(definition);
     Ok(format!(
-r#"{struct_attributes}{visibility}struct {struct_name} {{
+        r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::DynamicMatcher,
 }}
 
@@ -704,9 +702,8 @@ impl {impl_generics}Clone for {impl_name} {{
     }}
 }}
 
-{impl_attributes}impl {impl_generics}{impl_name} {{
-    #[doc(hidden)]
-    const __JOIN_METADATA: &'static str = {metadata};
+{impl_attributes}{endpoint_attribute}
+impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
         Self {{ matcher: ::joins_runtime::DynamicMatcher::new({channel_count}) }}
@@ -736,66 +733,23 @@ impl {impl_generics}Clone for {impl_name} {{
         methods = methods,
         rules = rules,
         dispatch_bounds = dispatch_bounds,
-        metadata = metadata,
+        endpoint_attribute = endpoint_attribute,
     ))
 }
 
-/// Return the compiler-owned, syntax-level description retained on every
-/// generated endpoint.
-///
-/// This is deliberately a private associated constant rather than a runtime
-/// API. It makes the currently supported join shape visible to `-Zunpretty`
-/// and to compiler fixtures while the extension still lowers through a
-/// built-in macro. The channel indices and rule pattern references are the
-/// expander's pre-HIR resolution; they are not a substitute for a resolved
-/// HIR/MIR representation. Keeping this seam explicit prevents later CFA work
-/// from mistaking the textual expander's descriptors for type-checked facts.
-fn join_metadata(definition: &Definition) -> String {
-    let mut metadata = format!("join {}", definition.name.name);
-    if !definition.generic_params.is_empty() {
-        metadata.push_str(&definition.generic_params);
-    }
-    for (index, channel) in definition.channels.iter().enumerate() {
-        metadata.push_str(&format!("; channel[{index}] {}(", channel.name.name));
-        for (argument_index, argument) in channel.arguments.iter().enumerate() {
-            if argument_index != 0 {
-                metadata.push_str(", ");
-            }
-            metadata.push_str(&format!("{}: {}", argument.name.name, argument.ty));
-        }
-        metadata.push(')');
-        if let Some(reply) = &channel.reply {
-            metadata.push_str(" -> ");
-            metadata.push_str(reply);
-        } else {
-            metadata.push_str(" -> ()");
-        }
-    }
-    for (rule_index, rule) in definition.rules.iter().enumerate() {
-        metadata.push_str(&format!(
-            "; rule[{rule_index}] {}",
-            if rule.is_async { "async" } else { "sync" }
-        ));
-        for (pattern_index, pattern) in rule.patterns.iter().enumerate() {
-            let channel_index = definition
-                .channels
-                .iter()
-                .position(|channel| channel.name.name == pattern.channel.name)
-                .map_or_else(|| "?".to_string(), |index| index.to_string());
-            metadata.push_str(&format!(
-                " pattern[{pattern_index}]=channel#{channel_index} {}(",
-                pattern.channel.name
-            ));
-            for (binding_index, binding) in pattern.bindings.iter().enumerate() {
-                if binding_index != 0 {
-                    metadata.push_str(", ");
-                }
-                metadata.push_str(binding.name.as_str());
-            }
-            metadata.push(')');
-        }
-    }
-    format!("{metadata:?}")
+/// Emit the compact, parsed contract consumed by rustc's join descriptor
+/// query. Only shape is encoded here; names, method identities, and resolved
+/// types come from the generated HIR after normal name and type resolution.
+fn join_endpoint_attribute(definition: &Definition) -> String {
+    let arity = definition.rules.iter().map(|rule| rule.patterns.len()).max().unwrap_or(0);
+    let async_rule = definition.rules.iter().any(|rule| rule.is_async);
+    format!(
+        "#[rustc_join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {})]",
+        definition.channels.len(),
+        definition.rules.len(),
+        arity,
+        u32::from(async_rule),
+    )
 }
 
 fn resolve_rule<'a>(
@@ -907,11 +861,12 @@ fn dynamic_rule_body(
             outputs.push("Ok(::joins_runtime::erase_reply::<()>(()))".to_string());
         }
     }
-    let body = format!(
-        "{aliases}{extraction}{prefix}\nOk(vec![{}])",
-        outputs.join(",\n")
-    );
-    if is_async { Ok(format!("async move {{\n{body}\n}}")) } else { Ok(format!("let inputs = inputs;\n{body}")) }
+    let body = format!("{aliases}{extraction}{prefix}\nOk(vec![{}])", outputs.join(",\n"));
+    if is_async {
+        Ok(format!("async move {{\n{body}\n}}"))
+    } else {
+        Ok(format!("let inputs = inputs;\n{body}"))
+    }
 }
 
 fn dynamic_channel_method(
