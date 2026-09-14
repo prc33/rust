@@ -143,12 +143,12 @@ pub(crate) struct RustcLegacyConstGenericsParser;
 pub(crate) struct RustcJoinEndpointParser;
 
 impl SingleAttributeParser for RustcJoinEndpointParser {
-    const PATH: &[Symbol] = &[sym::rustc_join_endpoint];
+    const PATH: &[Symbol] = &[sym::join_endpoint];
     const ALLOWED_TARGETS: AllowedTargets<'_> =
         AllowedTargets::AllowList(&[Allow(Target::Impl { of_trait: false })]);
     const TEMPLATE: AttributeTemplate =
         template!(List: &["channels = N, rules = N, arity = N, async_rule = 0|1"]);
-    const STABILITY: AttributeStability = unstable!(rustc_attrs);
+    const STABILITY: AttributeStability = unstable!(joins);
 
     fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
         let list = cx.expect_list(args, cx.attr_span)?;

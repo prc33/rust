@@ -344,6 +344,10 @@ pub static BUILTIN_ATTRIBUTES: &[Symbol] = &[
     sym::rustc_as_ptr,
     sym::rustc_should_not_be_called_on_const_items,
     sym::rustc_pass_by_value,
+    // Compiler-owned shape marker emitted by the experimental `join impl`
+    // builtin. It is gated by the `joins` language feature and is not a
+    // source-level API.
+    sym::join_endpoint,
     sym::rustc_never_returns_null_ptr,
     sym::rustc_no_implicit_autorefs,
     sym::rustc_coherence_is_core,

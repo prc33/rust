@@ -1849,7 +1849,7 @@ symbols! {
         rustc_insignificant_dtor,
         rustc_intrinsic,
         rustc_intrinsic_const_stable_indirect,
-        rustc_join_endpoint,
+        join_endpoint,
         channels,
         rules,
         arity,

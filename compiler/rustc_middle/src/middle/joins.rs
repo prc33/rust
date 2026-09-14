@@ -1,24 +1,25 @@
 //! Compiler-owned descriptions of expanded `join impl` endpoints.
 //!
 //! The frontend currently lowers the experimental syntax through a builtin
-//! macro, but it leaves a parsed `rustc_join_endpoint` contract on the
+//! macro, but it leaves a parsed `join_endpoint` contract on the
 //! generated impl. This module is the typed seam between that expansion and
 //! later CFA/MIR work: identities are local `DefId`s and channel signatures
 //! are rustc's resolved types rather than source strings.
 
 use rustc_hir::def_id::LocalDefId;
+use rustc_macros::StableHash;
 use rustc_span::Symbol;
 
 use crate::ty::PolyFnSig;
 
 /// All join endpoints discovered in a local crate.
-#[derive(Debug)]
+#[derive(Debug, StableHash)]
 pub struct JoinDefinitions<'tcx> {
     pub endpoints: Vec<JoinDefinition<'tcx>>,
 }
 
 /// A single expanded endpoint and its compiler identities.
-#[derive(Debug)]
+#[derive(Debug, StableHash)]
 pub struct JoinDefinition<'tcx> {
     /// The generated inherent impl carrying the join contract marker.
     pub impl_def_id: LocalDefId,
@@ -39,7 +40,7 @@ pub struct JoinDefinition<'tcx> {
 }
 
 /// A channel endpoint represented by its resolved associated function.
-#[derive(Debug)]
+#[derive(Debug, StableHash)]
 pub struct JoinChannel<'tcx> {
     pub method_def_id: LocalDefId,
     pub name: Symbol,
@@ -47,7 +48,7 @@ pub struct JoinChannel<'tcx> {
 }
 
 /// A reaction dispatch body and the shape known at expansion time.
-#[derive(Debug)]
+#[derive(Debug, StableHash)]
 pub struct JoinRule {
     pub method_def_id: LocalDefId,
     pub arity: u32,

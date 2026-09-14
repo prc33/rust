@@ -744,7 +744,7 @@ fn join_endpoint_attribute(definition: &Definition) -> String {
     let arity = definition.rules.iter().map(|rule| rule.patterns.len()).max().unwrap_or(0);
     let async_rule = definition.rules.iter().any(|rule| rule.is_async);
     format!(
-        "#[rustc_join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {})]",
+        "#[join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {})]",
         definition.channels.len(),
         definition.rules.len(),
         arity,
