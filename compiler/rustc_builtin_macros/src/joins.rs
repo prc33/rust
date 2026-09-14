@@ -655,9 +655,16 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         let pattern =
             resolved.iter().map(|(index, _, _)| index.to_string()).collect::<Vec<_>>().join(", ");
         let body = dynamic_rule_body(&resolved, &aliases, &prefix, &replies, rule.is_async)?;
-        rule_definitions.push(format!(
-            "if self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) {{ return true; }}"
-        ));
+        let dispatch = if rule.is_async {
+            format!(
+                "self.matcher.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}})"
+            )
+        } else {
+            format!(
+                "self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}})"
+            )
+        };
+        rule_definitions.push(format!("if {dispatch} {{ return true; }}"));
     }
     if rule_definitions.is_empty() {
         return Err("a join definition must declare at least one rule".into());
@@ -798,10 +805,17 @@ fn dynamic_rule_body(
     for (index, (_, channel, pattern)) in resolved.iter().enumerate() {
         let input_type = channel_input_type(channel);
         let value = format!("__join_input_value_{index}");
-        extraction.push_str(&format!(
-            "let {value}: {input_type} = inputs[{index}].take::<{input_type}>()?;\n{}",
-            pattern_unpack(pattern, &value),
-        ));
+        if is_async {
+            extraction.push_str(&format!(
+                "let {value}: {input_type} = inputs.with_mut(|inputs| inputs[{index}].take::<{input_type}>())?;\n{}",
+                pattern_unpack(pattern, &value),
+            ));
+        } else {
+            extraction.push_str(&format!(
+                "let {value}: {input_type} = inputs[{index}].take::<{input_type}>()?;\n{}",
+                pattern_unpack(pattern, &value),
+            ));
+        }
     }
     let mut outputs = Vec::with_capacity(resolved.len());
     for (_, channel, _) in resolved {
@@ -813,10 +827,10 @@ fn dynamic_rule_body(
         }
     }
     let body = format!(
-        "let inputs = inputs;\n{aliases}{extraction}{prefix}\nOk(vec![{}])",
+        "{aliases}{extraction}{prefix}\nOk(vec![{}])",
         outputs.join(",\n")
     );
-    if is_async { Ok(format!("::joins_runtime::block_on(async {{\n{body}\n}})")) } else { Ok(body) }
+    if is_async { Ok(format!("async move {{\n{body}\n}}")) } else { Ok(format!("let inputs = inputs;\n{body}")) }
 }
 
 fn dynamic_channel_method(
