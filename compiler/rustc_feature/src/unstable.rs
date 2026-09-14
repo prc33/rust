@@ -243,6 +243,8 @@ declare_features! (
     (unstable, generic_assert, "1.63.0", None),
     /// Allows using the #[rustc_intrinsic] attribute.
     (internal, intrinsics, "1.0.0", None),
+    /// Enables the experimental join-calculus language extension.
+    (incomplete, joins, "1.98.1", None),
     /// Allows using `#[lang = ".."]` attribute for linking items to special compiler logic.
     (internal, lang_items, "1.0.0", None),
     /// Allows `#[link(..., cfg(..))]`; perma-unstable per #37406

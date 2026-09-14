@@ -60,6 +60,16 @@ impl AttrWrapper {
         AttrWrapper { attrs: AttrVec::new(), start_pos: None }
     }
 
+    /// Consume the wrapper and return the parsed attributes.
+    ///
+    /// Most parser clients should keep the wrapper opaque so that attribute
+    /// token collection cannot be skipped accidentally. Built-in item
+    /// expanders, however, receive an already-collected token stream and need
+    /// the semantic attributes in order to forward them to generated items.
+    pub(super) fn into_inner(self) -> AttrVec {
+        self.attrs
+    }
+
     pub(super) fn take_for_recovery(self, psess: &ParseSess) -> AttrVec {
         psess.dcx().span_delayed_bug(
             self.attrs.get(0).map(|attr| attr.span).unwrap_or(DUMMY_SP),

@@ -110,6 +110,17 @@ impl<'a> Parser<'a> {
         Ok(AttrWrapper::new(outer_attrs, start_pos))
     }
 
+    /// Parse outer attributes for a built-in item expander.
+    ///
+    /// Ordinary parser paths retain an opaque [`AttrWrapper`] so that token
+    /// collection remains coupled to the parsed AST node. A built-in macro
+    /// receives a token stream instead of constructing such a node, so it is
+    /// safe for that narrow interface to consume and inspect the attributes
+    /// directly.
+    pub fn parse_outer_attributes_for_macro(&mut self) -> PResult<'a, ast::AttrVec> {
+        Ok(self.parse_outer_attributes()?.into_inner())
+    }
+
     /// Matches `attribute = # ! [ meta_item ]`.
     /// `inner_parse_policy` prescribes how to handle inner attributes.
     // Public for rustfmt usage.

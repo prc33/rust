@@ -1,3 +1,23 @@
+/// Compiler-generated implementation for the experimental `join impl` item.
+///
+/// The parser lowers the item to this private built-in macro so that the
+/// regular macro-expansion and HIR pipelines own the generated Rust nodes.
+/// Users write `join impl` in a `.rs` file; this declaration is only the
+/// compiler-side registration point.
+#[doc(hidden)]
+#[macro_export]
+#[rustc_builtin_macro(join_impl)]
+// This macro is a compiler registration point rather than a user-facing API.
+// The `join impl` item itself is gated in `rustc_ast_passes`; keeping the
+// hidden shim stable avoids reporting a second, misleading library-stability
+// error for the same source item.
+#[stable(feature = "rust1", since = "1.0.0")]
+macro_rules! join_impl {
+    ($($tt:tt)*) => {
+        /* compiler built-in */
+    };
+}
+
 #[doc = include_str!("panic.md")]
 #[macro_export]
 #[rustc_builtin_macro(core_panic)]

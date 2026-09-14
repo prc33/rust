@@ -5,14 +5,14 @@ use ast::token::IdentIsRaw;
 use rustc_ast as ast;
 use rustc_ast::ast::*;
 use rustc_ast::token::{self, Delimiter, MetaVarKind, TokenKind};
-use rustc_ast::tokenstream::{DelimSpan, TokenStream, TokenTree};
+use rustc_ast::tokenstream::{DelimSpan, Spacing, TokenStream, TokenTree};
 use rustc_ast::util::case::Case;
 use rustc_ast_pretty::pprust;
 use rustc_errors::codes::*;
 use rustc_errors::{Applicability, PResult, StashKey, msg, struct_span_code_err};
 use rustc_span::edit_distance::edit_distance;
 use rustc_span::edition::Edition;
-use rustc_span::{DUMMY_SP, Ident, Span, Symbol, kw, sym};
+use rustc_span::{DUMMY_SP, FileName, Ident, Span, Symbol, kw, sym};
 use thin_vec::{ThinVec, thin_vec};
 use tracing::debug;
 
@@ -168,6 +168,17 @@ impl<'a> Parser<'a> {
             return Ok(Some(*item));
         }
 
+        // A JOIN item is lowered by the built-in expansion below, so keep its
+        // exact token stream on the AST item for diagnostics and tooling.
+        // Ordinary Rust items retain the normal lazy-capture policy; forcing
+        // collection globally would add needless parser overhead.
+        let force_collect = if self.token.is_ident_named(sym::join)
+            && self.look_ahead(1, |t| t.is_keyword(kw::Impl))
+        {
+            ForceCollect::Yes
+        } else {
+            force_collect
+        };
         self.collect_tokens(None, attrs, force_collect, |this, mut attrs| {
             let lo = this.token.span;
             let vis = this.parse_visibility(FollowedByType::No)?;
@@ -263,6 +274,14 @@ impl<'a> Parser<'a> {
 
         let info = if !self.is_use_closure() && self.eat_keyword_case(exp!(Use), case) {
             self.parse_use_item()?
+        } else if case == Case::Sensitive
+            && self.token.is_ident_named(sym::join)
+            && self.look_ahead(1, |t| t.is_keyword(kw::Impl))
+        {
+            // JOIN item (experimental syntax). The enclosing item parser
+            // forced token collection above, and this maps the item into the
+            // normal built-in expansion pipeline.
+            self.parse_join_item(lo, vis, attrs)?
         } else if self.check_fn_front_matter(check_pub, case) {
             // FUNCTION ITEM
             let defaultness = def_();
@@ -393,6 +412,110 @@ impl<'a> Parser<'a> {
             return Ok(None);
         };
         Ok(Some(info))
+    }
+
+    /// Parse the `join impl Name { ... }` item.
+    ///
+    /// The parser represents the item as a private built-in macro invocation.
+    /// This keeps the extension in the ordinary Rust macro-expansion pipeline:
+    /// the built-in expander can lower the typed endpoint into normal Rust AST
+    /// before name resolution and HIR lowering. The original token stream is
+    /// still attached by `parse_item_common` for diagnostics and tooling.
+    fn parse_join_item(
+        &mut self,
+        _lo: Span,
+        vis: &Visibility,
+        attrs: &mut AttrVec,
+    ) -> PResult<'a, ItemKind> {
+        let join_span = self.token.span;
+        self.bump(); // `join` (an identifier until the syntax is stabilized)
+        self.expect_keyword(exp!(Impl))?;
+        let ident = self.parse_ident()?;
+        let mut generic_tokens = Vec::new();
+        while !self.check(exp!(OpenBrace)) && self.token != token::Eof {
+            generic_tokens.push(self.parse_token_tree());
+        }
+        if !self.check(exp!(OpenBrace)) {
+            return Err(self.unexpected().unwrap_err());
+        }
+        let body = self.parse_token_tree();
+        let TokenTree::Delimited(dspan, spacing, Delimiter::Brace, body_tokens) = body else {
+            // `parse_token_tree` can recover a non-braced token after an
+            // incomplete declaration. Report it as ordinary parser
+            // diagnostics instead of letting the experimental syntax ICE the
+            // compiler while constructing the hidden built-in invocation.
+            return Err(self
+                .dcx()
+                .struct_span_err(body.span(), "expected a brace-delimited body for `join impl`"));
+        };
+        self.psess.gated_spans.gate(sym::joins, join_span);
+        // Pass `[visibility] Name [generic parameters] { ... }` to the private
+        // `join_impl!`
+        // built-in. The visibility is part of the macro input because macro
+        // expansion does not otherwise apply an item's visibility to every
+        // item emitted by an item macro. Keeping the original body token tree
+        // preserves Rust's normal token hygiene and lets the expander parse
+        // channel types and reaction expressions with the compiler's own
+        // parser.
+        let mut input_tokens = Vec::new();
+        for attr in std::mem::take(attrs) {
+            let source = pprust::attribute_to_string(&attr);
+            let tokens = crate::source_str_to_stream(
+                self.psess,
+                FileName::macro_expansion_source_code(&source),
+                source,
+                Some(attr.span),
+            )
+            .map_err(|mut errors| {
+                let first = errors.remove(0);
+                for error in errors {
+                    error.emit();
+                }
+                first
+            })?;
+            input_tokens.extend(tokens.iter().cloned());
+        }
+        if !matches!(vis.kind, VisibilityKind::Inherited) {
+            let source = pprust::vis_to_string(vis);
+            input_tokens.extend(
+                crate::source_str_to_stream(
+                    self.psess,
+                    FileName::macro_expansion_source_code(&source),
+                    source,
+                    Some(vis.span),
+                )
+                .map_err(|mut errors| {
+                    let first = errors.remove(0);
+                    for error in errors {
+                        error.emit();
+                    }
+                    first
+                })?
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            );
+        }
+        let name = TokenTree::Token(
+            token::Token::new(TokenKind::Ident(ident.name, IdentIsRaw::No), ident.span),
+            Spacing::Alone,
+        );
+        input_tokens.push(name);
+        input_tokens.extend(generic_tokens);
+        input_tokens.push(TokenTree::Delimited(dspan, spacing, Delimiter::Brace, body_tokens));
+        let args = DelimArgs {
+            dspan: DelimSpan { open: dspan.open, close: dspan.close },
+            delim: Delimiter::Brace,
+            tokens: TokenStream::new(input_tokens),
+        };
+        let path = Path {
+            span: join_span.to(ident.span),
+            segments: thin_vec![
+                PathSegment::from_ident(Ident::new(sym::core, join_span)),
+                PathSegment::from_ident(Ident::new(sym::join_impl, join_span)),
+            ],
+        };
+        Ok(ItemKind::MacCall(Box::new(MacCall { path, args: Box::new(args) })))
     }
 
     fn recover_import_as_use(&mut self) -> PResult<'a, Option<ItemKind>> {
