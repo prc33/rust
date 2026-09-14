@@ -27,6 +27,12 @@ pub fn block_on<F: std::future::Future>(_: F) -> F::Output {
 
 pub struct PairMatcher<L, R, LO, RO>(std::marker::PhantomData<(L, R, LO, RO)>);
 
+impl<L, R, LO, RO> Clone for PairMatcher<L, R, LO, RO> {
+    fn clone(&self) -> Self {
+        Self(std::marker::PhantomData)
+    }
+}
+
 impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
     pub fn new() -> Self {
         Self(std::marker::PhantomData)

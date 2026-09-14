@@ -440,8 +440,9 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
     let visibility = visibility_prefix(&definition.visibility);
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
-    let left_method = channel_method(&visibility, left, "submit_left", left_reply);
-    let right_method = channel_method(&visibility, right, "submit_right", right_reply);
+    let left_method = channel_method(&visibility, left, "submit_left", left_reply, &scope_bounds);
+    let right_method =
+        channel_method(&visibility, right, "submit_right", right_reply, &scope_bounds);
     let left_result = if left.reply.is_some() { left_expression.to_string() } else { "()".into() };
     let right_result =
         if right.reply.is_some() { right_expression.to_string() } else { "()".into() };
@@ -455,6 +456,12 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
     Ok(format!(
         r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::PairMatcher<{left_type}, {right_type}, {left_reply}, {right_reply}>,
+}}
+
+impl {impl_generics}Clone for {impl_name} {{
+    fn clone(&self) -> Self {{
+        Self {{ matcher: self.matcher.clone() }}
+    }}
 }}
 
 {impl_attributes}impl {impl_generics}{impl_name} {{
@@ -471,8 +478,10 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
 
     {right_method}
 
-    fn __join_dispatch_once(&self) -> bool {{
-        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), |{left_binding}, {right_binding}| {{
+    fn __join_dispatch_once(&self) -> bool
+{scope_bounds}{{
+        let __join_endpoint = self.clone();
+        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{
             {left_unpack}
             {right_unpack}
             let __join_result = {reaction};
@@ -524,24 +533,32 @@ fn generate_unary_endpoint(
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let method = if channel.reply.is_some() {
         format!(
-            "{visibility}fn {channel}(&self{argument}) -> ::joins_runtime::Reply<{output_type}> {{ let reply = self.matcher.submit_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
+            "{visibility}fn {channel}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{ let reply = self.matcher.submit_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
             channel = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
+            scope_bounds = scope_bounds,
         )
     } else {
         format!(
-            "{visibility}fn {channel}(&self{argument}) {{ let _ = self.matcher.submit_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {channel}(&self{argument})\n{scope_bounds}{{ let _ = self.matcher.submit_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             channel = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
+            scope_bounds = scope_bounds,
         )
     };
     let result = if channel.reply.is_some() { expression.to_string() } else { "()".into() };
     let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
     Ok(format!(
-        r#"{struct_attributes}{visibility}struct {struct_name} {{
+r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::UnaryMatcher<{input_type}, {output_type}>,
+}}
+
+impl {impl_generics}Clone for {impl_name} {{
+    fn clone(&self) -> Self {{
+        Self {{ matcher: self.matcher.clone() }}
+    }}
 }}
 
 {impl_attributes}impl {impl_generics}{impl_name} {{
@@ -556,8 +573,10 @@ fn generate_unary_endpoint(
 
     {method}
 
-    fn __join_dispatch_once(&self) -> bool {{
-        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), |{binding}| {{
+    fn __join_dispatch_once(&self) -> bool
+{scope_bounds}{{
+        let __join_endpoint = self.clone();
+        self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{
             {unpack}
             {reaction}
         }})
@@ -604,12 +623,14 @@ fn reaction_result_body(
 }
 
 fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> {
+    let dispatch_bounds = endpoint_dispatch_bounds(definition);
     let mut method_definitions = Vec::with_capacity(definition.channels.len());
     for (index, channel) in definition.channels.iter().enumerate() {
         method_definitions.push(dynamic_channel_method(
             &visibility_prefix(&definition.visibility),
             index,
             channel,
+            &dispatch_bounds,
         ));
     }
 
@@ -634,7 +655,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
             resolved.iter().map(|(index, _, _)| index.to_string()).collect::<Vec<_>>().join(", ");
         let body = dynamic_rule_body(&resolved, &aliases, &prefix, &replies, rule.is_async)?;
         rule_definitions.push(format!(
-            "if self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), |inputs| {{\n{body}\n}}) {{ return true; }}"
+            "if self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) {{ return true; }}"
         ));
     }
     if rule_definitions.is_empty() {
@@ -646,8 +667,14 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let methods = method_definitions.join("\n\n    ");
     let rules = rule_definitions.join("\n        ");
     Ok(format!(
-        r#"{struct_attributes}{visibility}struct {struct_name} {{
+r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::DynamicMatcher,
+}}
+
+impl {impl_generics}Clone for {impl_name} {{
+    fn clone(&self) -> Self {{
+        Self {{ matcher: self.matcher.clone() }}
+    }}
 }}
 
 {impl_attributes}impl {impl_generics}{impl_name} {{
@@ -661,7 +688,9 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
 
     {methods}
 
-    fn __join_dispatch_once(&self) -> bool {{
+    fn __join_dispatch_once(&self) -> bool
+{dispatch_bounds}{{
+        let __join_endpoint = self.clone();
         {rules}
         false
     }}
@@ -676,6 +705,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         channel_count = definition.channels.len(),
         methods = methods,
         rules = rules,
+        dispatch_bounds = dispatch_bounds,
     ))
 }
 
@@ -788,20 +818,27 @@ fn dynamic_rule_body(
     if is_async { Ok(format!("::joins_runtime::block_on(async {{\n{body}\n}})")) } else { Ok(body) }
 }
 
-fn dynamic_channel_method(visibility: &str, index: usize, channel: &Channel) -> String {
+fn dynamic_channel_method(
+    visibility: &str,
+    index: usize,
+    channel: &Channel,
+    dispatch_bounds: &str,
+) -> String {
     let argument = channel_method_argument(channel);
     let value = channel_submit_value(channel);
     let input_type = channel_input_type(channel);
     let output_type = channel.reply.as_deref().unwrap_or("()");
     if channel.reply.is_some() {
         format!(
-            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}> {{ let reply = self.matcher.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
+            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let reply = self.matcher.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
             name = channel.name.name,
+            dispatch_bounds = dispatch_bounds,
         )
     } else {
         format!(
-            "{visibility}fn {name}(&self{argument}) {{ let _ = self.matcher.submit_at::<{input_type}, ()>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = self.matcher.submit_at::<{input_type}, ()>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             name = channel.name.name,
+            dispatch_bounds = dispatch_bounds,
         )
     }
 }
@@ -889,6 +926,16 @@ fn scoped_constructor_bounds(types: &[&str]) -> String {
     bounds
 }
 
+fn endpoint_dispatch_bounds(definition: &Definition) -> String {
+    let mut types = Vec::with_capacity(definition.channels.len() * 2);
+    for channel in &definition.channels {
+        types.push(channel_input_type(channel));
+        types.push(channel.reply.clone().unwrap_or_else(|| "()".into()));
+    }
+    let references = types.iter().map(String::as_str).collect::<Vec<_>>();
+    scoped_constructor_bounds(&references)
+}
+
 fn impl_generics(definition: &Definition) -> String {
     if definition.generic_params.is_empty() {
         String::new()
@@ -897,20 +944,28 @@ fn impl_generics(definition: &Definition) -> String {
     }
 }
 
-fn channel_method(visibility: &str, channel: &Channel, submit: &str, reply_type: &str) -> String {
+fn channel_method(
+    visibility: &str,
+    channel: &Channel,
+    submit: &str,
+    reply_type: &str,
+    dispatch_bounds: &str,
+) -> String {
     if channel.reply.is_some() {
         format!(
-            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{reply_type}> {{ let reply = self.matcher.{submit}_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
+            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{reply_type}>\n{dispatch_bounds}{{ let reply = self.matcher.{submit}_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
             name = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
+            dispatch_bounds = dispatch_bounds,
         )
     } else {
         format!(
-            "{visibility}fn {name}(&self{argument}) {{ let _ = self.matcher.{submit}_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = self.matcher.{submit}_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             name = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
+            dispatch_bounds = dispatch_bounds,
         )
     }
 }
@@ -1262,7 +1317,7 @@ fn channel_aliases(definition: &Definition, used_channels: &[usize]) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         aliases.push_str(&format!(
-            "let {} = |{}| self.{}({});\n",
+            "let {} = |{}| __join_endpoint.{}({});\n",
             channel_alias_name(channel),
             parameters,
             channel.name.name,
