@@ -803,6 +803,26 @@ fn inner_optimized_mir(tcx: TyCtxt<'_>, did: LocalDefId) -> Body<'_> {
         return body;
     }
 
+    // Force the compiler-owned join descriptor query at the MIR boundary for
+    // generated dispatch bodies. This is intentionally a read-only seam for
+    // the first vertical slice: the future CFA pass will consume the same
+    // resolved identities before coroutine state transformation, while this
+    // hook verifies that the descriptor survives HIR/type checking into MIR
+    // without relying on the old string constant.
+    if tcx.features().joins()
+        && tcx.join_definitions(()).endpoints.iter().any(|endpoint| {
+            endpoint
+                .rules
+                .iter()
+                .any(|rule| rule.method_def_id == did)
+        })
+    {
+        debug!(
+            "join descriptor available at MIR optimization for `{}`",
+            tcx.def_path_str(did.to_def_id())
+        );
+    }
+
     // Before doing anything, remember which items are being mentioned so that the set of items
     // visited does not depend on the optimization level.
     // We do not use `run_passes` for this as that might skip the pass if `injection_phase` is set.
