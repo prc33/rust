@@ -1307,6 +1307,7 @@ pub enum AttributeKind {
         rules: u32,
         arity: u32,
         async_rule: bool,
+        direct_unary: bool,
     },
 
     /// Represents `#[rustc_legacy_const_generics]`

@@ -19,11 +19,11 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
         let item = tcx.hir_expect_item(impl_def_id);
         let ItemKind::Impl(impl_) = item.kind else { continue };
 
-        let Some((declared_channels, declared_rules, declared_arity, declared_async_rule)) = find_attr!(
+        let Some((declared_channels, declared_rules, declared_arity, declared_async_rule, direct_unary)) = find_attr!(
             tcx,
             impl_def_id,
-            RustcJoinEndpoint { channels, rules, arity, async_rule } =>
-                (*channels, *rules, *arity, *async_rule)
+            RustcJoinEndpoint { channels, rules, arity, async_rule, direct_unary } =>
+                (*channels, *rules, *arity, *async_rule, *direct_unary)
         ) else {
             continue;
         };
@@ -87,6 +87,7 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             declared_rules,
             declared_arity,
             declared_async_rule,
+            frontend_direct_unary: direct_unary,
             span,
             channels,
             rules,

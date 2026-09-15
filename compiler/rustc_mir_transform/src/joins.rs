@@ -32,7 +32,7 @@ pub(super) struct JoinSemanticOps;
 fn body_descriptor<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
-) -> Option<(u32, u32, JoinBodyRole, u32, bool)> {
+) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
         if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
             return Some((
@@ -41,6 +41,7 @@ fn body_descriptor<'tcx>(
                 JoinBodyRole::Channel,
                 endpoint.declared_arity,
                 endpoint.declared_async_rule,
+                endpoint.frontend_direct_unary,
             ));
         }
 
@@ -58,6 +59,7 @@ fn body_descriptor<'tcx>(
                     },
                     rule.arity,
                     rule.is_async,
+                    endpoint.frontend_direct_unary,
                 ));
             }
         }
@@ -99,6 +101,7 @@ impl JoinBodyFacts {
         role: JoinBodyRole,
         arity: u32,
         is_async: bool,
+        frontend_direct_unary: bool,
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
@@ -137,6 +140,7 @@ impl JoinBodyFacts {
             role,
             arity,
             is_async,
+            frontend_direct_unary,
             operations: self.operations,
             value_flows: self.value_flows,
             local_facts,
@@ -436,13 +440,14 @@ fn dump_summary(
         .rejection
         .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
         summary.role,
         summary.arity,
         summary.is_async,
+        summary.frontend_direct_unary,
         mode,
         summary.calls,
         call_edges,
@@ -488,7 +493,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let Some(local_def_id) = body.source.def_id().as_local() else {
             return;
         };
-        let Some((endpoint_def_id, rule_def_id, role, arity, is_async)) =
+        let Some((endpoint_def_id, rule_def_id, role, arity, is_async, frontend_direct_unary)) =
             body_descriptor(tcx, local_def_id)
         else {
             return;
@@ -555,6 +560,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             role,
             arity,
             is_async,
+            frontend_direct_unary,
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
@@ -587,6 +593,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             ?role,
             arity,
             is_async,
+            frontend_direct_unary,
             operations,
             calls,
             call_edges,

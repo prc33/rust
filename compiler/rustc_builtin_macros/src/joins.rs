@@ -422,7 +422,7 @@ fn generate_restricted_endpoint(
 
     let prefix =
         rewrite_early_return_maps(definition, &resolved, &prefix, EarlyReturnMode::UnaryOrPair, 0)?;
-    let endpoint_attribute = join_endpoint_attribute(definition);
+    let endpoint_attribute = join_endpoint_attribute(definition, direct_unary);
 
     if channels.len() == 1 {
         return generate_unary_endpoint(
@@ -560,16 +560,23 @@ fn generate_unary_endpoint(
     // of allocating the compatibility `Reply` thunk. This path is selected
     // only in `-Zjoin-cfa=optimize`; the MIR pass still records and checks the
     // body, while shared/multi-input rules retain the compatibility matcher.
-    let use_direct_unary =
-        direct_unary && channel.reply.is_some() && aliases.is_empty() && !rule.is_async;
+    // An `async when` body is already an ordinary coroutine; await that inner
+    // body from the generated outer future so the isolated case has the same
+    // construction and first-poll contract as an `async fn`.
+    let use_direct_unary = direct_unary && channel.reply.is_some() && aliases.is_empty();
+    let direct_reaction = if rule.is_async {
+        format!("({reaction}).await")
+    } else {
+        reaction.clone()
+    };
     let method = if use_direct_unary {
         format!(
-            "{visibility}fn {channel}(&self{argument}) -> impl ::core::future::Future<Output = ::core::result::Result<{output_type}, ::joins_runtime::JoinError>> {{ let __join_input_value = {value}; async move {{ {unpack} {reaction} }} }}",
+            "{visibility}fn {channel}(&self{argument}) -> impl ::core::future::Future<Output = ::core::result::Result<{output_type}, ::joins_runtime::JoinError>> {{ let __join_input_value = {value}; async move {{ {unpack} {direct_reaction} }} }}",
             channel = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
             unpack = unpack,
-            reaction = reaction,
+            direct_reaction = direct_reaction,
         )
     } else if channel.reply.is_some() {
         format!(
@@ -718,7 +725,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let methods = method_definitions.join("\n\n    ");
     let rules = rule_definitions.join("\n        ");
-    let endpoint_attribute = join_endpoint_attribute(definition);
+    let endpoint_attribute = join_endpoint_attribute(definition, false);
     Ok(format!(
         r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::DynamicMatcher,
@@ -768,15 +775,16 @@ impl {impl_generics}{impl_name} {{
 /// Emit the compact, parsed contract consumed by rustc's join descriptor
 /// query. Only shape is encoded here; names, method identities, and resolved
 /// types come from the generated HIR after normal name and type resolution.
-fn join_endpoint_attribute(definition: &Definition) -> String {
+fn join_endpoint_attribute(definition: &Definition, direct_unary: bool) -> String {
     let arity = definition.rules.iter().map(|rule| rule.patterns.len()).max().unwrap_or(0);
     let async_rule = definition.rules.iter().any(|rule| rule.is_async);
     format!(
-        "#[join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {})]",
+        "#[join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {}, direct_unary = {})]",
         definition.channels.len(),
         definition.rules.len(),
         arity,
         u32::from(async_rule),
+        u32::from(direct_unary),
     )
 }
 

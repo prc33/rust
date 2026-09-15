@@ -32,6 +32,10 @@ pub struct JoinDefinition<'tcx> {
     pub declared_rules: u32,
     pub declared_arity: u32,
     pub declared_async_rule: bool,
+    /// Whether the frontend selected the restricted caller-owned unary future
+    /// representation for this endpoint. The later CFA pass still validates
+    /// the body; this bit records the representation choice in compiler IR.
+    pub frontend_direct_unary: bool,
     /// Span of the generated endpoint contract. This points back through the
     /// builtin expansion to the source `join impl` declaration.
     pub span: Span,
@@ -194,6 +198,7 @@ pub struct JoinCfaSummary {
     pub role: JoinBodyRole,
     pub arity: u32,
     pub is_async: bool,
+    pub frontend_direct_unary: bool,
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
     /// Monotone intrabody solution for the locals touched by the extracted
