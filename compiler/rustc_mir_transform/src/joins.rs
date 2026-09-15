@@ -13,13 +13,16 @@ use rustc_data_structures::fx::FxIndexSet;
 use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
-    JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinInstanceClosedness,
-    JoinLocalFact, JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow,
-    JoinValueFlowKind, JoinValueState,
+    JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinEndpointEscape,
+    JoinEndpointEscapeKind, JoinInstanceClosedness, JoinInstanceClosednessReason, JoinLocalFact,
+    JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
+    JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
-use rustc_middle::mir::{self, Body, Location, Operand, Place, Rvalue, TerminatorKind};
-use rustc_middle::ty::TyCtxt;
+use rustc_middle::mir::{
+    self, Body, Location, Operand, Place, RETURN_PLACE, Rvalue, TerminatorKind,
+};
+use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use std::fs;
 
@@ -33,16 +36,7 @@ pub(super) struct JoinSemanticOps;
 fn body_descriptor<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
-) -> Option<(
-    u32,
-    u32,
-    JoinBodyRole,
-    u32,
-    bool,
-    bool,
-    JoinQueueBound,
-    JoinInstanceClosedness,
-)> {
+) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool, JoinQueueBound, Option<LocalDefId>)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
         if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
             return Some((
@@ -53,7 +47,7 @@ fn body_descriptor<'tcx>(
                 endpoint.declared_async_rule,
                 endpoint.frontend_direct_unary,
                 frontend_queue_bound(endpoint.frontend_queue_bound),
-                frontend_instance_closedness(endpoint.frontend_direct_unary),
+                endpoint.endpoint_def_id,
             ));
         }
 
@@ -73,7 +67,7 @@ fn body_descriptor<'tcx>(
                     rule.is_async,
                     endpoint.frontend_direct_unary,
                     frontend_queue_bound(endpoint.frontend_queue_bound),
-                    frontend_instance_closedness(endpoint.frontend_direct_unary),
+                    endpoint.endpoint_def_id,
                 ));
             }
         }
@@ -89,19 +83,13 @@ fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
     }
 }
 
-fn frontend_instance_closedness(direct_unary: bool) -> JoinInstanceClosedness {
-    if direct_unary {
-        JoinInstanceClosedness::Closed
-    } else {
-        JoinInstanceClosedness::Unknown
-    }
-}
-
 struct JoinBodyFacts {
     operations: Vec<JoinMirOperation>,
     value_flows: Vec<JoinValueFlow>,
     call_edges: Vec<JoinCallEdge>,
     escapes: FxIndexSet<u32>,
+    endpoint_escapes: FxIndexSet<JoinEndpointEscape>,
+    endpoint_locals: Vec<bool>,
     calls: u32,
     yields: u32,
     unknown_effects: u32,
@@ -116,12 +104,18 @@ impl JoinBodyFacts {
         });
     }
 
-    fn record_moved_place<'tcx>(&mut self, place: &Place<'tcx>) {
+    fn record_moved_place<'tcx>(&mut self, place: &Place<'tcx>, kind: JoinEndpointEscapeKind) {
         // A move into a call transfers ownership to code that is outside this
         // body. Projections are intentionally widened to their base local: the
         // first CFA slice needs a sound escape bit, not field-sensitive alias
         // precision. The later solver can refine this with typed projections.
         self.escapes.insert(place.local.index() as u32);
+        if place.projection.is_empty()
+            && self.endpoint_locals.get(place.local.index()).copied().unwrap_or(false)
+        {
+            self.endpoint_escapes
+                .insert(JoinEndpointEscape { local: place.local.index() as u32, kind });
+        }
     }
 
     fn finish(
@@ -133,16 +127,22 @@ impl JoinBodyFacts {
         is_async: bool,
         frontend_direct_unary: bool,
         queue_bound: JoinQueueBound,
-        instance_closedness: JoinInstanceClosedness,
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
+        let endpoint_escapes = self.endpoint_escapes.iter().copied().collect::<Vec<_>>();
         let (local_facts, solver_steps, solver_complete, locally_closed) = solve_local_facts(
             local_count,
             &self.value_flows,
             &self.escapes,
             self.unknown_effects,
             solver_budget,
+        );
+        let (instance_closedness, instance_closedness_reason) = classify_instance_closedness(
+            frontend_direct_unary,
+            &endpoint_escapes,
+            self.unknown_effects,
+            solver_complete,
         );
         let rejection = if role != JoinBodyRole::ReactionBody {
             Some(JoinCfaRejection::NotReactionBody)
@@ -175,6 +175,7 @@ impl JoinBodyFacts {
             frontend_direct_unary,
             queue_bound,
             instance_closedness,
+            instance_closedness_reason,
             operations: self.operations,
             value_flows: self.value_flows,
             local_facts,
@@ -186,10 +187,36 @@ impl JoinBodyFacts {
             yields: self.yields,
             unknown_effects: self.unknown_effects,
             escapes: self.escapes.into_iter().collect(),
+            endpoint_escapes,
             direct_candidate: rejection.is_none(),
             rejection,
         }
     }
+}
+
+fn is_endpoint_type<'tcx>(endpoint_def_id: LocalDefId, ty: Ty<'tcx>) -> bool {
+    matches!(ty.kind(), ty::Adt(adt, _) if adt.did().as_local() == Some(endpoint_def_id))
+}
+
+fn classify_instance_closedness(
+    frontend_direct_unary: bool,
+    endpoint_escapes: &[JoinEndpointEscape],
+    unknown_effects: u32,
+    solver_complete: bool,
+) -> (JoinInstanceClosedness, JoinInstanceClosednessReason) {
+    if frontend_direct_unary {
+        return (JoinInstanceClosedness::Closed, JoinInstanceClosednessReason::FrontendDirectUnary);
+    }
+    if !endpoint_escapes.is_empty() {
+        return (JoinInstanceClosedness::Open, JoinInstanceClosednessReason::EndpointHandleEscapes);
+    }
+    if !solver_complete {
+        return (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::SolverBudget);
+    }
+    if unknown_effects != 0 {
+        return (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::UnknownEffects);
+    }
+    (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::RequiresInterprocedural)
 }
 
 /// Solve the local value-flow lattice to a bounded fixed point.
@@ -332,12 +359,7 @@ fn widen(current: JoinValueState, incoming: JoinValueState) -> JoinValueState {
 }
 
 impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
-    fn visit_assign(
-        &mut self,
-        place: &Place<'tcx>,
-        rvalue: &Rvalue<'tcx>,
-        location: Location,
-    ) {
+    fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
         let Some(destination) = place.as_local() else {
             self.unknown_effects += 1;
             self.super_assign(place, rvalue, location);
@@ -351,11 +373,20 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 // state and would prevent direct unary candidates.
                 (JoinValueFlowKind::Copy, Some(source.local))
             }
-            Rvalue::Use(Operand::Move(source), _) => {
-                (JoinValueFlowKind::Move, Some(source.local))
-            }
+            Rvalue::Use(Operand::Move(source), _) => (JoinValueFlowKind::Move, Some(source.local)),
             Rvalue::Ref(..) => (JoinValueFlowKind::Borrow, None),
-            Rvalue::Aggregate(..) => (JoinValueFlowKind::Aggregate, None),
+            Rvalue::Aggregate(_, operands) => {
+                // A closure/aggregate may capture an endpoint handle without
+                // moving the aggregate's final value directly at the call
+                // site. Record those typed captures before the ordinary
+                // value-flow summary widens the aggregate.
+                for operand in operands {
+                    if let Operand::Move(source) | Operand::Copy(source) = operand {
+                        self.record_moved_place(source, JoinEndpointEscapeKind::AggregateCapture);
+                    }
+                }
+                (JoinValueFlowKind::Aggregate, None)
+            }
             _ => return self.super_assign(place, rvalue, location),
         };
         self.value_flows.push(JoinValueFlow {
@@ -370,7 +401,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
 
     fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
         match &terminator.kind {
-            TerminatorKind::Call { func, args, .. } | TerminatorKind::TailCall { func, args, .. } => {
+            TerminatorKind::Call { func, args, .. }
+            | TerminatorKind::TailCall { func, args, .. } => {
                 self.calls += 1;
                 self.operation(JoinOperationKind::OrdinaryCall, location);
                 self.call_edges.push(JoinCallEdge {
@@ -383,7 +415,7 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 });
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
-                        self.record_moved_place(place);
+                        self.record_moved_place(place, JoinEndpointEscapeKind::CallArgument);
                     }
                 }
             }
@@ -391,10 +423,18 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 self.yields += 1;
                 self.operation(JoinOperationKind::Yield, location);
                 if let Operand::Move(place) = value {
-                    self.record_moved_place(place);
+                    self.record_moved_place(place, JoinEndpointEscapeKind::Yield);
                 }
             }
-            TerminatorKind::Return => self.operation(JoinOperationKind::Return, location),
+            TerminatorKind::Return => {
+                self.operation(JoinOperationKind::Return, location);
+                if self.endpoint_locals.get(RETURN_PLACE.index()).copied().unwrap_or(false) {
+                    self.endpoint_escapes.insert(JoinEndpointEscape {
+                        local: RETURN_PLACE.index() as u32,
+                        kind: JoinEndpointEscapeKind::Return,
+                    });
+                }
+            }
             _ => {}
         }
         self.super_terminator(terminator, location);
@@ -430,12 +470,7 @@ fn dump_summary(
         .map(|operation| format!("\"{:?}\"", operation.kind))
         .collect::<Vec<_>>()
         .join(",");
-    let escapes = summary
-        .escapes
-        .iter()
-        .map(u32::to_string)
-        .collect::<Vec<_>>()
-        .join(",");
+    let escapes = summary.escapes.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
     let value_flows = summary
         .value_flows
         .iter()
@@ -470,11 +505,16 @@ fn dump_summary(
         })
         .collect::<Vec<_>>()
         .join(",");
-    let rejection = summary
-        .rejection
-        .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
+    let rejection =
+        summary.rejection.map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
+    let endpoint_escapes = summary
+        .endpoint_escapes
+        .iter()
+        .map(|escape| format!("{{\"local\":{},\"kind\":\"{:?}\"}}", escape.local, escape.kind))
+        .collect::<Vec<_>>()
+        .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"instance_closedness\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -484,6 +524,7 @@ fn dump_summary(
         summary.frontend_direct_unary,
         summary.queue_bound,
         summary.instance_closedness,
+        summary.instance_closedness_reason,
         mode,
         summary.calls,
         call_edges,
@@ -493,6 +534,7 @@ fn dump_summary(
         summary.solver_complete,
         summary.locally_closed,
         escapes,
+        endpoint_escapes,
         value_flows,
         local_facts,
         operation_kinds,
@@ -537,9 +579,8 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             queue_bound,
-            instance_closedness,
-        )) =
-            body_descriptor(tcx, local_def_id)
+            endpoint_def_id_local,
+        )) = body_descriptor(tcx, local_def_id)
         else {
             return;
         };
@@ -549,6 +590,15 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             value_flows: Vec::new(),
             call_edges: Vec::new(),
             escapes: FxIndexSet::default(),
+            endpoint_escapes: FxIndexSet::default(),
+            endpoint_locals: endpoint_def_id_local
+                .map(|endpoint| {
+                    body.local_decls
+                        .iter()
+                        .map(|decl| is_endpoint_type(endpoint, decl.ty))
+                        .collect()
+                })
+                .unwrap_or_default(),
             calls: 0,
             yields: 0,
             unknown_effects: 0,
@@ -607,7 +657,6 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             queue_bound,
-            instance_closedness,
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
@@ -622,7 +671,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let solver_complete = summary.solver_complete;
         let locally_closed = summary.locally_closed;
         let instance_closedness = summary.instance_closedness;
+        let instance_closedness_reason = summary.instance_closedness_reason;
         let escapes = summary.escapes.len();
+        let endpoint_escapes = summary.endpoint_escapes.len();
         let value_flows = summary.value_flows.len();
         let operation_kinds = summary.operations.iter().map(|op| op.kind).collect::<Vec<_>>();
         body.join_info = Some(Box::new(summary));
@@ -644,6 +695,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             frontend_direct_unary,
             ?queue_bound,
             ?instance_closedness,
+            ?instance_closedness_reason,
             operations,
             calls,
             call_edges,
@@ -654,6 +706,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             solver_complete,
             locally_closed,
             escapes,
+            endpoint_escapes,
             operation_kinds = ?operation_kinds,
             direct_candidate,
             ?rejection,

@@ -201,15 +201,56 @@ pub enum JoinQueueBound {
 ///
 /// `Closed` is intentionally reserved for the caller-owned direct unary
 /// representation, where each invocation owns its input and reaction future
-/// and no shared channel state participates. Matcher-backed endpoints remain
-/// `Unknown` until an interprocedural instance analysis accounts for every
-/// channel handle, producer, consumer and escape.
+/// and no shared channel state participates. `Open` is a definite typed
+/// endpoint-handle escape from the analyzed body; it is useful negative
+/// evidence, but is not a whole-program allocation proof. Matcher-backed
+/// endpoints without such a witness remain `Unknown` until an
+/// interprocedural instance analysis accounts for every channel handle,
+/// producer, consumer and escape.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinInstanceClosedness {
     Closed,
     Open,
     Unknown,
+}
+
+/// Why the compiler assigned the current whole-instance closedness fact.
+///
+/// The reason is part of the proof record rather than a diagnostic string so
+/// later transforms can require the exact fact they need.  In particular,
+/// `RequiresInterprocedural` must never be treated as an optimistic closedness
+/// result merely because a body-local solver reached a fixed point.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinInstanceClosednessReason {
+    FrontendDirectUnary,
+    EndpointHandleEscapes,
+    UnknownEffects,
+    SolverBudget,
+    RequiresInterprocedural,
+}
+
+/// A typed escape of a concrete endpoint handle from a join-associated body.
+///
+/// Ordinary payload moves remain in `escapes`; this side table only records a
+/// move whose MIR type is the endpoint's own ADT.  That distinction is what
+/// lets closed-instance analysis reject a returned/captured group handle
+/// without confusing it with an application value moved to a reaction.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinEndpointEscape {
+    pub local: u32,
+    pub kind: JoinEndpointEscapeKind,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinEndpointEscapeKind {
+    CallArgument,
+    AggregateCapture,
+    Yield,
+    Return,
 }
 
 /// Conservative facts produced for one join-associated MIR body.
@@ -231,6 +272,7 @@ pub struct JoinCfaSummary {
     pub frontend_direct_unary: bool,
     pub queue_bound: JoinQueueBound,
     pub instance_closedness: JoinInstanceClosedness,
+    pub instance_closedness_reason: JoinInstanceClosednessReason,
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
     /// Monotone intrabody solution for the locals touched by the extracted
@@ -249,6 +291,7 @@ pub struct JoinCfaSummary {
     pub yields: u32,
     pub unknown_effects: u32,
     pub escapes: Vec<u32>,
+    pub endpoint_escapes: Vec<JoinEndpointEscape>,
     pub direct_candidate: bool,
     pub rejection: Option<JoinCfaRejection>,
 }
