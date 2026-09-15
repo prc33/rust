@@ -555,18 +555,19 @@ fn generate_unary_endpoint(
     let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
     // A closed unary endpoint with no nested channel aliases has the exact
     // ordinary-future shape: capture the argument now and evaluate the body
-    // only when its Reply is first polled. This path is selected only in
-    // `-Zjoin-cfa=optimize`; the MIR pass still records and checks the body,
-    // while shared/multi-input rules retain the compatibility matcher.
+    // only when the returned future is first polled. Returning an opaque
+    // future keeps the capture inline, like an ordinary `async fn`, instead
+    // of allocating the compatibility `Reply` thunk. This path is selected
+    // only in `-Zjoin-cfa=optimize`; the MIR pass still records and checks the
+    // body, while shared/multi-input rules retain the compatibility matcher.
     let use_direct_unary =
         direct_unary && channel.reply.is_some() && aliases.is_empty() && !rule.is_async;
     let method = if use_direct_unary {
         format!(
-            "{visibility}fn {channel}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{ ::joins_runtime::Reply::direct(move || {{ let __join_input_value = {value}; {unpack} {reaction} }}) }}",
+            "{visibility}fn {channel}(&self{argument}) -> impl ::core::future::Future<Output = ::core::result::Result<{output_type}, ::joins_runtime::JoinError>> {{ let __join_input_value = {value}; async move {{ {unpack} {reaction} }} }}",
             channel = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
-            scope_bounds = scope_bounds,
             unpack = unpack,
             reaction = reaction,
         )
