@@ -197,6 +197,21 @@ pub enum JoinQueueBound {
     Unknown,
 }
 
+/// Closedness of the concrete join state represented by a body.
+///
+/// `Closed` is intentionally reserved for the caller-owned direct unary
+/// representation, where each invocation owns its input and reaction future
+/// and no shared channel state participates. Matcher-backed endpoints remain
+/// `Unknown` until an interprocedural instance analysis accounts for every
+/// channel handle, producer, consumer and escape.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinInstanceClosedness {
+    Closed,
+    Open,
+    Unknown,
+}
+
 /// Conservative facts produced for one join-associated MIR body.
 ///
 /// `direct_candidate` is intentionally only a candidate bit.  It is true for
@@ -215,6 +230,7 @@ pub struct JoinCfaSummary {
     pub is_async: bool,
     pub frontend_direct_unary: bool,
     pub queue_bound: JoinQueueBound,
+    pub instance_closedness: JoinInstanceClosedness,
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
     /// Monotone intrabody solution for the locals touched by the extracted

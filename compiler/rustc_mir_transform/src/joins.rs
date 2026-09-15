@@ -13,9 +13,9 @@ use rustc_data_structures::fx::FxIndexSet;
 use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
-    JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinLocalFact,
-    JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
-    JoinValueState,
+    JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinInstanceClosedness,
+    JoinLocalFact, JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow,
+    JoinValueFlowKind, JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{self, Body, Location, Operand, Place, Rvalue, TerminatorKind};
@@ -33,7 +33,16 @@ pub(super) struct JoinSemanticOps;
 fn body_descriptor<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
-) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool, JoinQueueBound)> {
+) -> Option<(
+    u32,
+    u32,
+    JoinBodyRole,
+    u32,
+    bool,
+    bool,
+    JoinQueueBound,
+    JoinInstanceClosedness,
+)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
         if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
             return Some((
@@ -44,6 +53,7 @@ fn body_descriptor<'tcx>(
                 endpoint.declared_async_rule,
                 endpoint.frontend_direct_unary,
                 frontend_queue_bound(endpoint.frontend_queue_bound),
+                frontend_instance_closedness(endpoint.frontend_direct_unary),
             ));
         }
 
@@ -63,6 +73,7 @@ fn body_descriptor<'tcx>(
                     rule.is_async,
                     endpoint.frontend_direct_unary,
                     frontend_queue_bound(endpoint.frontend_queue_bound),
+                    frontend_instance_closedness(endpoint.frontend_direct_unary),
                 ));
             }
         }
@@ -75,6 +86,14 @@ fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
         Some(0) => JoinQueueBound::Exact(0),
         Some(bound) => JoinQueueBound::AtMost(bound),
         None => JoinQueueBound::Unknown,
+    }
+}
+
+fn frontend_instance_closedness(direct_unary: bool) -> JoinInstanceClosedness {
+    if direct_unary {
+        JoinInstanceClosedness::Closed
+    } else {
+        JoinInstanceClosedness::Unknown
     }
 }
 
@@ -114,6 +133,7 @@ impl JoinBodyFacts {
         is_async: bool,
         frontend_direct_unary: bool,
         queue_bound: JoinQueueBound,
+        instance_closedness: JoinInstanceClosedness,
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
@@ -154,6 +174,7 @@ impl JoinBodyFacts {
             is_async,
             frontend_direct_unary,
             queue_bound,
+            instance_closedness,
             operations: self.operations,
             value_flows: self.value_flows,
             local_facts,
@@ -453,7 +474,7 @@ fn dump_summary(
         .rejection
         .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"instance_closedness\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -462,6 +483,7 @@ fn dump_summary(
         summary.is_async,
         summary.frontend_direct_unary,
         summary.queue_bound,
+        summary.instance_closedness,
         mode,
         summary.calls,
         call_edges,
@@ -515,6 +537,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             queue_bound,
+            instance_closedness,
         )) =
             body_descriptor(tcx, local_def_id)
         else {
@@ -584,6 +607,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             queue_bound,
+            instance_closedness,
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
@@ -597,6 +621,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let solver_steps = summary.solver_steps;
         let solver_complete = summary.solver_complete;
         let locally_closed = summary.locally_closed;
+        let instance_closedness = summary.instance_closedness;
         let escapes = summary.escapes.len();
         let value_flows = summary.value_flows.len();
         let operation_kinds = summary.operations.iter().map(|op| op.kind).collect::<Vec<_>>();
@@ -618,6 +643,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             ?queue_bound,
+            ?instance_closedness,
             operations,
             calls,
             call_edges,
