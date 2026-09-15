@@ -828,6 +828,7 @@ mod desc {
     pub(crate) const parse_opt_number: &str = parse_number;
     pub(crate) const parse_frame_pointer: &str = "one of `true`/`yes`/`on`, `false`/`no`/`off`, or (with -Zunstable-options) `non-leaf` or `always`";
     pub(crate) const parse_time_passes_format: &str = "`text` (default) or `json`";
+    pub(crate) const parse_join_cfa_mode: &str = "one of `off`, `analyze`, or `optimize`";
     pub(crate) const parse_passes: &str = "a space-separated list of passes, or `all`";
     pub(crate) const parse_panic_strategy: &str = "either `unwind`, `abort`, or `immediate-abort`";
     pub(crate) const parse_on_broken_pipe: &str = "either `kill`, `error`, or `inherit`";
@@ -1476,6 +1477,16 @@ pub mod parse {
             }
             Some(_) => false,
         }
+    }
+
+    pub(crate) fn parse_join_cfa_mode(slot: &mut JoinCfaMode, v: Option<&str>) -> bool {
+        *slot = match v {
+            Some("off") => JoinCfaMode::Off,
+            Some("analyze") => JoinCfaMode::Analyze,
+            Some("optimize") => JoinCfaMode::Optimize,
+            _ => return false,
+        };
+        true
     }
 
     pub(crate) fn parse_dump_mono_stats(slot: &mut DumpMonoStatsFormat, v: Option<&str>) -> bool {
@@ -2582,6 +2593,12 @@ options! {
         "a default MIR inlining threshold (default: 50)"),
     input_stats: bool = (false, parse_bool, [UNTRACKED],
         "print some statistics about AST and HIR (default: no)"),
+    join_cfa: JoinCfaMode = (JoinCfaMode::Off, parse_join_cfa_mode, [TRACKED],
+        "control experimental compiler-owned join CFA (`off`, `analyze`, or `optimize`; default: `off`)"),
+    join_cfa_budget: usize = (4096, parse_number, [TRACKED],
+        "maximum intrabody propagation steps for experimental join CFA (default: 4096)"),
+    join_cfa_dump: Option<PathBuf> = (None, parse_opt_pathbuf, [UNTRACKED],
+        "write one deterministic JSON summary per join body into this directory"),
     instrument_mcount: InstrumentMcount = (InstrumentMcount::Disabled, parse_instrument_mcount, [TRACKED],
         "insert function instrument code for mcount-based tracing (default: no)"),
     instrument_xray: Option<InstrumentXRay> = (None, parse_instrument_xray, [TRACKED],

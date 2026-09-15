@@ -13,6 +13,7 @@ use rustc_errors::PResult;
 use rustc_expand::base::{DummyResult, ExpandResult, ExtCtxt, MacEager, MacroExpanderResult};
 use rustc_parse::exp;
 use rustc_parse::parser::{AllowConstBlockItems, FollowedByType, ForceCollect, Parser};
+use rustc_session::config::JoinCfaMode;
 use rustc_span::{FileName, Ident, Span, kw, sym};
 use smallvec::SmallVec;
 
@@ -139,7 +140,11 @@ pub(crate) fn expand_join_impl<'cx>(
         Ok(definition) => definition,
         Err(error) => return ExpandResult::Ready(DummyResult::any(span, error.emit())),
     };
-    let generated = match generate_endpoint(&definition) {
+    // Only optimize mode selects the caller-owned isolated-unary
+    // representation. Off/analyze retain the compatibility matcher so the
+    // semantic and CFA modes can be compared against the same expansion.
+    let direct_unary = cx.sess.opts.unstable_opts.join_cfa == JoinCfaMode::Optimize;
+    let generated = match generate_endpoint(&definition, direct_unary) {
         Ok(generated) => generated,
         Err(message) => {
             let guar = cx.dcx().span_err(span, message);
@@ -354,7 +359,7 @@ fn take_group<'a>(parser: &mut Parser<'a>, delimiter: Delimiter) -> PResult<'a, 
     }
 }
 
-fn generate_endpoint(definition: &Definition) -> Result<String, String> {
+fn generate_endpoint(definition: &Definition, direct_unary: bool) -> Result<String, String> {
     if definition.channels.is_empty() {
         return Err("a join definition must declare at least one channel".into());
     }
@@ -374,12 +379,15 @@ fn generate_endpoint(definition: &Definition) -> Result<String, String> {
         && definition.channels.len() == definition.rules[0].patterns.len()
     {
         resolve_rule(definition, &definition.rules[0], 0)?;
-        return generate_restricted_endpoint(definition);
+        return generate_restricted_endpoint(definition, direct_unary);
     }
     generate_dynamic_endpoint(definition)
 }
 
-fn generate_restricted_endpoint(definition: &Definition) -> Result<String, String> {
+fn generate_restricted_endpoint(
+    definition: &Definition,
+    direct_unary: bool,
+) -> Result<String, String> {
     if definition.rules.len() != 1 {
         return Err("the native join lowering currently requires exactly one rule".into());
     }
@@ -425,6 +433,7 @@ fn generate_restricted_endpoint(definition: &Definition) -> Result<String, Strin
             &prefix,
             &replies,
             &endpoint_attribute,
+            direct_unary,
         );
     }
 
@@ -531,6 +540,7 @@ fn generate_unary_endpoint(
     prefix: &str,
     replies: &[(String, String)],
     endpoint_attribute: &str,
+    direct_unary: bool,
 ) -> Result<String, String> {
     let expression = reply_expression(replies, channel)?;
     let input_type = channel_input_type(channel);
@@ -541,7 +551,26 @@ fn generate_unary_endpoint(
     let visibility = visibility_prefix(&definition.visibility);
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
-    let method = if channel.reply.is_some() {
+    let result = if channel.reply.is_some() { expression.to_string() } else { "()".into() };
+    let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
+    // A closed unary endpoint with no nested channel aliases has the exact
+    // ordinary-future shape: capture the argument now and evaluate the body
+    // only when its Reply is first polled. This path is selected only in
+    // `-Zjoin-cfa=optimize`; the MIR pass still records and checks the body,
+    // while shared/multi-input rules retain the compatibility matcher.
+    let use_direct_unary =
+        direct_unary && channel.reply.is_some() && aliases.is_empty() && !rule.is_async;
+    let method = if use_direct_unary {
+        format!(
+            "{visibility}fn {channel}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{ ::joins_runtime::Reply::direct(move || {{ let __join_input_value = {value}; {unpack} {reaction} }}) }}",
+            channel = channel.name.name,
+            argument = channel_method_argument(channel),
+            value = channel_submit_value(channel),
+            scope_bounds = scope_bounds,
+            unpack = unpack,
+            reaction = reaction,
+        )
+    } else if channel.reply.is_some() {
         format!(
             "{visibility}fn {channel}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{ let reply = self.matcher.submit_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
             channel = channel.name.name,
@@ -558,8 +587,6 @@ fn generate_unary_endpoint(
             scope_bounds = scope_bounds,
         )
     };
-    let result = if channel.reply.is_some() { expression.to_string() } else { "()".into() };
-    let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
     let dispatch = if rule.is_async {
         format!(
             "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"

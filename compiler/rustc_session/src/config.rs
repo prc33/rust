@@ -629,6 +629,20 @@ pub enum MirStripDebugInfo {
     AllLocals,
 }
 
+/// Controls the experimental compiler-owned join CFA workstream.
+///
+/// `Off` preserves the ordinary compiler path and performs no join summary
+/// collection. `Analyze` records conservative facts without changing MIR.
+/// `Optimize` is reserved for proof-gated rewrites; until such a rewrite is
+/// implemented it has the same semantics as `Analyze` and is reported as
+/// analysis-only by the join pass.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum JoinCfaMode {
+    Off,
+    Analyze,
+    Optimize,
+}
+
 /// Split debug-information is enabled by `-C split-debuginfo`, this enum is only used if split
 /// debug-information is enabled (in either `Packed` or `Unpacked` modes), and the platform
 /// uses DWARF for debug-information.
@@ -3344,7 +3358,7 @@ pub(crate) mod dep_tracking {
         CoverageOptions, CrateType, DebugInfo, DebugInfoCompression, ErrorOutputType, FmtDebug,
         FunctionReturn, InliningThreshold, InstrumentCoverage, InstrumentMcount,
         InstrumentMcountOpts, InstrumentXRay, LinkerPluginLto, LocationDetail, LtoCli,
-        MirStripDebugInfo, NextSolverConfig, Offload, OptLevel, OutFileName, OutputType,
+        JoinCfaMode, MirStripDebugInfo, NextSolverConfig, Offload, OptLevel, OutFileName, OutputType,
         OutputTypes, PatchableFunctionEntry, PointerAuthOption, Polonius, ResolveDocLinks,
         SourceFileHashAlgorithm, SplitDwarfKind, SwitchWithOptPath, SymbolManglingVersion,
         WasiExecModel,
@@ -3421,6 +3435,7 @@ pub(crate) mod dep_tracking {
         LtoCli,
         DebugInfo,
         DebugInfoCompression,
+        JoinCfaMode,
         MirStripDebugInfo,
         CollapseMacroDebuginfo,
         UnstableFeatures,

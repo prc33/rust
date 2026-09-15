@@ -5,12 +5,17 @@ use rustc_hir::{ImplItemKind, ItemKind, find_attr};
 use rustc_middle::middle::joins::{JoinChannel, JoinDefinition, JoinDefinitions, JoinRule};
 use rustc_middle::query::Providers;
 use rustc_middle::ty::TyCtxt;
+use tracing::info;
 
 fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
     let mut endpoints = Vec::new();
 
-    for impl_owner in tcx.hir_crate_items(()).owners() {
-        let impl_def_id = impl_owner.def_id;
+    // `owners()` includes the synthetic crate-root owner for the crate-wide
+    // item collection. That owner is a module, rather than an `Item`, so using
+    // `hir_expect_item` on it triggers an ICE. Iterate the actual free items;
+    // inherent impls are included there and the synthetic root is not.
+    for item_id in tcx.hir_crate_items(()).free_items() {
+        let impl_def_id = item_id.owner_id.def_id;
         let item = tcx.hir_expect_item(impl_def_id);
         let ItemKind::Impl(impl_) = item.kind else { continue };
 
@@ -49,11 +54,14 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             }
         }
 
+        let span = item.span;
         let channels = channel_items
             .into_iter()
             .take(declared_channels as usize)
-            .map(|(method_def_id, name)| JoinChannel {
+            .enumerate()
+            .map(|(index, (method_def_id, name))| JoinChannel {
                 method_def_id,
+                index: index as u32,
                 name,
                 signature: tcx
                     .fn_sig(method_def_id.to_def_id())
@@ -67,6 +75,8 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                 method_def_id,
                 arity: declared_arity,
                 is_async: declared_async_rule,
+                body_def_ids: tcx.nested_bodies_within(method_def_id),
+                span,
             })
             .collect();
 
@@ -77,9 +87,11 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             declared_rules,
             declared_arity,
             declared_async_rule,
+            span,
             channels,
             rules,
         });
+        info!(target: "rustc_join", endpoint = ?impl_def_id, "join endpoint descriptor collected");
     }
 
     JoinDefinitions { endpoints }

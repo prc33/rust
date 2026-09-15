@@ -158,6 +158,7 @@ declare_passes! {
     mod impossible_clauses : ImpossibleClauses;
     mod instsimplify : InstSimplify { BeforeInline, AfterSimplifyCfg };
     mod jump_threading : JumpThreading;
+    mod joins : JoinSemanticOps;
     mod known_panics_lint : KnownPanicsLint;
     mod lint_and_remove_uninhabited : LintAndRemoveUninhabited;
     mod lower_intrinsics : LowerIntrinsics;
@@ -598,9 +599,18 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
     assert!(body.phase == MirPhase::Analysis(AnalysisPhase::Initial));
     let did = body.source.def_id();
 
+    // Keep join identities and pre-coroutine body shape visible before the
+    // ordinary analysis cleanup and runtime lowering passes.
+    joins::JoinSemanticOps.run_pass(tcx, body);
+
     debug!("analysis_mir_cleanup({:?})", did);
     run_analysis_cleanup_passes(tcx, body);
     assert!(body.phase == MirPhase::Analysis(AnalysisPhase::PostCleanup));
+
+    // The summary describes the pre-cleanup, pre-coroutine body. Until a
+    // proof-consuming LowerJoins pass exists, do not let later structural MIR
+    // rewrites accidentally treat it as current runtime facts.
+    body.join_info = None;
 
     // Do a little drop elaboration before const-checking if `const_precise_live_drops` is enabled.
     if check_consts::post_drop_elaboration::checking_enabled(&ConstCx::new(tcx, body)) {

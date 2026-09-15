@@ -29,6 +29,7 @@ use tracing::{debug, trace};
 
 pub use self::query::*;
 use crate::mir::interpret::{AllocRange, Scalar};
+use crate::middle::joins::JoinCfaSummary;
 use crate::ty::codec::{TyDecoder, TyEncoder};
 use crate::ty::print::{FmtPrinter, Printer, pretty_print_const, with_no_trimmed_paths};
 use crate::ty::{
@@ -328,6 +329,16 @@ pub struct Body<'tcx> {
     #[type_foldable(identity)]
     #[type_visitable(ignore)]
     pub coverage_mir_info: Option<Box<coverage::CoverageMirInfo>>,
+
+    /// Compiler-owned join facts collected from the initial analysis MIR.
+    ///
+    /// This side table is intentionally optional and starts empty for normal
+    /// Rust bodies. It lets join CFA/fusion carry typed operation identities
+    /// through MIR without adding queue/runtime details to the ordinary
+    /// `StatementKind` and `TerminatorKind` enums. Any pass that changes a
+    /// body in a way that invalidates the facts must clear this field before
+    /// consuming it; no codegen path relies on stale facts.
+    pub join_info: Option<Box<JoinCfaSummary>>,
 }
 
 impl<'tcx> Body<'tcx> {
@@ -371,6 +382,7 @@ impl<'tcx> Body<'tcx> {
             tainted_by_errors,
             coverage_early_info: None,
             coverage_mir_info: None,
+            join_info: None,
         };
         body.is_polymorphic = body.has_non_region_param();
         body
@@ -402,6 +414,7 @@ impl<'tcx> Body<'tcx> {
             tainted_by_errors: None,
             coverage_early_info: None,
             coverage_mir_info: None,
+            join_info: None,
         };
         body.is_polymorphic = body.has_non_region_param();
         body
