@@ -147,7 +147,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
     const ALLOWED_TARGETS: AllowedTargets<'_> =
         AllowedTargets::AllowList(&[Allow(Target::Impl { of_trait: false })]);
     const TEMPLATE: AttributeTemplate = template!(
-        List: &["channels = N, rules = N, arity = N, async_rule = 0|1, direct_unary = 0|1"]
+        List: &["channels = N, rules = N, arity = N, async_rule = 0|1, direct_unary = 0|1, queue_bound = N"]
     );
     const STABILITY: AttributeStability = unstable!(joins);
 
@@ -158,6 +158,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
         let mut arity = None;
         let mut async_rule = None;
         let mut direct_unary = None;
+        let mut queue_bound = None;
         let mut errored = false;
 
         for item in list.mixed() {
@@ -171,6 +172,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
                 sym::arity => &mut arity,
                 sym::async_rule => &mut async_rule,
                 sym::direct_unary => &mut direct_unary,
+                sym::queue_bound => &mut queue_bound,
                 _ => {
                     cx.adcx().expected_specific_argument(
                         ident.span,
@@ -180,6 +182,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
                             sym::arity,
                             sym::async_rule,
                             sym::direct_unary,
+                            sym::queue_bound,
                         ],
                     );
                     errored = true;
@@ -195,13 +198,14 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
             return None;
         }
 
-        let Some((channels, rules, arity, async_rule, direct_unary)) = channels
+        let Some((channels, rules, arity, async_rule, direct_unary, queue_bound)) = channels
             .zip(rules)
             .zip(arity)
             .zip(async_rule)
             .zip(direct_unary)
-            .map(|((((channels, rules), arity), async_rule), direct_unary)| {
-                (channels, rules, arity, async_rule != 0, direct_unary != 0)
+            .zip(queue_bound)
+            .map(|(((((channels, rules), arity), async_rule), direct_unary), queue_bound)| {
+                (channels, rules, arity, async_rule != 0, direct_unary != 0, queue_bound)
             })
         else {
             let attr_span = cx.attr_span;
@@ -213,6 +217,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
                     sym::arity,
                     sym::async_rule,
                     sym::direct_unary,
+                    sym::queue_bound,
                 ],
             );
             return None;
@@ -224,6 +229,7 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
             arity,
             async_rule,
             direct_unary,
+            queue_bound,
         })
     }
 }

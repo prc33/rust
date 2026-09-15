@@ -14,7 +14,8 @@ use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinLocalFact,
-    JoinMirOperation, JoinOperationKind, JoinValueFlow, JoinValueFlowKind, JoinValueState,
+    JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
+    JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{self, Body, Location, Operand, Place, Rvalue, TerminatorKind};
@@ -32,7 +33,7 @@ pub(super) struct JoinSemanticOps;
 fn body_descriptor<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
-) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool)> {
+) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool, JoinQueueBound)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
         if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
             return Some((
@@ -42,6 +43,7 @@ fn body_descriptor<'tcx>(
                 endpoint.declared_arity,
                 endpoint.declared_async_rule,
                 endpoint.frontend_direct_unary,
+                frontend_queue_bound(endpoint.frontend_queue_bound),
             ));
         }
 
@@ -60,11 +62,20 @@ fn body_descriptor<'tcx>(
                     rule.arity,
                     rule.is_async,
                     endpoint.frontend_direct_unary,
+                    frontend_queue_bound(endpoint.frontend_queue_bound),
                 ));
             }
         }
     }
     None
+}
+
+fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
+    match bound {
+        Some(0) => JoinQueueBound::Exact(0),
+        Some(bound) => JoinQueueBound::AtMost(bound),
+        None => JoinQueueBound::Unknown,
+    }
 }
 
 struct JoinBodyFacts {
@@ -102,6 +113,7 @@ impl JoinBodyFacts {
         arity: u32,
         is_async: bool,
         frontend_direct_unary: bool,
+        queue_bound: JoinQueueBound,
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
@@ -141,6 +153,7 @@ impl JoinBodyFacts {
             arity,
             is_async,
             frontend_direct_unary,
+            queue_bound,
             operations: self.operations,
             value_flows: self.value_flows,
             local_facts,
@@ -440,7 +453,7 @@ fn dump_summary(
         .rejection
         .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -448,6 +461,7 @@ fn dump_summary(
         summary.arity,
         summary.is_async,
         summary.frontend_direct_unary,
+        summary.queue_bound,
         mode,
         summary.calls,
         call_edges,
@@ -493,7 +507,15 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let Some(local_def_id) = body.source.def_id().as_local() else {
             return;
         };
-        let Some((endpoint_def_id, rule_def_id, role, arity, is_async, frontend_direct_unary)) =
+        let Some((
+            endpoint_def_id,
+            rule_def_id,
+            role,
+            arity,
+            is_async,
+            frontend_direct_unary,
+            queue_bound,
+        )) =
             body_descriptor(tcx, local_def_id)
         else {
             return;
@@ -561,6 +583,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             arity,
             is_async,
             frontend_direct_unary,
+            queue_bound,
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
@@ -594,6 +617,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             arity,
             is_async,
             frontend_direct_unary,
+            ?queue_bound,
             operations,
             calls,
             call_edges,

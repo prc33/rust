@@ -1855,6 +1855,7 @@ symbols! {
         arity,
         async_rule,
         direct_unary,
+        queue_bound,
         rustc_legacy_const_generics,
         rustc_lint_opt_deny_field_access,
         rustc_lint_opt_ty,

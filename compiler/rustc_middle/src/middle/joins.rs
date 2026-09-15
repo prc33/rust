@@ -36,6 +36,10 @@ pub struct JoinDefinition<'tcx> {
     /// representation for this endpoint. The later CFA pass still validates
     /// the body; this bit records the representation choice in compiler IR.
     pub frontend_direct_unary: bool,
+    /// Frontend queue bound for restricted unary storage: `0` means the
+    /// caller-owned direct future has no queue, `1` means the generated
+    /// matcher is allowed to use a single slot, and `None` means unknown.
+    pub frontend_queue_bound: Option<u32>,
     /// Span of the generated endpoint contract. This points back through the
     /// builtin expansion to the source `join impl` declaration.
     pub span: Span,
@@ -182,6 +186,17 @@ pub enum JoinValueFlowKind {
     Unknown,
 }
 
+/// Conservative occupancy fact for one compiler-described join endpoint.
+/// This is deliberately separate from local value closedness: a channel can
+/// be closed over values while still receiving an unbounded producer stream.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinQueueBound {
+    Exact(u32),
+    AtMost(u32),
+    Unknown,
+}
+
 /// Conservative facts produced for one join-associated MIR body.
 ///
 /// `direct_candidate` is intentionally only a candidate bit.  It is true for
@@ -199,6 +214,7 @@ pub struct JoinCfaSummary {
     pub arity: u32,
     pub is_async: bool,
     pub frontend_direct_unary: bool,
+    pub queue_bound: JoinQueueBound,
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
     /// Monotone intrabody solution for the locals touched by the extracted

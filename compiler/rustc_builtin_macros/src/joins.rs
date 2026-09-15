@@ -422,7 +422,12 @@ fn generate_restricted_endpoint(
 
     let prefix =
         rewrite_early_return_maps(definition, &resolved, &prefix, EarlyReturnMode::UnaryOrPair, 0)?;
-    let endpoint_attribute = join_endpoint_attribute(definition, direct_unary);
+    let queue_bound = if channels.len() == 1 {
+        if direct_unary { 0 } else { 1 }
+    } else {
+        u32::MAX
+    };
+    let endpoint_attribute = join_endpoint_attribute(definition, direct_unary, queue_bound);
 
     if channels.len() == 1 {
         return generate_unary_endpoint(
@@ -619,12 +624,12 @@ impl {impl_generics}Clone for {impl_name} {{
 impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
-        Self {{ matcher: ::joins_runtime::UnaryMatcher::new() }}
+        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded() }}
     }}
 
     {visibility}fn new_in_scope(scope: ::joins_runtime::QueryScope) -> Self
 {scope_bounds}{{
-        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_in_scope(scope) }}
+        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded_in_scope(scope) }}
     }}
 
     {method}
@@ -725,7 +730,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let methods = method_definitions.join("\n\n    ");
     let rules = rule_definitions.join("\n        ");
-    let endpoint_attribute = join_endpoint_attribute(definition, false);
+    let endpoint_attribute = join_endpoint_attribute(definition, false, u32::MAX);
     Ok(format!(
         r#"{struct_attributes}{visibility}struct {struct_name} {{
     matcher: ::joins_runtime::DynamicMatcher,
@@ -775,16 +780,17 @@ impl {impl_generics}{impl_name} {{
 /// Emit the compact, parsed contract consumed by rustc's join descriptor
 /// query. Only shape is encoded here; names, method identities, and resolved
 /// types come from the generated HIR after normal name and type resolution.
-fn join_endpoint_attribute(definition: &Definition, direct_unary: bool) -> String {
+fn join_endpoint_attribute(definition: &Definition, direct_unary: bool, queue_bound: u32) -> String {
     let arity = definition.rules.iter().map(|rule| rule.patterns.len()).max().unwrap_or(0);
     let async_rule = definition.rules.iter().any(|rule| rule.is_async);
     format!(
-        "#[join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {}, direct_unary = {})]",
+        "#[join_endpoint(channels = {}, rules = {}, arity = {}, async_rule = {}, direct_unary = {}, queue_bound = {})]",
         definition.channels.len(),
         definition.rules.len(),
         arity,
         u32::from(async_rule),
         u32::from(direct_unary),
+        queue_bound,
     )
 }
 
