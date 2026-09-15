@@ -422,12 +422,16 @@ fn generate_restricted_endpoint(
 
     let prefix =
         rewrite_early_return_maps(definition, &resolved, &prefix, EarlyReturnMode::UnaryOrPair, 0)?;
+    let direct_shape = direct_unary
+        && channels.len() == 1
+        && channels[0].reply.is_some()
+        && aliases.is_empty();
     let queue_bound = if channels.len() == 1 {
-        if direct_unary { 0 } else { 1 }
+        if direct_shape { 0 } else { 1 }
     } else {
         u32::MAX
     };
-    let endpoint_attribute = join_endpoint_attribute(definition, direct_unary, queue_bound);
+    let endpoint_attribute = join_endpoint_attribute(definition, direct_shape, queue_bound);
 
     if channels.len() == 1 {
         return generate_unary_endpoint(
@@ -438,7 +442,7 @@ fn generate_restricted_endpoint(
             &prefix,
             &replies,
             &endpoint_attribute,
-            direct_unary,
+            direct_shape,
         );
     }
 
