@@ -9,7 +9,7 @@
 //! infer semantics from generated method names or call into the library
 //! runtime.
 
-use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
 use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
@@ -377,6 +377,9 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
 /// proof input for the next MIR transform, not the transform itself.
 pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSummary {
     let mut bodies = Vec::new();
+    let mut ordinary_bodies = FxHashMap::default();
+    let mut pending_ordinary = Vec::new();
+    let join_call_targets = join_call_target_map(tcx);
     for &def_id in tcx.mir_keys(()).iter() {
         // `mir_keys` also contains consts/statics. `optimized_mir` is a
         // runtime-MIR query and intentionally rejects those bodies, so keep
@@ -394,34 +397,102 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         // MIR: coroutine lowering and cleanup must not change the CFA facts
         // that describe the source-level join boundary.
         let body = tcx.optimized_mir(def_id.to_def_id());
-        let Some(summary) = body.join_info.as_ref() else { continue };
         let parent_body_def_id = tcx
             .parent(def_id.to_def_id())
             .as_local()
             .map(|parent| parent.index() as u32)
             .filter(|parent| *parent != def_id.index() as u32);
-        bodies.push(JoinCfaBodyRecord {
-            body_def_id: def_id.index() as u32,
-            parent_body_def_id,
-            endpoint_def_id: Some(summary.endpoint_def_id),
-            role: summary.role,
-            value_flows: summary.value_flows.clone(),
-            call_edges: summary.call_edges.clone(),
-            unknown_effects: summary.unknown_effects,
-            endpoint_escapes: summary.endpoint_escapes.clone(),
-        });
+        if let Some(summary) = body.join_info.as_ref() {
+            let record = JoinCfaBodyRecord {
+                body_def_id: def_id.index() as u32,
+                parent_body_def_id,
+                endpoint_def_id: Some(summary.endpoint_def_id),
+                role: summary.role,
+                value_flows: summary.value_flows.clone(),
+                call_edges: summary.call_edges.clone(),
+                unknown_effects: summary.unknown_effects,
+                endpoint_escapes: summary.endpoint_escapes.clone(),
+            };
+            pending_ordinary.extend(
+                record
+                    .call_edges
+                    .iter()
+                    .filter(|edge| edge.target == JoinCallTargetKind::OrdinaryLocal)
+                    .filter_map(|edge| edge.callee),
+            );
+            bodies.push(record);
+            continue;
+        }
+
+        // Ordinary helper bodies are not given a per-body public summary, but
+        // retain the same typed visitor facts when they are reachable from a
+        // join body. Collecting them here lets the crate solver transfer an
+        // endpoint argument into a helper without making every Rust function
+        // part of the join dump.
+        let mut facts = JoinBodyFacts {
+            operations: Vec::new(),
+            value_flows: Vec::new(),
+            call_edges: Vec::new(),
+            escapes: FxIndexSet::default(),
+            endpoint_escapes: FxIndexSet::default(),
+            endpoint_locals: vec![false; body.local_decls.len()],
+            join_call_targets: join_call_targets.clone(),
+            suppress_endpoint_return_escape: false,
+            calls: 0,
+            yields: 0,
+            unknown_effects: 0,
+        };
+        facts.visit_body(body);
+        if facts.value_flows.is_empty() && facts.call_edges.is_empty() {
+            continue;
+        }
+        ordinary_bodies.insert(
+            def_id.index() as u32,
+            JoinCfaBodyRecord {
+                body_def_id: def_id.index() as u32,
+                parent_body_def_id,
+                endpoint_def_id: None,
+                role: JoinBodyRole::Ordinary,
+                value_flows: facts.value_flows,
+                call_edges: facts.call_edges,
+                unknown_effects: facts.unknown_effects,
+                endpoint_escapes: facts.endpoint_escapes.into_iter().collect(),
+            },
+        );
+    }
+
+    // Keep only ordinary bodies reachable from a join-associated body. This
+    // preserves a small graph while still following helper chains and makes
+    // an absent local callee an explicit loss of proof precision.
+    let mut selected = bodies.iter().map(|record| record.body_def_id).collect::<FxHashSet<_>>();
+    let mut complete = true;
+    while let Some(body_def_id) = pending_ordinary.pop() {
+        if !selected.insert(body_def_id) {
+            continue;
+        }
+        let Some(record) = ordinary_bodies.remove(&body_def_id) else {
+            complete = false;
+            continue;
+        };
+        pending_ordinary.extend(
+            record
+                .call_edges
+                .iter()
+                .filter(|edge| edge.target == JoinCallTargetKind::OrdinaryLocal)
+                .filter_map(|edge| edge.callee),
+        );
+        bodies.push(record);
     }
     bodies.sort_by_key(|record| record.body_def_id);
 
-    let mut instances = Vec::new();
-    let mut complete = true;
+    let mut instances = Vec::<JoinCfaInstanceFact>::new();
+    let mut aliases_by_body = FxHashMap::<u32, FxHashMap<u32, InstanceAlias>>::default();
     let mut solver_steps = 0u32;
     for record in &bodies {
         solver_steps = solver_steps.saturating_add(
             (record.value_flows.len() as u32).saturating_add(record.call_edges.len() as u32),
         );
         let mut aliases = FxHashMap::<u32, InstanceAlias>::default();
-        let mut allocations = Vec::<JoinCfaInstanceFact>::new();
 
         // Seed a concrete origin at every known constructor result. Multiple
         // constructor values reaching one local are kept as Multiple rather
@@ -447,7 +518,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 .unwrap_or(InstanceAlias::None)
                 .join(origin);
             aliases.insert(destination_local, merged);
-            allocations.push(JoinCfaInstanceFact {
+            instances.push(JoinCfaInstanceFact {
                 body_def_id: record.body_def_id,
                 endpoint_def_id,
                 allocation_block: edge.block,
@@ -477,10 +548,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 if matches!(incoming, InstanceAlias::None) {
                     continue;
                 }
-                let destination = aliases
-                    .get(&flow.destination)
-                    .copied()
-                    .unwrap_or(InstanceAlias::None);
+                let destination =
+                    aliases.get(&flow.destination).copied().unwrap_or(InstanceAlias::None);
                 let merged = destination.join(incoming);
                 if merged != destination {
                     aliases.insert(flow.destination, merged);
@@ -491,11 +560,117 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         if iterations >= 1024 {
             complete = false;
         }
+        aliases_by_body.insert(record.body_def_id, aliases);
+    }
 
-        // A compiler-known use is attached to exactly one constructor origin
-        // only when the receiver alias is unique and its endpoint matches the
-        // call edge. Unknown/multiple aliases invalidate the crate proof but
-        // never manufacture a positive fact.
+    // Transfer endpoint aliases across direct local calls. MIR arguments are
+    // numbered from one, with return place zero; preserving argument slots in
+    // JoinCallEdge lets this remain identity-based instead of type- or name-
+    // based. A missing local callee or an unknown call is an escape.
+    let mut escaped_origins = Vec::new();
+    let mut interproc_changed = true;
+    let mut interproc_iterations = 0u32;
+    while interproc_changed && interproc_iterations < 1024 {
+        interproc_changed = false;
+        interproc_iterations += 1;
+        // A parameter update can unlock a borrow/copy chain inside the callee
+        // on the next round. Re-run the local transfer before exporting its
+        // calls or return value; otherwise a helper's receiver temporary
+        // would remain `None` even though its argument is known.
+        for record in &bodies {
+            let Some(aliases) = aliases_by_body.get_mut(&record.body_def_id) else { continue };
+            let mut local_changed = true;
+            let mut local_iterations = 0u32;
+            while local_changed && local_iterations < 1024 {
+                local_changed = false;
+                local_iterations += 1;
+                for flow in &record.value_flows {
+                    let Some(source) = flow.source else { continue };
+                    if !matches!(
+                        flow.kind,
+                        JoinValueFlowKind::Copy
+                            | JoinValueFlowKind::Move
+                            | JoinValueFlowKind::Borrow
+                    ) {
+                        continue;
+                    }
+                    let incoming = aliases.get(&source).copied().unwrap_or(InstanceAlias::None);
+                    if matches!(incoming, InstanceAlias::None) {
+                        continue;
+                    }
+                    let destination =
+                        aliases.get(&flow.destination).copied().unwrap_or(InstanceAlias::None);
+                    let merged = destination.join(incoming);
+                    if merged != destination {
+                        aliases.insert(flow.destination, merged);
+                        local_changed = true;
+                        interproc_changed = true;
+                    }
+                }
+            }
+            if local_iterations >= 1024 {
+                complete = false;
+            }
+        }
+        let mut updates = Vec::<(u32, u32, InstanceAlias)>::new();
+        for record in &bodies {
+            let Some(caller_aliases) = aliases_by_body.get(&record.body_def_id) else { continue };
+            for edge in &record.call_edges {
+                let Some(callee) = edge.callee else { continue };
+                if let Some(callee_aliases) = aliases_by_body.get(&callee) {
+                    for (position, source) in edge.argument_locals.iter().enumerate() {
+                        let Some(source) = source else { continue };
+                        let incoming = caller_aliases
+                            .get(source)
+                            .copied()
+                            .unwrap_or(InstanceAlias::None);
+                        if !matches!(incoming, InstanceAlias::None) {
+                            updates.push((callee, position as u32 + 1, incoming));
+                        }
+                    }
+                    if let Some(destination) = edge.destination_local {
+                        let returned = callee_aliases
+                            .get(&0)
+                            .copied()
+                            .unwrap_or(InstanceAlias::None);
+                        if !matches!(returned, InstanceAlias::None) {
+                            updates.push((record.body_def_id, destination, returned));
+                        }
+                    }
+                } else if matches!(edge.target, JoinCallTargetKind::OrdinaryLocal | JoinCallTargetKind::Unknown) {
+                    for source in edge.argument_locals.iter().flatten() {
+                        let alias = caller_aliases.get(source).copied().unwrap_or(InstanceAlias::None);
+                        if !matches!(alias, InstanceAlias::None) {
+                            escaped_origins.push(alias);
+                        }
+                    }
+                }
+            }
+        }
+        for (body_def_id, local, incoming) in updates {
+            let Some(aliases) = aliases_by_body.get_mut(&body_def_id) else {
+                complete = false;
+                continue;
+            };
+            let current = aliases.get(&local).copied().unwrap_or(InstanceAlias::None);
+            let merged = current.join(incoming);
+            if merged != current {
+                aliases.insert(local, merged);
+                interproc_changed = true;
+            }
+        }
+    }
+    if interproc_iterations >= 1024 {
+        complete = false;
+    }
+    solver_steps = solver_steps.saturating_add(interproc_iterations);
+
+    // A compiler-known use is attached to exactly one constructor origin
+    // only when the receiver alias is unique and its endpoint matches the
+    // call edge. Unknown/multiple aliases invalidate the crate proof but
+    // never manufacture a positive fact.
+    for record in &bodies {
+        let Some(aliases) = aliases_by_body.get(&record.body_def_id) else { continue };
         for edge in &record.call_edges {
             if !matches!(edge.target, JoinCallTargetKind::Channel | JoinCallTargetKind::Dispatch) {
                 continue;
@@ -512,7 +687,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     block,
                     statement,
                 } if Some(endpoint_def_id) == edge.endpoint_def_id => {
-                    if let Some(instance) = allocations.iter_mut().find(|instance| {
+                    if let Some(instance) = instances.iter_mut().find(|instance| {
                         instance.body_def_id == body_def_id
                             && instance.endpoint_def_id == endpoint_def_id
                             && instance.allocation_block == block
@@ -523,24 +698,81 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                         complete = false;
                     }
                 }
-                InstanceAlias::None => complete = false,
-                InstanceAlias::Unique { .. }
-                | InstanceAlias::Multiple
-                | InstanceAlias::Unknown => {
+                InstanceAlias::Unique {
+                    endpoint_def_id,
+                    body_def_id,
+                    block,
+                    statement,
+                } => {
                     complete = false;
-                    for instance in &mut allocations {
+                    if let Some(instance) = instances.iter_mut().find(|instance| {
+                        instance.body_def_id == body_def_id
+                            && instance.endpoint_def_id == endpoint_def_id
+                            && instance.allocation_block == block
+                            && instance.allocation_statement == statement
+                    }) {
+                        instance.status = JoinCfaInstanceStatus::Multiple;
+                    }
+                }
+                InstanceAlias::None => complete = false,
+                InstanceAlias::Multiple | InstanceAlias::Unknown => {
+                    complete = false;
+                    for instance in instances.iter_mut().filter(|instance| {
+                        instance.body_def_id == record.body_def_id
+                    }) {
                         instance.status = JoinCfaInstanceStatus::Multiple;
                     }
                 }
             }
         }
-        if record.unknown_effects != 0 || !record.endpoint_escapes.is_empty() {
+        if record.unknown_effects != 0 {
             complete = false;
-            for instance in &mut allocations {
+            for instance in instances.iter_mut().filter(|instance| {
+                instance.body_def_id == record.body_def_id
+            }) {
                 instance.status = JoinCfaInstanceStatus::Escaped;
             }
         }
-        instances.extend(allocations);
+        for escape in &record.endpoint_escapes {
+            complete = false;
+            match aliases.get(&escape.local).copied().unwrap_or(InstanceAlias::None) {
+                InstanceAlias::Unique {
+                    endpoint_def_id,
+                    body_def_id,
+                    block,
+                    statement,
+                } => {
+                    if let Some(instance) = instances.iter_mut().find(|instance| {
+                        instance.body_def_id == body_def_id
+                            && instance.endpoint_def_id == endpoint_def_id
+                            && instance.allocation_block == block
+                            && instance.allocation_statement == statement
+                    }) {
+                        instance.status = JoinCfaInstanceStatus::Escaped;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    for escaped in escaped_origins {
+        if let InstanceAlias::Unique {
+            endpoint_def_id,
+            body_def_id,
+            block,
+            statement,
+        } = escaped
+        {
+            if let Some(instance) = instances.iter_mut().find(|instance| {
+                instance.body_def_id == body_def_id
+                    && instance.endpoint_def_id == endpoint_def_id
+                    && instance.allocation_block == block
+                    && instance.allocation_statement == statement
+            }) {
+                instance.status = JoinCfaInstanceStatus::Escaped;
+            }
+            complete = false;
+        }
     }
     instances.sort_by_key(|instance| {
         (
@@ -552,16 +784,88 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     });
 
     let summary = JoinCfaCrateSummary { bodies, instances, solver_steps, complete };
-    dump_crate_summary(tcx, &summary);
+    dump_crate_summary(tcx, &summary, &aliases_by_body);
     summary
 }
 
-fn dump_crate_summary(tcx: TyCtxt<'_>, summary: &JoinCfaCrateSummary) {
+#[allow(rustc::potential_query_instability)]
+fn dump_crate_summary(
+    tcx: TyCtxt<'_>,
+    summary: &JoinCfaCrateSummary,
+    aliases_by_body: &FxHashMap<u32, FxHashMap<u32, InstanceAlias>>,
+) {
     let Some(directory) = tcx.sess.opts.unstable_opts.join_cfa_dump.as_ref() else { return };
     if let Err(error) = fs::create_dir_all(directory) {
         tracing::warn!(target: "rustc_join", ?error, path = ?directory, "could not create join CFA graph dump directory");
         return;
     }
+    let body_records = summary
+        .bodies
+        .iter()
+        .map(|body| {
+            let call_edges = body
+                .call_edges
+                .iter()
+                .map(|edge| {
+                    let arguments = edge
+                        .argument_locals
+                        .iter()
+                        .map(|local| local.map_or_else(|| "null".to_string(), |local| local.to_string()))
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "{{\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                        edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
+                        edge.target,
+                        edge.endpoint_def_id
+                            .map_or_else(|| "null".to_string(), |endpoint| endpoint.to_string()),
+                        edge.receiver_local
+                            .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                        edge.destination_local
+                            .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                        arguments,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let value_flows = body
+                .value_flows
+                .iter()
+                .map(|flow| {
+                    format!(
+                        "{{\"destination\":{},\"source\":{},\"kind\":\"{:?}\"}}",
+                        flow.destination,
+                        flow.source.map_or_else(|| "null".to_string(), |source| source.to_string()),
+                        flow.kind,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut aliases = aliases_by_body
+                .get(&body.body_def_id)
+                .map(|aliases| aliases.iter().collect::<Vec<_>>())
+                .unwrap_or_default();
+            aliases.sort_by_key(|(local, _)| **local);
+            let aliases = aliases
+                .into_iter()
+                .map(|(local, alias)| format!("{{\"local\":{},\"alias\":\"{:?}\"}}", local, alias))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"calls\":[{}]}}",
+                body.body_def_id,
+                body.parent_body_def_id
+                    .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
+                body.endpoint_def_id
+                    .map_or_else(|| "null".to_string(), |endpoint| endpoint.to_string()),
+                body.role,
+                value_flows,
+                aliases,
+                call_edges,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let instances = summary
         .instances
         .iter()
@@ -579,8 +883,9 @@ fn dump_crate_summary(tcx: TyCtxt<'_>, summary: &JoinCfaCrateSummary) {
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"instances\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
+        body_records,
         instances,
         summary.solver_steps,
         summary.complete,
@@ -1003,6 +1308,10 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     TerminatorKind::TailCall { .. } => None,
                     _ => None,
                 };
+                let argument_locals = args
+                    .iter()
+                    .map(|arg| arg.node.place().map(|place| place.local.index() as u32))
+                    .collect();
                 self.call_edges.push(JoinCallEdge {
                     block: location.block.index() as u32,
                     statement: location.statement_index as u32,
@@ -1012,9 +1321,18 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     rule_def_id: target.rule_def_id,
                     receiver_local,
                     destination_local,
+                    argument_locals,
                 });
+                let preserves_endpoint = matches!(
+                    target.kind,
+                    JoinCallTargetKind::Constructor
+                        | JoinCallTargetKind::Channel
+                        | JoinCallTargetKind::Dispatch
+                        | JoinCallTargetKind::ReactionBody
+                        | JoinCallTargetKind::OrdinaryLocal
+                    ) && callee_def_id.is_some();
                 for arg in args {
-                    if let Operand::Move(place) = &arg.node {
+                    if !preserves_endpoint && let Operand::Move(place) = &arg.node {
                         self.record_moved_place(place, JoinEndpointEscapeKind::CallArgument);
                     }
                 }
@@ -1099,7 +1417,7 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{}}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
@@ -1112,6 +1430,11 @@ fn dump_summary(
                     .map_or_else(|| "null".to_string(), |local| local.to_string()),
                 edge.destination_local
                     .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                edge.argument_locals
+                    .iter()
+                    .map(|local| local.map_or_else(|| "null".to_string(), |local| local.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(","),
             )
         })
         .collect::<Vec<_>>()

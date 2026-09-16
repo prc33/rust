@@ -180,7 +180,7 @@ pub struct JoinLocalFact {
 /// external definitions remain unknown and must widen an interprocedural
 /// proof. The source location lets a later solver attach a context frame
 /// without reparsing generated names.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinCallEdge {
     pub block: u32,
@@ -200,6 +200,11 @@ pub struct JoinCallEdge {
     /// Base MIR local receiving the result of a known constructor/channel/
     /// dispatch call, when the call has a local destination.
     pub destination_local: Option<u32>,
+    /// Base MIR locals for the call operands, preserving argument position.
+    /// `None` represents a constant or other operand without a local place;
+    /// preserving the slot is what lets the crate solver map a caller value
+    /// to the callee's MIR argument local without guessing through types.
+    pub argument_locals: Vec<Option<u32>>,
 }
 
 /// Semantic target classification for a typed direct call edge.
