@@ -16,8 +16,12 @@ demonstrated need for such a pass in this checkout yet. Private forwarding fusio
 is a possible experiment, not an established recommendation to move fusion out
 of MIR.
 
-This is a source/documentation review, not a benchmark or generated-IR experiment.
-The inventory is [missing-optimisations.md](../../joins-library/docs/missing-optimisations.md).
+The initial inventory was a source/documentation review. A small generated-IR
+probe is now archived in
+[`joins-library/docs/ir-cfa-evidence/llvm-lowering-20260916.tsv`](../../joins-library/docs/ir-cfa-evidence/llvm-lowering-20260916.tsv);
+it is deliberately limited to attribution of the current unary lowering and
+does not claim a backend join transform. The inventory is
+[missing-optimisations.md](../../joins-library/docs/missing-optimisations.md).
 
 ## Corrections to the preceding discussion
 
@@ -49,7 +53,7 @@ The inventory is [missing-optimisations.md](../../joins-library/docs/missing-opt
 
 ## Evidence from this checkout
 
-Reviewed rust commit `35c5dd0253e` and joins-library commit `6b8ac2f`. The available
+Reviewed rust commit `d766b9f7d50` and joins-library commit `dbe3f66`. The available
 `rust/build/host/stage1/bin/rustc -vV` reports Rust `1.100.0-dev`, LLVM `23.1.1`;
 its embedded commit is unknown. Online LLVM documentation tracks development,
 so check exact attribute spelling and pass availability against the actual build.
@@ -71,6 +75,16 @@ so check exact attribute spelling and pass availability against the actual build
 - [The LLVM wrapper](../compiler/rustc_llvm/llvm-wrapper/PassWrapper.cpp)
   builds standard optimisation/LTO pipelines and loads pass plugins. A custom
   pass has an integration route, but that alone is not a reason to add one.
+
+The first probe compiles `joins-library/compiler-tests/joins_optimize.rs` with
+the stage-1 compiler at `-C opt-level=3 -C codegen-units=1 -C lto=off`. In the
+off mode the generated module is 14,934 lines and contains 142 dispatch
+references, 180 atomic RMWs and 17 compare-exchanges. In optimize mode the
+module is 1,542 lines, has no dispatch references or compare-exchanges, and has
+24 atomic RMWs. `UnaryMatcher` references fall from 72 to 14. This is the
+expected consequence of selecting the caller-owned future before LLVM; the
+remaining references belong to support code and construction/drop paths. It
+is a measured lowering result, not evidence that LLVM inferred join semantics.
 
 ## Inventory and recommended ownership
 
@@ -195,8 +209,10 @@ fallback; it does not become `llvm.assume`.
    forwarding edge, a bounded local pair, and an open/shared negative case.
 2. Capture MIR and LLVM IR before and after optimisation using the actual
    compiler build. Record optimisation level, codegen units, panic mode, and LTO.
-   Inspect allocations, atomics, locks, dispatch, and indirect calls across the
-   full construction-to-drop lifetime.
+   The unary capture is now automated by `run_llvm_probe.sh`; the next capture
+   must use a result-channel forwarding witness and include the complete
+   construction-to-drop lifetime. Inspect allocations, atomics, locks, dispatch,
+   and indirect calls rather than relying on line counts alone.
 3. Prototype the simplest legal specialised lowering. Check what existing LLVM
    passes remove before implementing any new backend pass. Use
    [optimisation remarks](https://llvm.org/docs/Remarks.html) to diagnose missed
