@@ -10,17 +10,19 @@ then applies that work to DataFusion.
 Restricted isolated unary lowering produces ordinary caller-owned futures.
 Typed compiler descriptors and MIR summaries record operations, call identities,
 local flow and escapes; commit `d766b9f7d50` adds CFG occupancy transfer and
-the current branch tip `f2a93f0e208` adds the crate-level instance graph.
-The current local slice also runs `join_cfa_crate_summary` after HIR analysis:
+commit `f2a93f0e208` adds the crate-level instance graph. The current pushed
+tip `49c90269414` extends that graph with direct local helper argument/return
+transfer.
+The current slice also runs `join_cfa_crate_summary` after HIR analysis:
 it consumes the pre-cleanup summary attached to runtime MIR and follows a
 constructor result through same-body copy/move/borrow flow to a known
-channel/dispatch receiver. The `InstanceTraffic` witness yields a distinct
-`Unique` allocation with one known use; the crate result remains
-conservatively incomplete for unsupported effects and escapes. Helper
-arguments/returns, closure captures, loop contexts and ordinary-caller
+channel/dispatch receiver. The `InstanceTraffic` witness crosses a direct
+`forward_instance` helper and yields a distinct `Unique` allocation with
+`known_uses=2` in both analyze and optimize runs. The graph remains
+conservatively incomplete for unsupported effects and escapes; closure
+captures, loop contexts, indirect calls and general ordinary-caller
 propagation are still pending. Native semantic MIR construction and
-interprocedural instance CFA remain incomplete, and no shared-join MIR fusion
-currently consumes a CFA proof.
+proof-consuming shared-join MIR fusion remain incomplete.
 
 The archived seven-process bounded-slot microbenchmark has these median ns/op:
 
@@ -56,11 +58,12 @@ These quick baseline samples establish no join performance advantage.
    protocols, including demand, cancellation, ownership and declared outputs.
 2. Complete native HIR identities and typed semantic MIR for a closed forwarding
    witness, retaining ordinary Rust coroutine MIR for the reaction bodies.
-3. Connect allocation sites, receivers, arguments/returns and closure captures
-   in bounded interprocedural CFA; distinguish closed and escaped instances.
-   The current query proves only the same-body constructor-to-channel slice;
-   next connect helper and closure contexts and make `LoopTraffic` flow
-   through its enclosing producer.
+3. Extend the bounded interprocedural CFA beyond direct local helpers to
+   closure captures, loops, indirect-call rejection and general callers;
+   distinguish closed and escaped instances. The current query proves a
+   constructor-to-channel path through `forward_instance`; next make
+   `LoopTraffic` flow through its enclosing producer while retaining
+   conservative unknown results.
 4. Apply one proof-driven result-channel MIR fusion, with a matching rejection
    witness and explicit candidate/proof/rewrite counters.
 5. Prove per-instance queue bounds and select fixed storage without dynamic
