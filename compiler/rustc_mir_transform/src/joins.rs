@@ -582,17 +582,35 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 let callee_def_id = func.const_fn_def().and_then(|(def_id, _)| def_id.as_local());
                 let target = self.call_target(callee_def_id);
                 match target.kind {
+                    JoinCallTargetKind::Constructor => {
+                        self.operation(JoinOperationKind::CreateGroup, location)
+                    }
                     JoinCallTargetKind::Channel => {
                         self.operation(JoinOperationKind::Register, location)
                     }
                     JoinCallTargetKind::Dispatch => {
                         self.operation(JoinOperationKind::Match, location)
                     }
-                    JoinCallTargetKind::Constructor
-                    | JoinCallTargetKind::Unknown
+                    JoinCallTargetKind::Unknown
                     | JoinCallTargetKind::OrdinaryLocal
                     | JoinCallTargetKind::ReactionBody => {}
                 }
+                let receiver_local = matches!(
+                    target.kind,
+                    JoinCallTargetKind::Channel
+                        | JoinCallTargetKind::Dispatch
+                        | JoinCallTargetKind::ReactionBody
+                )
+                .then(|| args.first().and_then(|arg| arg.node.place()))
+                .flatten()
+                .map(|place| place.local.index() as u32);
+                let destination_local = match &terminator.kind {
+                    TerminatorKind::Call { destination, .. } => {
+                        destination.as_local().map(|local| local.index() as u32)
+                    }
+                    TerminatorKind::TailCall { .. } => None,
+                    _ => None,
+                };
                 self.call_edges.push(JoinCallEdge {
                     block: location.block.index() as u32,
                     statement: location.statement_index as u32,
@@ -600,6 +618,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     target: target.kind,
                     endpoint_def_id: target.endpoint_def_id,
                     rule_def_id: target.rule_def_id,
+                    receiver_local,
+                    destination_local,
                 });
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
@@ -687,7 +707,7 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{}}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{}}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
@@ -696,6 +716,10 @@ fn dump_summary(
                     .map_or_else(|| "null".to_string(), |endpoint| endpoint.to_string()),
                 edge.rule_def_id
                     .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
+                edge.receiver_local
+                    .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                edge.destination_local
+                    .map_or_else(|| "null".to_string(), |local| local.to_string()),
             )
         })
         .collect::<Vec<_>>()

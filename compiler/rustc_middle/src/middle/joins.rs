@@ -190,14 +190,22 @@ pub struct JoinCallEdge {
     pub endpoint_def_id: Option<u32>,
     /// Compiler-owned rule identity for dispatch and reaction-body calls.
     pub rule_def_id: Option<u32>,
+    /// Base MIR local carrying the receiver for a known channel/dispatch
+    /// method.  It is intentionally a local index rather than a guessed
+    /// source name; value-flow facts can connect aliases to this local later.
+    pub receiver_local: Option<u32>,
+    /// Base MIR local receiving the result of a known constructor/channel/
+    /// dispatch call, when the call has a local destination.
+    pub destination_local: Option<u32>,
 }
 
 /// Semantic target classification for a typed direct call edge.
 ///
 /// `Unknown` covers function pointers, trait dispatch and foreign/external
 /// calls. `OrdinaryLocal` is a known local function that is not itself a join
-/// declaration. The join-specific variants are resolved from compiler-owned
-/// descriptor identities, never from generated symbol names.
+/// declaration. The join-specific variants (including constructors) are
+/// resolved from compiler-owned descriptor identities, never from generated
+/// symbol names.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinCallTargetKind {
