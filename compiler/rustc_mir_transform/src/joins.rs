@@ -145,8 +145,9 @@ impl JoinBodyFacts {
         }
     }
 
-    fn finish(
+    fn finish<'tcx>(
         self,
+        body: &Body<'tcx>,
         endpoint_def_id: u32,
         rule_def_id: u32,
         role: JoinBodyRole,
@@ -171,7 +172,7 @@ impl JoinBodyFacts {
             self.unknown_effects,
             solver_complete,
         );
-        let occupancy = solve_body_occupancy(&self.operations);
+        let occupancy = solve_body_occupancy(body, &self.operations);
         let rejection = if role != JoinBodyRole::ReactionBody {
             Some(JoinCfaRejection::NotReactionBody)
         } else if arity != 1 {
@@ -324,57 +325,179 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
     targets
 }
 
-fn solve_body_occupancy(operations: &[JoinMirOperation]) -> JoinOccupancyFact {
-    let mut ordered = operations.to_vec();
-    ordered.sort_by_key(|operation| {
-        (operation.block, operation.statement, occupancy_operation_priority(operation.kind))
-    });
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+struct OccupancyInterval {
+    min: u32,
+    max: Option<u32>,
+}
 
-    let mut occupancy = 0u32;
-    let mut peak = 0u32;
+const OCCUPANCY_ITERATION_LIMIT: u32 = 1024;
+
+/// Propagate an interval through the MIR control-flow graph rather than
+/// sorting events by block number.  A block-order sort is not a sound proof
+/// for branches or loops: it can claim a small queue for one path while
+/// ignoring a backedge that accumulates registrations.  Merging intervals at
+/// CFG joins preserves every reachable path; an unbounded upper end widens to
+/// `None` and disables proof-consuming transforms.
+fn solve_body_occupancy<'tcx>(
+    body: &Body<'tcx>,
+    operations: &[JoinMirOperation],
+) -> JoinOccupancyFact {
+    let block_count = body.basic_blocks.len();
+    if block_count == 0 {
+        return JoinOccupancyFact {
+            proven_peak: None,
+            proven_final: None,
+            events: 0,
+            complete: false,
+        };
+    }
+
+    let mut operations_by_block = vec![Vec::<JoinMirOperation>::new(); block_count];
     let mut events = 0u32;
+    for &operation in operations {
+        if matches!(
+            operation.kind,
+            JoinOperationKind::Register
+                | JoinOperationKind::Match
+                | JoinOperationKind::WithdrawOrAbandon
+                | JoinOperationKind::CancelScope
+        ) {
+            events = events.saturating_add(1);
+        }
+        if let Some(bucket) = operations_by_block.get_mut(operation.block as usize) {
+            bucket.push(operation);
+        }
+    }
+    for bucket in &mut operations_by_block {
+        bucket.sort_by_key(|operation| {
+            (operation.statement, occupancy_operation_priority(operation.kind))
+        });
+    }
+
+    let mut entry_states = vec![None::<OccupancyInterval>; block_count];
+    entry_states[mir::START_BLOCK.index()] = Some(OccupancyInterval { min: 0, max: Some(0) });
+    let mut worklist = std::collections::VecDeque::from([mir::START_BLOCK.index()]);
+    let mut queued = vec![false; block_count];
+    queued[mir::START_BLOCK.index()] = true;
+    let mut visits = vec![0u32; block_count];
+    let mut peak = 0u32;
     let mut complete = true;
-    for operation in ordered {
-        match operation.kind {
-            JoinOperationKind::Register => {
-                events = events.saturating_add(1);
-                let Some(next) = occupancy.checked_add(1) else {
-                    complete = false;
-                    continue;
-                };
-                occupancy = next;
-                peak = peak.max(occupancy);
-            }
-            JoinOperationKind::Match | JoinOperationKind::WithdrawOrAbandon => {
-                events = events.saturating_add(1);
-                if occupancy == 0 {
-                    // The body is consuming an input supplied by a caller or
-                    // a different body. A local sequence cannot prove its
-                    // starting occupancy, so do not expose a false bound.
-                    complete = false;
-                } else {
-                    occupancy -= 1;
+    let mut exit_state = None::<OccupancyInterval>;
+
+    while let Some(block_index) = worklist.pop_front() {
+        queued[block_index] = false;
+        visits[block_index] = visits[block_index].saturating_add(1);
+        let Some(mut state) = entry_states[block_index] else { continue };
+        if visits[block_index] > OCCUPANCY_ITERATION_LIMIT {
+            complete = false;
+            state.max = None;
+        }
+
+        for operation in &operations_by_block[block_index] {
+            match operation.kind {
+                JoinOperationKind::Register => {
+                    let Some(next_min) = state.min.checked_add(1) else {
+                        complete = false;
+                        state.max = None;
+                        continue;
+                    };
+                    let next_max = match state.max {
+                        Some(max) => match max.checked_add(1) {
+                            Some(next) if next <= OCCUPANCY_ITERATION_LIMIT => Some(next),
+                            _ => {
+                                complete = false;
+                                None
+                            }
+                        },
+                        None => {
+                            complete = false;
+                            None
+                        }
+                    };
+                    state = OccupancyInterval { min: next_min, max: next_max };
+                    if let Some(max) = state.max {
+                        peak = peak.max(max);
+                    }
                 }
+                JoinOperationKind::Match | JoinOperationKind::WithdrawOrAbandon => {
+                    if state.min == 0 {
+                        // The body is consuming an input supplied by a caller
+                        // or a different body. This path has unknown starting
+                        // occupancy, so it cannot yield a hard bound.
+                        complete = false;
+                        state.max = None;
+                    } else {
+                        state.min -= 1;
+                        state.max = state.max.map(|max| max.saturating_sub(1));
+                    }
+                }
+                JoinOperationKind::CancelScope => {
+                    // Cancellation can drain an arbitrary number of pending
+                    // inputs unless the scope contract is represented in MIR.
+                    complete = false;
+                    state = OccupancyInterval { min: 0, max: None };
+                }
+                JoinOperationKind::CreateGroup
+                | JoinOperationKind::Demand
+                | JoinOperationKind::CompleteReplies
+                | JoinOperationKind::OrdinaryCall
+                | JoinOperationKind::Yield
+                | JoinOperationKind::Return
+                | JoinOperationKind::Escape => {}
             }
-            JoinOperationKind::CancelScope => {
-                events = events.saturating_add(1);
-                complete = false;
+        }
+
+        let block = mir::BasicBlock::from_usize(block_index);
+        let successors = body.basic_blocks[block].terminator().successors().collect::<Vec<_>>();
+        if successors.is_empty() {
+            merge_occupancy_interval(&mut exit_state, state);
+        }
+        for successor in successors {
+            let successor_index = successor.index();
+            if merge_occupancy_interval(&mut entry_states[successor_index], state)
+                && !queued[successor_index]
+            {
+                queued[successor_index] = true;
+                worklist.push_back(successor_index);
             }
-            JoinOperationKind::CreateGroup
-            | JoinOperationKind::Demand
-            | JoinOperationKind::CompleteReplies
-            | JoinOperationKind::OrdinaryCall
-            | JoinOperationKind::Yield
-            | JoinOperationKind::Return
-            | JoinOperationKind::Escape => {}
         }
     }
 
+    let proven_final = exit_state.and_then(|state| match state.max {
+        Some(max) if max == state.min => Some(max),
+        _ => None,
+    });
+    if exit_state.is_none() {
+        complete = false;
+    }
     JoinOccupancyFact {
         proven_peak: complete.then_some(peak),
-        proven_final: complete.then_some(occupancy),
+        proven_final: complete.then_some(proven_final).flatten(),
         events,
         complete,
+    }
+}
+
+fn merge_occupancy_interval(
+    current: &mut Option<OccupancyInterval>,
+    incoming: OccupancyInterval,
+) -> bool {
+    let merged = match *current {
+        None => incoming,
+        Some(existing) => OccupancyInterval {
+            min: existing.min.min(incoming.min),
+            max: match (existing.max, incoming.max) {
+                (Some(left), Some(right)) => Some(left.max(right)),
+                _ => None,
+            },
+        },
+    };
+    if *current == Some(merged) {
+        false
+    } else {
+        *current = Some(merged);
+        true
     }
 }
 
@@ -882,6 +1005,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         }
 
         let summary = facts.finish(
+            body,
             endpoint_def_id,
             rule_def_id,
             role,
