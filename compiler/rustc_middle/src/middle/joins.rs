@@ -94,6 +94,9 @@ pub enum JoinBodyRole {
     Channel,
     Dispatch,
     ReactionBody,
+    /// An ordinary body that is retained by a future interprocedural join
+    /// summary because it reaches a compiler-known join operation.
+    Ordinary,
 }
 
 /// Typed operations that are preserved at the join/MIR boundary.
@@ -322,6 +325,10 @@ pub enum JoinEndpointEscapeKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinCfaSummary {
+    /// MIR body identity within the local crate.  The endpoint/rule IDs below
+    /// identify the declaration; this field identifies the concrete body that
+    /// can be reached through ordinary helpers or generated closures.
+    pub body_def_id: u32,
     pub endpoint_def_id: u32,
     pub rule_def_id: u32,
     pub role: JoinBodyRole,
@@ -353,6 +360,64 @@ pub struct JoinCfaSummary {
     pub endpoint_escapes: Vec<JoinEndpointEscape>,
     pub direct_candidate: bool,
     pub rejection: Option<JoinCfaRejection>,
+}
+
+/// A body summary retained by the crate-level instance analysis.
+///
+/// `JoinCfaSummary` is installed on the pre-cleanup body while that body is
+/// being prepared.  Keeping the parent identity beside a cloned summary lets
+/// the crate query relate generated closure bodies to the body that created
+/// them without using generated names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaBodyRecord {
+    pub body_def_id: u32,
+    pub parent_body_def_id: Option<u32>,
+    pub endpoint_def_id: Option<u32>,
+    pub role: JoinBodyRole,
+    pub value_flows: Vec<JoinValueFlow>,
+    pub call_edges: Vec<JoinCallEdge>,
+    pub unknown_effects: u32,
+    pub endpoint_escapes: Vec<JoinEndpointEscape>,
+}
+
+/// Result of the first compiler-owned instance/context propagation slice.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaInstanceStatus {
+    Unique,
+    Multiple,
+    Escaped,
+    Unknown,
+}
+
+/// A constructor allocation and the known uses reached from that allocation.
+///
+/// `Unique` is only emitted when the current bounded graph has one constructor
+/// origin and all observed compiler-known channel/dispatch uses resolve to it.
+/// Missing caller/closure flow, unknown calls and competing origins widen the
+/// status; no transform may treat an absent fact as proof.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaInstanceFact {
+    pub body_def_id: u32,
+    pub endpoint_def_id: u32,
+    pub allocation_block: u32,
+    pub allocation_statement: u32,
+    pub known_uses: u32,
+    pub status: JoinCfaInstanceStatus,
+}
+
+/// Crate-level join facts.  This query is deliberately `eval_always` while the
+/// representation is experimental: it consumes pre-cleanup summaries and is
+/// not yet a stable incremental artifact.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaCrateSummary {
+    pub bodies: Vec<JoinCfaBodyRecord>,
+    pub instances: Vec<JoinCfaInstanceFact>,
+    pub solver_steps: u32,
+    pub complete: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

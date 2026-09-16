@@ -37,7 +37,7 @@ use rustc_parse::lexer::StripTokens;
 use rustc_parse::{new_parser_from_file, new_parser_from_source_str, unwrap_or_emit_fatal};
 use rustc_passes::{abi_test, input_stats, layout_test};
 use rustc_resolve::{Resolver, ResolverOutputs};
-use rustc_session::config::{Input, OutFileName, OutputFilenames, OutputType};
+use rustc_session::config::{Input, JoinCfaMode, OutFileName, OutputFilenames, OutputType};
 use rustc_session::diagnostics::feature_err;
 use rustc_session::output::{filename_for_input, invalid_output_for_target};
 use rustc_session::search_paths::PathKind;
@@ -1141,6 +1141,13 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
     //
     // This improves performance by allowing lock-free access to them.
     tcx.untracked().definitions.freeze();
+
+    // Build the crate-level join graph while initial MIR can still be read.
+    // The query performs its own typed extraction; forcing it here avoids
+    // trying to borrow a `Steal<Body>` after a later MIR query has consumed it.
+    if tcx.features().joins() && tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Off {
+        tcx.ensure_ok().join_cfa_crate_summary(());
+    }
 
     sess.time("MIR_borrow_checking", || {
         tcx.par_hir_body_owners(|def_id| {

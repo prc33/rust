@@ -224,6 +224,7 @@ pub fn provide(providers: &mut Providers) {
         mir_const_qualif,
         mir_promoted,
         mir_drops_elaborated_and_const_checked,
+        join_cfa_crate_summary: joins::join_cfa_crate_summary,
         mir_for_ctfe,
         mir_coroutine_witnesses: coroutine::mir_coroutine_witnesses,
         optimized_mir,
@@ -607,10 +608,10 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
     run_analysis_cleanup_passes(tcx, body);
     assert!(body.phase == MirPhase::Analysis(AnalysisPhase::PostCleanup));
 
-    // The summary describes the pre-cleanup, pre-coroutine body. Until a
-    // proof-consuming LowerJoins pass exists, do not let later structural MIR
-    // rewrites accidentally treat it as current runtime facts.
-    body.join_info = None;
+    // Keep the summary attached while the crate-level join query is forced at
+    // the end of analysis. It is a cloneable pre-cleanup fact and does not
+    // authorize a rewrite after cleanup; the eventual LowerJoins pass will
+    // consume the crate query only after its own ownership gate.
 
     // Do a little drop elaboration before const-checking if `const_precise_live_drops` is enabled.
     if check_consts::post_drop_elaboration::checking_enabled(&ConstCx::new(tcx, body)) {

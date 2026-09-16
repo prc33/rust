@@ -85,7 +85,7 @@ use crate::middle::dead_code::DeadCodeLivenessSummary;
 use crate::middle::debugger_visualizer::DebuggerVisualizerFile;
 use crate::middle::deduced_param_attrs::DeducedParamAttrs;
 use crate::middle::exported_symbols::{ExportedSymbol, SymbolExportInfo};
-use crate::middle::joins::JoinDefinitions;
+use crate::middle::joins::{JoinCfaCrateSummary, JoinDefinitions};
 use crate::middle::lib_features::LibFeatures;
 use crate::middle::privacy::EffectiveVisibilities;
 use crate::middle::resolve::{
@@ -259,6 +259,15 @@ rustc_queries! {
         arena_cache
         eval_always
         desc { "collecting expanded join endpoint definitions" }
+    }
+
+    /// Collect the pre-cleanup join summaries and run the bounded
+    /// allocation-site/context propagation query. The result is kept separate
+    /// from ordinary optimized MIR until a proof-consuming transform exists.
+    query join_cfa_crate_summary(_: ()) -> &'tcx JoinCfaCrateSummary {
+        arena_cache
+        eval_always
+        desc { "solving compiler join allocation-site facts" }
     }
 
     /// The items in a module.
