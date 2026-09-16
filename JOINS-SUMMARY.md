@@ -9,7 +9,8 @@ then applies that work to DataFusion.
 
 Restricted isolated unary lowering produces ordinary caller-owned futures.
 Typed compiler descriptors and MIR summaries record operations, call identities,
-local flow and escapes; commit `d766b9f7d50` adds CFG occupancy transfer.
+local flow and escapes; commit `d766b9f7d50` adds CFG occupancy transfer and
+the current branch tip `f2a93f0e208` adds the crate-level instance graph.
 The current local slice also runs `join_cfa_crate_summary` after HIR analysis:
 it consumes the pre-cleanup summary attached to runtime MIR and follows a
 constructor result through same-body copy/move/borrow flow to a known
