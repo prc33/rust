@@ -9,14 +9,14 @@
 //! infer semantics from generated method names or call into the library
 //! runtime.
 
-use rustc_data_structures::fx::FxIndexSet;
+use rustc_data_structures::fx::{FxHashMap, FxIndexSet};
 use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
-    JoinBodyRole, JoinCallEdge, JoinCfaRejection, JoinCfaSummary, JoinEndpointEscape,
-    JoinEndpointEscapeKind, JoinInstanceClosedness, JoinInstanceClosednessReason, JoinLocalFact,
-    JoinMirOperation, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
-    JoinValueState,
+    JoinBodyRole, JoinCallEdge, JoinCallTargetKind, JoinCfaRejection, JoinCfaSummary,
+    JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
+    JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOperationKind,
+    JoinQueueBound, JoinValueFlow, JoinValueFlowKind, JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
@@ -90,6 +90,7 @@ struct JoinBodyFacts {
     escapes: FxIndexSet<u32>,
     endpoint_escapes: FxIndexSet<JoinEndpointEscape>,
     endpoint_locals: Vec<bool>,
+    join_call_targets: FxHashMap<u32, JoinCallTargetKind>,
     calls: u32,
     yields: u32,
     unknown_effects: u32,
@@ -115,6 +116,17 @@ impl JoinBodyFacts {
         {
             self.endpoint_escapes
                 .insert(JoinEndpointEscape { local: place.local.index() as u32, kind });
+        }
+    }
+
+    fn call_target(&self, callee: Option<LocalDefId>) -> JoinCallTargetKind {
+        match callee {
+            Some(def_id) => self
+                .join_call_targets
+                .get(&(def_id.index() as u32))
+                .copied()
+                .unwrap_or(JoinCallTargetKind::OrdinaryLocal),
+            None => JoinCallTargetKind::Unknown,
         }
     }
 
@@ -217,6 +229,22 @@ fn classify_instance_closedness(
         return (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::UnknownEffects);
     }
     (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::RequiresInterprocedural)
+}
+
+fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTargetKind> {
+    let mut targets = FxHashMap::default();
+    for endpoint in &tcx.join_definitions(()).endpoints {
+        for channel in &endpoint.channels {
+            targets.insert(channel.method_def_id.index() as u32, JoinCallTargetKind::Channel);
+        }
+        for rule in &endpoint.rules {
+            targets.insert(rule.method_def_id.index() as u32, JoinCallTargetKind::Dispatch);
+            for body in rule.body_def_ids {
+                targets.insert(body.index() as u32, JoinCallTargetKind::ReactionBody);
+            }
+        }
+    }
+    targets
 }
 
 /// Solve the local value-flow lattice to a bounded fixed point.
@@ -405,13 +433,24 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             | TerminatorKind::TailCall { func, args, .. } => {
                 self.calls += 1;
                 self.operation(JoinOperationKind::OrdinaryCall, location);
+                let callee_def_id = func.const_fn_def().and_then(|(def_id, _)| def_id.as_local());
+                let target = self.call_target(callee_def_id);
+                match target {
+                    JoinCallTargetKind::Channel => {
+                        self.operation(JoinOperationKind::Register, location)
+                    }
+                    JoinCallTargetKind::Dispatch => {
+                        self.operation(JoinOperationKind::Match, location)
+                    }
+                    JoinCallTargetKind::Unknown
+                    | JoinCallTargetKind::OrdinaryLocal
+                    | JoinCallTargetKind::ReactionBody => {}
+                }
                 self.call_edges.push(JoinCallEdge {
                     block: location.block.index() as u32,
                     statement: location.statement_index as u32,
-                    callee: func
-                        .const_fn_def()
-                        .and_then(|(def_id, _)| def_id.as_local())
-                        .map(|def_id| def_id.index() as u32),
+                    callee: callee_def_id.map(|def_id| def_id.index() as u32),
+                    target,
                 });
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
@@ -497,10 +536,11 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{}}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\"}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
+                edge.target,
             )
         })
         .collect::<Vec<_>>()
@@ -599,6 +639,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                         .collect()
                 })
                 .unwrap_or_default(),
+            join_call_targets: join_call_target_map(tcx),
             calls: 0,
             yields: 0,
             unknown_effects: 0,

@@ -174,6 +174,23 @@ pub struct JoinCallEdge {
     pub block: u32,
     pub statement: u32,
     pub callee: Option<u32>,
+    pub target: JoinCallTargetKind,
+}
+
+/// Semantic target classification for a typed direct call edge.
+///
+/// `Unknown` covers function pointers, trait dispatch and foreign/external
+/// calls. `OrdinaryLocal` is a known local function that is not itself a join
+/// declaration. The join-specific variants are resolved from compiler-owned
+/// descriptor identities, never from generated symbol names.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCallTargetKind {
+    Unknown,
+    OrdinaryLocal,
+    Channel,
+    Dispatch,
+    ReactionBody,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
