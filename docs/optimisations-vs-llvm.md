@@ -53,7 +53,8 @@ does not claim a backend join transform. The inventory is
 
 ## Evidence from this checkout
 
-Reviewed rust commit `d766b9f7d50` and joins-library commit `dbe3f66`. The available
+Reviewed rust commit `183c090545f` (with CFG transfer at `d766b9f7d50`) and
+joins-library commit `308559a`. The available
 `rust/build/host/stage1/bin/rustc -vV` reports Rust `1.100.0-dev`, LLVM `23.1.1`;
 its embedded commit is unknown. Online LLVM documentation tracks development,
 so check exact attribute spelling and pass availability against the actual build.
