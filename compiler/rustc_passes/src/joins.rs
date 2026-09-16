@@ -40,6 +40,8 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
         // that generated shape keeps channel identity tied to HIR owner IDs
         // while the frontend grows explicit channel nodes.
         let mut channel_items = Vec::new();
+        let mut constructor_def_id = None;
+        let mut scoped_constructor_def_id = None;
         let mut dispatch_method = None;
         for item_id in impl_.items {
             let item = tcx.hir_impl_item(*item_id);
@@ -47,9 +49,11 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             let method_def_id = item.owner_id.def_id;
             if item.ident.name.as_str() == "__join_dispatch_once" {
                 dispatch_method = Some(method_def_id);
-            } else if item.ident.name.as_str() != "new"
-                && item.ident.name.as_str() != "new_in_scope"
-            {
+            } else if item.ident.name.as_str() == "new" {
+                constructor_def_id = Some(method_def_id);
+            } else if item.ident.name.as_str() == "new_in_scope" {
+                scoped_constructor_def_id = Some(method_def_id);
+            } else {
                 channel_items.push((method_def_id, item.ident.name));
             }
         }
@@ -91,6 +95,8 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             frontend_queue_bound: (queue_bound != u32::MAX).then_some(queue_bound),
             span,
             channels,
+            constructor_def_id,
+            scoped_constructor_def_id,
             rules,
         });
         info!(target: "rustc_join", endpoint = ?impl_def_id, "join endpoint descriptor collected");

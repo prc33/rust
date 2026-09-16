@@ -45,6 +45,14 @@ pub struct JoinDefinition<'tcx> {
     pub span: Span,
     /// Generated channel methods with their resolved function signatures.
     pub channels: Vec<JoinChannel<'tcx>>,
+    /// The generated constructors are allocation-site anchors for the
+    /// interprocedural instance analysis.  `new` creates an endpoint with the
+    /// default runtime scope; `new_in_scope` creates one owned by an explicit
+    /// `QueryScope`.  Keeping both identities avoids treating a constructor
+    /// call as an opaque ordinary function when the later solver connects
+    /// concrete instances to channel calls.
+    pub constructor_def_id: Option<LocalDefId>,
+    pub scoped_constructor_def_id: Option<LocalDefId>,
     /// Generated dispatch method(s). The first compiler slice emits one
     /// dispatch body for the restricted unary/pair forms.
     pub rules: Vec<JoinRule<'tcx>>,
@@ -82,6 +90,7 @@ pub struct JoinRule<'tcx> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinBodyRole {
+    Constructor,
     Channel,
     Dispatch,
     ReactionBody,
@@ -175,6 +184,12 @@ pub struct JoinCallEdge {
     pub statement: u32,
     pub callee: Option<u32>,
     pub target: JoinCallTargetKind,
+    /// Compiler-owned endpoint identity for a known join call target.  This
+    /// is populated for channel, dispatch, reaction-body and constructor
+    /// calls; ordinary and unknown calls remain `None`.
+    pub endpoint_def_id: Option<u32>,
+    /// Compiler-owned rule identity for dispatch and reaction-body calls.
+    pub rule_def_id: Option<u32>,
 }
 
 /// Semantic target classification for a typed direct call edge.
@@ -188,6 +203,7 @@ pub struct JoinCallEdge {
 pub enum JoinCallTargetKind {
     Unknown,
     OrdinaryLocal,
+    Constructor,
     Channel,
     Dispatch,
     ReactionBody,

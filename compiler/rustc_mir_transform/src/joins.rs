@@ -38,6 +38,20 @@ fn body_descriptor<'tcx>(
     local_def_id: LocalDefId,
 ) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool, JoinQueueBound, Option<LocalDefId>)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
+        if endpoint.constructor_def_id == Some(local_def_id)
+            || endpoint.scoped_constructor_def_id == Some(local_def_id)
+        {
+            return Some((
+                endpoint.endpoint_def_id.map_or(u32::MAX, |id| id.index() as u32),
+                0,
+                JoinBodyRole::Constructor,
+                0,
+                false,
+                endpoint.frontend_direct_unary,
+                frontend_queue_bound(endpoint.frontend_queue_bound),
+                endpoint.endpoint_def_id,
+            ));
+        }
         if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
             return Some((
                 endpoint.endpoint_def_id.map_or(u32::MAX, |id| id.index() as u32),
@@ -90,7 +104,8 @@ struct JoinBodyFacts {
     escapes: FxIndexSet<u32>,
     endpoint_escapes: FxIndexSet<JoinEndpointEscape>,
     endpoint_locals: Vec<bool>,
-    join_call_targets: FxHashMap<u32, JoinCallTargetKind>,
+    join_call_targets: FxHashMap<u32, JoinCallTarget>,
+    suppress_endpoint_return_escape: bool,
     calls: u32,
     yields: u32,
     unknown_effects: u32,
@@ -119,14 +134,14 @@ impl JoinBodyFacts {
         }
     }
 
-    fn call_target(&self, callee: Option<LocalDefId>) -> JoinCallTargetKind {
+    fn call_target(&self, callee: Option<LocalDefId>) -> JoinCallTarget {
         match callee {
             Some(def_id) => self
                 .join_call_targets
                 .get(&(def_id.index() as u32))
                 .copied()
-                .unwrap_or(JoinCallTargetKind::OrdinaryLocal),
-            None => JoinCallTargetKind::Unknown,
+                .unwrap_or(JoinCallTarget::ordinary_local()),
+            None => JoinCallTarget::unknown(),
         }
     }
 
@@ -233,16 +248,76 @@ fn classify_instance_closedness(
     (JoinInstanceClosedness::Unknown, JoinInstanceClosednessReason::RequiresInterprocedural)
 }
 
-fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTargetKind> {
+#[derive(Copy, Clone)]
+struct JoinCallTarget {
+    kind: JoinCallTargetKind,
+    endpoint_def_id: Option<u32>,
+    rule_def_id: Option<u32>,
+}
+
+impl JoinCallTarget {
+    fn unknown() -> Self {
+        Self { kind: JoinCallTargetKind::Unknown, endpoint_def_id: None, rule_def_id: None }
+    }
+
+    fn ordinary_local() -> Self {
+        Self { kind: JoinCallTargetKind::OrdinaryLocal, endpoint_def_id: None, rule_def_id: None }
+    }
+}
+
+fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
     let mut targets = FxHashMap::default();
     for endpoint in &tcx.join_definitions(()).endpoints {
+        let endpoint_def_id = endpoint.endpoint_def_id.map(|id| id.index() as u32);
+        if let Some(constructor) = endpoint.constructor_def_id {
+            targets.insert(
+                constructor.index() as u32,
+                JoinCallTarget {
+                    kind: JoinCallTargetKind::Constructor,
+                    endpoint_def_id,
+                    rule_def_id: None,
+                },
+            );
+        }
+        if let Some(constructor) = endpoint.scoped_constructor_def_id {
+            targets.insert(
+                constructor.index() as u32,
+                JoinCallTarget {
+                    kind: JoinCallTargetKind::Constructor,
+                    endpoint_def_id,
+                    rule_def_id: None,
+                },
+            );
+        }
         for channel in &endpoint.channels {
-            targets.insert(channel.method_def_id.index() as u32, JoinCallTargetKind::Channel);
+            targets.insert(
+                channel.method_def_id.index() as u32,
+                JoinCallTarget {
+                    kind: JoinCallTargetKind::Channel,
+                    endpoint_def_id,
+                    rule_def_id: None,
+                },
+            );
         }
         for rule in &endpoint.rules {
-            targets.insert(rule.method_def_id.index() as u32, JoinCallTargetKind::Dispatch);
+            let rule_def_id = Some(rule.method_def_id.index() as u32);
+            targets.insert(
+                rule.method_def_id.index() as u32,
+                JoinCallTarget {
+                    kind: JoinCallTargetKind::Dispatch,
+                    endpoint_def_id,
+                    rule_def_id,
+                },
+            );
             for body in rule.body_def_ids {
-                targets.insert(body.index() as u32, JoinCallTargetKind::ReactionBody);
+                targets.insert(
+                    body.index() as u32,
+                    JoinCallTarget {
+                        kind: JoinCallTargetKind::ReactionBody,
+                        endpoint_def_id,
+                        rule_def_id,
+                    },
+                );
             }
         }
     }
@@ -506,14 +581,15 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 self.operation(JoinOperationKind::OrdinaryCall, location);
                 let callee_def_id = func.const_fn_def().and_then(|(def_id, _)| def_id.as_local());
                 let target = self.call_target(callee_def_id);
-                match target {
+                match target.kind {
                     JoinCallTargetKind::Channel => {
                         self.operation(JoinOperationKind::Register, location)
                     }
                     JoinCallTargetKind::Dispatch => {
                         self.operation(JoinOperationKind::Match, location)
                     }
-                    JoinCallTargetKind::Unknown
+                    JoinCallTargetKind::Constructor
+                    | JoinCallTargetKind::Unknown
                     | JoinCallTargetKind::OrdinaryLocal
                     | JoinCallTargetKind::ReactionBody => {}
                 }
@@ -521,7 +597,9 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     block: location.block.index() as u32,
                     statement: location.statement_index as u32,
                     callee: callee_def_id.map(|def_id| def_id.index() as u32),
-                    target,
+                    target: target.kind,
+                    endpoint_def_id: target.endpoint_def_id,
+                    rule_def_id: target.rule_def_id,
                 });
                 for arg in args {
                     if let Operand::Move(place) = &arg.node {
@@ -538,7 +616,9 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             }
             TerminatorKind::Return => {
                 self.operation(JoinOperationKind::Return, location);
-                if self.endpoint_locals.get(RETURN_PLACE.index()).copied().unwrap_or(false) {
+                if !self.suppress_endpoint_return_escape
+                    && self.endpoint_locals.get(RETURN_PLACE.index()).copied().unwrap_or(false)
+                {
                     self.endpoint_escapes.insert(JoinEndpointEscape {
                         local: RETURN_PLACE.index() as u32,
                         kind: JoinEndpointEscapeKind::Return,
@@ -607,11 +687,15 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\"}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{}}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
                 edge.target,
+                edge.endpoint_def_id
+                    .map_or_else(|| "null".to_string(), |endpoint| endpoint.to_string()),
+                edge.rule_def_id
+                    .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
             )
         })
         .collect::<Vec<_>>()
@@ -718,6 +802,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 })
                 .unwrap_or_default(),
             join_call_targets: join_call_target_map(tcx),
+            suppress_endpoint_return_escape: role == JoinBodyRole::Constructor,
             calls: 0,
             yields: 0,
             unknown_effects: 0,
@@ -730,6 +815,10 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         // representation. A later lowering pass will replace the compatibility
         // expansion once native construction/demand operations exist.
         match role {
+            JoinBodyRole::Constructor => facts.operation(
+                JoinOperationKind::CreateGroup,
+                Location { block: mir::START_BLOCK, statement_index: 0 },
+            ),
             JoinBodyRole::Channel => facts.operation(
                 JoinOperationKind::Register,
                 Location { block: mir::START_BLOCK, statement_index: 0 },
