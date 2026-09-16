@@ -15,8 +15,8 @@ use rustc_index::Idx;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCallEdge, JoinCallTargetKind, JoinCfaRejection, JoinCfaSummary,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
-    JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOperationKind,
-    JoinQueueBound, JoinValueFlow, JoinValueFlowKind, JoinValueState,
+    JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOccupancyFact,
+    JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind, JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
@@ -156,6 +156,7 @@ impl JoinBodyFacts {
             self.unknown_effects,
             solver_complete,
         );
+        let occupancy = solve_body_occupancy(&self.operations);
         let rejection = if role != JoinBodyRole::ReactionBody {
             Some(JoinCfaRejection::NotReactionBody)
         } else if arity != 1 {
@@ -186,6 +187,7 @@ impl JoinBodyFacts {
             is_async,
             frontend_direct_unary,
             queue_bound,
+            occupancy,
             instance_closedness,
             instance_closedness_reason,
             operations: self.operations,
@@ -245,6 +247,75 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTargetKind> {
         }
     }
     targets
+}
+
+fn solve_body_occupancy(operations: &[JoinMirOperation]) -> JoinOccupancyFact {
+    let mut ordered = operations.to_vec();
+    ordered.sort_by_key(|operation| {
+        (operation.block, operation.statement, occupancy_operation_priority(operation.kind))
+    });
+
+    let mut occupancy = 0u32;
+    let mut peak = 0u32;
+    let mut events = 0u32;
+    let mut complete = true;
+    for operation in ordered {
+        match operation.kind {
+            JoinOperationKind::Register => {
+                events = events.saturating_add(1);
+                let Some(next) = occupancy.checked_add(1) else {
+                    complete = false;
+                    continue;
+                };
+                occupancy = next;
+                peak = peak.max(occupancy);
+            }
+            JoinOperationKind::Match | JoinOperationKind::WithdrawOrAbandon => {
+                events = events.saturating_add(1);
+                if occupancy == 0 {
+                    // The body is consuming an input supplied by a caller or
+                    // a different body. A local sequence cannot prove its
+                    // starting occupancy, so do not expose a false bound.
+                    complete = false;
+                } else {
+                    occupancy -= 1;
+                }
+            }
+            JoinOperationKind::CancelScope => {
+                events = events.saturating_add(1);
+                complete = false;
+            }
+            JoinOperationKind::CreateGroup
+            | JoinOperationKind::Demand
+            | JoinOperationKind::CompleteReplies
+            | JoinOperationKind::OrdinaryCall
+            | JoinOperationKind::Yield
+            | JoinOperationKind::Return
+            | JoinOperationKind::Escape => {}
+        }
+    }
+
+    JoinOccupancyFact {
+        proven_peak: complete.then_some(peak),
+        proven_final: complete.then_some(occupancy),
+        events,
+        complete,
+    }
+}
+
+fn occupancy_operation_priority(kind: JoinOperationKind) -> u8 {
+    match kind {
+        JoinOperationKind::Register => 0,
+        JoinOperationKind::Match | JoinOperationKind::WithdrawOrAbandon => 1,
+        JoinOperationKind::CancelScope => 2,
+        JoinOperationKind::CreateGroup
+        | JoinOperationKind::Demand
+        | JoinOperationKind::CompleteReplies
+        | JoinOperationKind::OrdinaryCall
+        | JoinOperationKind::Yield
+        | JoinOperationKind::Return
+        | JoinOperationKind::Escape => 3,
+    }
 }
 
 /// Solve the local value-flow lattice to a bounded fixed point.
@@ -554,7 +625,7 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -563,6 +634,13 @@ fn dump_summary(
         summary.is_async,
         summary.frontend_direct_unary,
         summary.queue_bound,
+        summary.occupancy.proven_peak.map_or_else(|| "null".to_string(), |value| value.to_string()),
+        summary
+            .occupancy
+            .proven_final
+            .map_or_else(|| "null".to_string(), |value| value.to_string()),
+        summary.occupancy.events,
+        summary.occupancy.complete,
         summary.instance_closedness,
         summary.instance_closedness_reason,
         mode,
@@ -713,6 +791,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let locally_closed = summary.locally_closed;
         let instance_closedness = summary.instance_closedness;
         let instance_closedness_reason = summary.instance_closedness_reason;
+        let occupancy = summary.occupancy;
         let escapes = summary.escapes.len();
         let endpoint_escapes = summary.endpoint_escapes.len();
         let value_flows = summary.value_flows.len();
@@ -737,6 +816,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             ?queue_bound,
             ?instance_closedness,
             ?instance_closedness_reason,
+            ?occupancy,
             operations,
             calls,
             call_edges,

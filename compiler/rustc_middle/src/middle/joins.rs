@@ -214,6 +214,23 @@ pub enum JoinQueueBound {
     Unknown,
 }
 
+/// Body-local occupancy transfer facts for semantic register/match events.
+///
+/// These facts describe only the event interval visible in one MIR body. A
+/// `complete` result is not a queue proof for a concrete group instance: the
+/// solver has not yet connected callers, allocation sites, loops, competing
+/// rules, or external producers. `None` is therefore used whenever the local
+/// event sequence begins with an externally supplied match/withdraw or a
+/// cancellation whose drain is not represented in this body.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinOccupancyFact {
+    pub proven_peak: Option<u32>,
+    pub proven_final: Option<u32>,
+    pub events: u32,
+    pub complete: bool,
+}
+
 /// Closedness of the concrete join state represented by a body.
 ///
 /// `Closed` is intentionally reserved for the caller-owned direct unary
@@ -288,6 +305,7 @@ pub struct JoinCfaSummary {
     pub is_async: bool,
     pub frontend_direct_unary: bool,
     pub queue_bound: JoinQueueBound,
+    pub occupancy: JoinOccupancyFact,
     pub instance_closedness: JoinInstanceClosedness,
     pub instance_closedness_reason: JoinInstanceClosednessReason,
     pub operations: Vec<JoinMirOperation>,
