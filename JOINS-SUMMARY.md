@@ -11,8 +11,8 @@ Restricted isolated unary lowering produces ordinary caller-owned futures.
 Typed compiler descriptors and MIR summaries record operations, call identities,
 local flow and escapes; commit `d766b9f7d50` adds CFG occupancy transfer and
 commit `f2a93f0e208` adds the crate-level instance graph. The current pushed
-tip `49c90269414` extends that graph with direct local helper argument/return
-transfer.
+tip `5dca4df2d72` extends that graph with direct local helper argument/return
+transfer and records the verification evidence.
 The current slice also runs `join_cfa_crate_summary` after HIR analysis:
 it consumes the pre-cleanup summary attached to runtime MIR and follows a
 constructor result through same-body copy/move/borrow flow to a known
