@@ -63,14 +63,23 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             .into_iter()
             .take(declared_channels as usize)
             .enumerate()
-            .map(|(index, (method_def_id, name))| JoinChannel {
-                method_def_id,
-                index: index as u32,
-                name,
-                signature: tcx
-                    .fn_sig(method_def_id.to_def_id())
-                    .instantiate_identity()
-                    .skip_normalization(),
+            .map(|(index, (method_def_id, name))| {
+                let direct_method_def_id = impl_.items.iter().find_map(|item_id| {
+                    let item = tcx.hir_impl_item(*item_id);
+                    let method_def_id = item.owner_id.def_id;
+                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter)
+                        .then_some(method_def_id)
+                });
+                JoinChannel {
+                    method_def_id,
+                    direct_method_def_id,
+                    index: index as u32,
+                    name,
+                    signature: tcx
+                        .fn_sig(method_def_id.to_def_id())
+                        .instantiate_identity()
+                        .skip_normalization(),
+                }
             })
             .collect();
         let rules = dispatch_method

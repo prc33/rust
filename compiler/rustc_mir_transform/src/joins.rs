@@ -14,7 +14,7 @@ use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
-    JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary,
+    JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary, JoinFusionFact,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOccupancyFact,
     JoinLoweringStrategy, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
@@ -27,7 +27,7 @@ use rustc_middle::mir::{
 };
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 
 use crate::{MirPass, PassPolicy};
@@ -130,6 +130,43 @@ fn body_descriptor<'tcx>(
                 ));
             }
         }
+    }
+
+    // Restricted unary endpoints do not emit a dispatch method.  Their
+    // reaction is the nested body of the generated channel method (the outer
+    // method constructs the caller-owned future and the nested coroutine owns
+    // the reaction body).  Recover that identity through the normal HIR
+    // parent chain instead of matching a generated closure name.  This keeps
+    // inner channel calls visible to the typed MIR visitor while remaining
+    // conservative for unrelated nested closures: only a body below the one
+    // direct-unary channel is classified as a reaction.
+    let mut ancestor = tcx.opt_parent(local_def_id.to_def_id());
+    while let Some(ancestor_local) = ancestor.and_then(|ancestor| ancestor.as_local()) {
+        for endpoint in &tcx.join_definitions(()).endpoints {
+            if !endpoint.frontend_direct_unary || endpoint.channels.len() != 1 {
+                continue;
+            }
+            let channel = &endpoint.channels[0];
+            if channel.method_def_id != ancestor_local {
+                continue;
+            }
+            let endpoint_def_id = endpoint.endpoint_def_id.map_or(u32::MAX, |id| id.index() as u32);
+            // There is no generated dispatch DefId in this representation.
+            // Use the channel method as the temporary rule anchor; the typed
+            // channel/rule indices carried by the next descriptor revision
+            // will replace this fallback without changing the parent walk.
+            return Some((
+                endpoint_def_id,
+                channel.method_def_id.index() as u32,
+                JoinBodyRole::ReactionBody,
+                endpoint.declared_arity,
+                endpoint.declared_async_rule,
+                endpoint.frontend_direct_unary,
+                frontend_queue_bound(endpoint.frontend_queue_bound),
+                endpoint.endpoint_def_id,
+            ));
+        }
+        ancestor = tcx.opt_parent(ancestor_local.to_def_id());
     }
     None
 }
@@ -300,6 +337,7 @@ impl JoinBodyFacts {
             unknown_effects: self.unknown_effects,
             escapes: self.escapes.into_iter().collect(),
             endpoint_escapes,
+            fusion: None,
             direct_candidate: rejection.is_none(),
             rejection,
         }
@@ -358,16 +396,274 @@ struct JoinCallTarget {
     kind: JoinCallTargetKind,
     endpoint_def_id: Option<u32>,
     rule_def_id: Option<u32>,
+    direct_method_def_id: Option<u32>,
 }
 
 impl JoinCallTarget {
     fn unknown() -> Self {
-        Self { kind: JoinCallTargetKind::Unknown, endpoint_def_id: None, rule_def_id: None }
+        Self {
+            kind: JoinCallTargetKind::Unknown,
+            endpoint_def_id: None,
+            rule_def_id: None,
+            direct_method_def_id: None,
+        }
     }
 
     fn ordinary_local() -> Self {
-        Self { kind: JoinCallTargetKind::OrdinaryLocal, endpoint_def_id: None, rule_def_id: None }
+        Self {
+            kind: JoinCallTargetKind::OrdinaryLocal,
+            endpoint_def_id: None,
+            rule_def_id: None,
+            direct_method_def_id: None,
+        }
     }
+}
+
+/// Return whether a constructor result reaches a channel receiver through a
+/// unique, non-aggregate local-to-local path.  The first result-forwarding
+/// rewrite deliberately uses a tiny proof domain: every destination local may
+/// have one source, but a branch/overwrite that supplies two different
+/// sources rejects the rewrite.  This is stronger than a name-based pattern
+/// and cheap enough to run while analysis MIR is still available.
+fn unique_alias_reaches(
+    flows: &[JoinValueFlow],
+    source: u32,
+    destination: u32,
+) -> bool {
+    let mut incoming = BTreeMap::<u32, u32>::new();
+    for flow in flows {
+        let Some(flow_source) = flow.source else { continue };
+        if !matches!(
+            flow.kind,
+            JoinValueFlowKind::Copy | JoinValueFlowKind::Move | JoinValueFlowKind::Borrow
+        ) {
+            continue;
+        }
+        if let Some(previous) = incoming.insert(flow.destination, flow_source)
+            && previous != flow_source
+        {
+            return false;
+        }
+    }
+
+    let mut reachable = FxHashSet::default();
+    let mut worklist = vec![source];
+    while let Some(local) = worklist.pop() {
+        if !reachable.insert(local) {
+            continue;
+        }
+        for (&next, &previous) in &incoming {
+            if previous == local {
+                worklist.push(next);
+            }
+        }
+    }
+    reachable.contains(&destination)
+}
+
+/// Test reachability with a non-empty path.  This is used to reject only a
+/// cycle that can revisit the constructor or channel operation itself; an
+/// ordinary async body's poll/resume loop after the request is not a reason to
+/// disable a preceding result-forwarding rewrite.
+fn cfg_reaches<'tcx>(body: &Body<'tcx>, start: mir::BasicBlock, target: mir::BasicBlock) -> bool {
+    let mut visited = FxHashSet::default();
+    let mut worklist = body.basic_blocks[start].terminator().successors().collect::<Vec<_>>();
+    while let Some(block) = worklist.pop() {
+        if block == target {
+            return true;
+        }
+        if !visited.insert(block) {
+            continue;
+        }
+        worklist.extend(body.basic_blocks[block].terminator().successors());
+    }
+    false
+}
+
+fn alias_closure(flows: &[JoinValueFlow], source: u32) -> FxHashSet<u32> {
+    let mut outgoing = BTreeMap::<u32, BTreeSet<u32>>::new();
+    for flow in flows {
+        let Some(flow_source) = flow.source else { continue };
+        if matches!(
+            flow.kind,
+            JoinValueFlowKind::Copy | JoinValueFlowKind::Move | JoinValueFlowKind::Borrow
+        ) {
+            outgoing.entry(flow_source).or_default().insert(flow.destination);
+        }
+    }
+    let mut aliases = FxHashSet::default();
+    let mut worklist = vec![source];
+    while let Some(local) = worklist.pop() {
+        if !aliases.insert(local) {
+            continue;
+        }
+        if let Some(destinations) = outgoing.get(&local) {
+            worklist.extend(destinations.iter().copied());
+        }
+    }
+    aliases
+}
+
+struct AggregateUseFacts {
+    aliases: FxHashSet<u32>,
+    captured: bool,
+}
+
+impl<'tcx> Visitor<'tcx> for AggregateUseFacts {
+    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
+        if let Rvalue::Aggregate(_, operands) = rvalue {
+            if operands.iter().any(|operand| {
+                operand
+                    .place()
+                    .is_some_and(|place| self.aliases.contains(&(place.local.index() as u32)))
+            }) {
+                self.captured = true;
+            }
+        }
+        self.super_rvalue(rvalue, location);
+    }
+}
+
+/// Proof-gated result forwarding for a private, synchronous unary channel.
+///
+/// The generated adapter has the same `&self`/payload/`Reply<T>` ABI as the
+/// public channel method, but publishes an inline ready reply instead of
+/// entering the dynamic matcher.  We only retarget a call when one concrete
+/// constructor reaches exactly one channel use through a unique local alias;
+/// competing join operations, endpoint escapes, and generic adapters remain on
+/// the compatibility matcher path.  This is intentionally a MIR call-target
+/// rewrite rather than a runtime symbol pattern match.
+fn try_fuse_private_result<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &mut Body<'tcx>,
+    summary: &JoinCfaSummary,
+) -> Option<JoinFusionFact> {
+    if tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Optimize
+        || summary.role != JoinBodyRole::ReactionBody
+        || !summary.endpoint_escapes.is_empty()
+    {
+        return None;
+    }
+
+    let targets = join_call_target_map(tcx);
+    let mut constructors = Vec::new();
+    let mut channels = Vec::new();
+    let mut known_join_edges = 0usize;
+    for edge in &summary.call_edges {
+        match edge.target {
+            JoinCallTargetKind::Constructor => constructors.push(edge),
+            JoinCallTargetKind::Channel => channels.push(edge),
+            JoinCallTargetKind::Dispatch | JoinCallTargetKind::ReactionBody => {
+                known_join_edges += 1;
+            }
+            JoinCallTargetKind::Unknown | JoinCallTargetKind::OrdinaryLocal => {}
+        }
+    }
+    if constructors.len() != 1 || channels.len() != 1 || known_join_edges != 0 {
+        return None;
+    }
+    let constructor = constructors[0];
+    let channel = channels[0];
+    if constructor.endpoint_def_id != channel.endpoint_def_id {
+        return None;
+    }
+    let (Some(constructor_destination), Some(channel_receiver), Some(channel_callee)) = (
+        constructor.destination_local,
+        channel.receiver_local,
+        channel.callee,
+    ) else {
+        return None;
+    };
+    if !unique_alias_reaches(
+        &summary.value_flows,
+        constructor_destination,
+        channel_receiver,
+    ) {
+        return None;
+    }
+    let constructor_block = mir::BasicBlock::from_usize(constructor.block as usize);
+    let channel_block = mir::BasicBlock::from_usize(channel.block as usize);
+    let dominators = body.basic_blocks.dominators();
+    if !dominators.dominates(constructor_block, channel_block)
+        || cfg_reaches(body, constructor_block, constructor_block)
+        || cfg_reaches(body, channel_block, channel_block)
+        || cfg_reaches(body, channel_block, constructor_block)
+    {
+        // A constructor that does not dominate its use, or any reachable
+        // back-edge in the body, needs path-sensitive/loop reasoning that the
+        // first certificate does not provide.
+        return None;
+    }
+
+    // The reply itself must have one consuming move into the same concrete
+    // `Reply<T>` type.  This is the first-use approximation of an explicit
+    // `.await`: copies, borrows, aggregate storage and direct calls all reject
+    // the rewrite rather than risking a changed observation or drop order.
+    let reply_local = channel.destination_local?;
+    let reply_flows = summary
+        .value_flows
+        .iter()
+        .filter(|flow| flow.source == Some(reply_local))
+        .collect::<Vec<_>>();
+    if reply_flows.len() != 1 || reply_flows[0].kind != JoinValueFlowKind::Move {
+        return None;
+    }
+    let mut aggregate_uses = AggregateUseFacts {
+        aliases: alias_closure(&summary.value_flows, reply_local),
+        captured: false,
+    };
+    aggregate_uses.visit_body(body);
+    if aggregate_uses.captured {
+        return None;
+    }
+    let reply_destination = mir::Local::from_usize(reply_flows[0].destination as usize);
+    let reply_source = mir::Local::from_usize(reply_local as usize);
+    if body
+        .local_decls
+        .get(reply_destination)
+        .zip(body.local_decls.get(reply_source))
+        .is_none_or(|(destination, source)| destination.ty != source.ty)
+    {
+        return None;
+    }
+    if summary.call_edges.iter().any(|edge| {
+        (edge.block != channel.block || edge.statement != channel.statement)
+            && edge.argument_locals.iter().any(|local| *local == Some(reply_local))
+    }) {
+        return None;
+    }
+
+    let target = targets.get(&channel_callee)?;
+    let direct_method = target.direct_method_def_id?;
+    // Generic adapters need substitutions from the endpoint instance.  Keep
+    // this first transform monomorphic until the typed generic argument map
+    // is carried in JoinCall; rejecting them is safe and observable in CFA.
+    let direct_def_id = DefId::local(rustc_span::def_id::DefIndex::from_usize(
+        direct_method as usize,
+    ));
+    if tcx.generics_of(direct_def_id).count() != 0 {
+        return None;
+    }
+    let block = mir::BasicBlock::from_usize(channel.block as usize);
+    let statement = channel.statement as usize;
+    let block_data = body.basic_blocks_mut().get_mut(block)?;
+    if statement != block_data.statements.len() {
+        return None;
+    }
+    let terminator = block_data.terminator_mut();
+    let TerminatorKind::Call { func, .. } = &mut terminator.kind else {
+        return None;
+    };
+    *func = Operand::function_handle(tcx, direct_def_id, &[], terminator.source_info.span);
+    Some(JoinFusionFact {
+        constructor_block: constructor.block,
+        constructor_statement: constructor.statement,
+        channel_block: channel.block,
+        channel_statement: channel.statement,
+        channel_method_def_id: channel_callee,
+        direct_method_def_id: direct_method,
+        rewritten: true,
+    })
 }
 
 fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
@@ -381,6 +677,7 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                     kind: JoinCallTargetKind::Constructor,
                     endpoint_def_id,
                     rule_def_id: None,
+                    direct_method_def_id: None,
                 },
             );
         }
@@ -391,6 +688,7 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                     kind: JoinCallTargetKind::Constructor,
                     endpoint_def_id,
                     rule_def_id: None,
+                    direct_method_def_id: None,
                 },
             );
         }
@@ -401,6 +699,9 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                     kind: JoinCallTargetKind::Channel,
                     endpoint_def_id,
                     rule_def_id: None,
+                    direct_method_def_id: channel
+                        .direct_method_def_id
+                        .map(|id| id.index() as u32),
                 },
             );
         }
@@ -412,6 +713,7 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                     kind: JoinCallTargetKind::Dispatch,
                     endpoint_def_id,
                     rule_def_id,
+                    direct_method_def_id: None,
                 },
             );
             for body in rule.body_def_ids {
@@ -421,6 +723,7 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                         kind: JoinCallTargetKind::ReactionBody,
                         endpoint_def_id,
                         rule_def_id,
+                        direct_method_def_id: None,
                     },
                 );
             }
@@ -1561,6 +1864,21 @@ fn dump_summary(
         .join(",");
     let rejection =
         summary.rejection.map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\""));
+    let fusion = summary.fusion.map_or_else(
+        || "null".to_string(),
+        |fact| {
+            format!(
+                "{{\"constructor_block\":{},\"constructor_statement\":{},\"channel_block\":{},\"channel_statement\":{},\"channel_method\":{},\"direct_method\":{},\"rewritten\":{}}}",
+                fact.constructor_block,
+                fact.constructor_statement,
+                fact.channel_block,
+                fact.channel_statement,
+                fact.channel_method_def_id,
+                fact.direct_method_def_id,
+                fact.rewritten,
+            )
+        },
+    );
     let endpoint_escapes = summary
         .endpoint_escapes
         .iter()
@@ -1568,7 +1886,7 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -1601,6 +1919,7 @@ fn dump_summary(
         local_facts,
         operation_kinds,
         summary.direct_candidate,
+        fusion,
         rejection,
     );
     // Local indices repeat in every compilation unit. Include the stable
@@ -1867,6 +2186,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
+        let fusion = try_fuse_private_result(tcx, body, &summary);
+        let mut summary = summary;
+        summary.fusion = fusion;
         let rejection = summary.rejection;
         let direct_candidate = summary.direct_candidate;
         let operations = summary.operations.len();
@@ -1922,6 +2244,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             operation_kinds = ?operation_kinds,
             direct_candidate,
             ?rejection,
+            fusion = ?fusion,
             ?cfa_mode,
             "join CFA summary"
         );

@@ -60,10 +60,12 @@ its embedded commit is unknown. Online LLVM documentation tracks development,
 so check exact attribute spelling and pass availability against the actual build.
 
 - [Builtin join expansion](../compiler/rustc_builtin_macros/src/joins.rs)
-  selects direct unary futures but emits matcher submission and dispatch for
-  shared cases. Even the direct-unary generated endpoint still contains a
-  matcher field and constructs it: bypassing method dispatch does not establish
-  that endpoint construction costs disappear.
+  now selects a zero-state direct unary future for isolated result rules in
+  every CFA mode; it does not emit a matcher field or construct matcher storage
+  on that path. Shared/multi-input cases still emit matcher submission and
+  dispatch. A separate optimize-only MIR proof can retarget a private
+  monomorphic result call to `__join_direct_*`, but it does not yet eliminate
+  the explicit `Reply` await or establish general protocol fusion.
 - [Join facts](../compiler/rustc_middle/src/middle/joins.rs) explicitly
   distinguish body-local occupancy from a bound on a concrete group instance.
   A complete local event summary is not sufficient to constrain all callers,

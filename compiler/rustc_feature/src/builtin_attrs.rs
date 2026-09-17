@@ -347,6 +347,7 @@ pub static BUILTIN_ATTRIBUTES: &[Symbol] = &[
     // Compiler-owned shape marker emitted by the experimental `join impl`
     // builtin. It is gated by the `joins` language feature and is not a
     // source-level API.
+    sym::join_direct_adapter,
     sym::join_endpoint,
     sym::rustc_never_returns_null_ptr,
     sym::rustc_no_implicit_autorefs,

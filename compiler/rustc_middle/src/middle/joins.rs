@@ -62,6 +62,12 @@ pub struct JoinDefinition<'tcx> {
 #[derive(Debug, StableHash)]
 pub struct JoinChannel<'tcx> {
     pub method_def_id: LocalDefId,
+    /// Compiler-private direct reply adapter, when the frontend generated a
+    /// proof-eligible unary reaction helper.  This is a target identity, not
+    /// a promise that the helper may be called: the MIR CFA consumer must
+    /// still prove a private unique instance before retargeting a channel
+    /// call to it.
+    pub direct_method_def_id: Option<LocalDefId>,
     /// Position in the source declaration. This remains stable even when the
     /// generated method has a hygienic name or the declaration is generic.
     pub index: u32,
@@ -363,6 +369,25 @@ pub enum JoinEndpointEscapeKind {
     Return,
 }
 
+/// A compiler-owned proof witness for a result-channel forwarding rewrite.
+///
+/// The locations are body-local indices in the same pre-cleanup MIR snapshot
+/// as the enclosing summary.  Definition identities are compact local
+/// indices here because the enclosing `JoinCfaSummary` already carries the
+/// endpoint/body identity; a future cross-crate certificate can replace them
+/// with `DefId`s without changing the operation carrier.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinFusionFact {
+    pub constructor_block: u32,
+    pub constructor_statement: u32,
+    pub channel_block: u32,
+    pub channel_statement: u32,
+    pub channel_method_def_id: u32,
+    pub direct_method_def_id: u32,
+    pub rewritten: bool,
+}
+
 /// Conservative facts produced for one join-associated MIR body.
 ///
 /// `direct_candidate` is intentionally only a candidate bit.  It is true for
@@ -408,6 +433,10 @@ pub struct JoinCfaSummary {
     pub unknown_effects: u32,
     pub escapes: Vec<u32>,
     pub endpoint_escapes: Vec<JoinEndpointEscape>,
+    /// Present only when the proof consumer found and rewrote a private
+    /// result-forwarding edge in this body.  A missing value is not a proof of
+    /// rejection; it means that no eligible forwarding edge was discovered.
+    pub fusion: Option<JoinFusionFact>,
     pub direct_candidate: bool,
     pub rejection: Option<JoinCfaRejection>,
 }

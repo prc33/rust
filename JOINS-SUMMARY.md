@@ -8,6 +8,8 @@ then applies that work to DataFusion.
 ## Implemented and measured
 
 Restricted isolated unary lowering produces ordinary caller-owned futures.
+The direct endpoint is zero-sized and returns the declared `Future::Output`
+without a matcher, reply cell, `Send`/`'static` or `JoinError` requirement.
 Typed compiler descriptors and MIR summaries record operations, call identities,
 local flow and escapes. The current working IR slice attaches a `JoinCall`
 descriptor directly to the ordinary MIR `Call` terminator, so the call's
@@ -23,27 +25,35 @@ known channel/dispatch receiver. The `InstanceTraffic` witness crosses a direct
 `known_uses=2` in both analyze and optimize runs. The graph remains
 conservatively incomplete for unsupported effects and escapes; closure
 captures, loop contexts, indirect calls and general ordinary-caller
-propagation are still pending. Native semantic admission/match/reply MIR and
-proof-consuming shared-join MIR fusion remain incomplete. The marker is metadata
-beside the compatibility runtime call, not a claim that the runtime helper is
-itself the semantic IR.
+propagation are still pending. A narrow optimize-only MIR consumer now proves a
+single monomorphic constructor/channel path and retargets its result call to a
+private inline-ready adapter (`Reply::ready`); off/analyze retain the public
+matcher call. The body JSON records the constructor/channel locations and
+`fusion.rewritten=true`. This is result-forwarding only: native shared
+admission/match/reply MIR, full certificate invalidation and general shared-join
+fusion remain incomplete. The marker is metadata beside the compatibility
+runtime call, not a claim that the runtime helper is itself the semantic IR.
 
-The archived seven-process bounded-slot microbenchmark has these median ns/op:
+The quick unary microbenchmark used 200,000 iterations, five repetitions per
+mode and black-boxed checksums. Medians below are nanoseconds per operation;
+`block_on` rows include the caller-driven executor and stack-poll rows isolate a
+single first poll. Raw rows are committed at
+`joins-library/docs/ir-cfa-evidence/native-microbench-20260917-unary.tsv`.
 
-| Case | CFA off | Optimize |
-| --- | ---: | ---: |
-| Direct function | 1.16 | 1.18 |
-| Ordinary async through block_on | 82.1 | 85.5 |
-| Sync unary join through block_on | 393.0 | 89.7 |
-| Async unary join through block_on | 31,953.0 | 86.6 |
-| Ordinary async, stack-pinned first poll | 1.21 | 1.16 |
-| Unary join, stack-pinned first poll | 282.6 | 0.84 |
+| Case | CFA off | Analyze | Optimize |
+| --- | ---: | ---: | ---: |
+| Direct function | 1.03 | 1.07 | 1.27 |
+| Ordinary async through `block_on` | 65.88 | 64.43 | 67.65 |
+| Shared unary join through `block_on` | 60.74 | 66.60 | 65.04 |
+| Async join through `block_on` | 77.00 | 79.77 | 83.25 |
+| Ordinary async, stack-pinned first poll | 1.03 | 1.05 | 1.08 |
+| Unary join, stack-pinned first poll | 1.03 | 1.06 | 1.09 |
 
-These are ready unary representation measurements. The async compatibility
-control crosses a worker boundary; its improvement includes changing execution
-placement. They do not establish shared-join CFA fusion, suspension performance,
-or a DataFusion speedup. Raw rows are in the companion library at
-`docs/ir-cfa-evidence/native-microbench-20260915-bounded-slot.tsv`.
+The direct unary path is therefore at ordinary-async first-poll parity; the
+full lifecycle still includes executor overhead. These five-repetition numbers
+are directional rather than the final 30-block confidence gate, and they do
+not establish a DataFusion speedup. The earlier bounded-slot sample remains
+archived at `docs/ir-cfa-evidence/native-microbench-20260915-bounded-slot.tsv`.
 
 The LLVM probe at opt-level 3, one codegen unit, LTO off emits 14,934 versus
 1,542 lines, 142 versus zero dispatch references, and 180 versus 24 atomic RMW
@@ -61,6 +71,9 @@ The late-MIR boundary is verified with the stage-1 compiler and native suite:
 With `JOIN_MIR_DUMP` enabled in off mode, five `runtime-optimized` MIR bodies
 contain `join::Register`/`join::Match` descriptors on ordinary calls; no
 operand-bearing semantic marker or duplicated `OrdinaryCall` marker appears.
+The result-forwarding MIR gate additionally observes `Inner::step` in off and
+analyze, `Inner::__join_direct_step` only in optimize, and a matching JSON
+fusion certificate.
 The LLVM-facing codegen path clones only metadata-bearing bodies, removes
 legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
@@ -74,10 +87,11 @@ unjustified storage labels, then authoritative call operations, equal unary
 semantics, bounded instance CFA and one result-channel rewrite. It includes
 exact witnesses, rejection reasons, pass boundaries and verification commands.
 The duplicate-visitor and body-local-storage portions of gate 1 are complete;
-the call-carrier portion of gate 2 is partial. Typed group/channel remapping,
-mode-independent unary semantics, proof-consuming result fusion and fixed
-storage remain pending. Surviving join descriptors stay through runtime
-MIR to the LLVM-facing boundary; effectful operations cannot be erased as no-ops.
+the call-carrier portion of gate 2 is partial. Mode-independent unary semantics
+and a narrow result-adapter rewrite are complete; typed group/channel
+remapping, full proof/rejection accounting, shared result fusion and fixed
+storage remain pending. Surviving join descriptors stay through runtime MIR to
+the LLVM-facing boundary; effectful operations cannot be erased as no-ops.
 
 1. Validate the accepted unary/shared async semantics and equivalent benchmark
    protocols, including demand, cancellation, ownership and declared outputs.
@@ -91,10 +105,10 @@ MIR to the LLVM-facing boundary; effectful operations cannot be erased as no-ops
    constructor-to-channel path through `forward_instance`; next make
    `LoopTraffic` flow through its enclosing producer while retaining
    conservative unknown results.
-4. Apply one proof-driven result-channel MIR fusion while the marker is still
-   available, with a matching rejection witness and explicit
-   candidate/proof/rewrite counters. Only the final codegen clone should erase
-   an unreplaced marker.
+4. Expand the existing proof-driven result-channel MIR rewrite into a complete
+   certificate consumer: add revision/type fingerprints, explicit rejection
+   reasons and negative witnesses, then remove the proven-dead inner protocol
+   rather than only retargeting its result adapter.
 5. Prove per-instance queue bounds and select fixed storage without dynamic
    growth. Stack allocation additionally requires a lifetime/non-escape proof.
 6. Measure the generated path against equal-semantics controls, inspect LLVM

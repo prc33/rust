@@ -1296,6 +1296,9 @@ pub enum AttributeKind {
     /// Represents `#[rustc_intrinsic_const_stable_indirect]`
     RustcIntrinsicConstStableIndirect,
 
+    /// Represents a compiler-generated direct unary join adapter method.
+    RustcJoinDirectAdapter,
+
     /// Represents the compiler-generated join endpoint contract.
     ///
     /// This marker is emitted by the `join impl` builtin expansion and is

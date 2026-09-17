@@ -13,7 +13,6 @@ use rustc_errors::PResult;
 use rustc_expand::base::{DummyResult, ExpandResult, ExtCtxt, MacEager, MacroExpanderResult};
 use rustc_parse::exp;
 use rustc_parse::parser::{AllowConstBlockItems, FollowedByType, ForceCollect, Parser};
-use rustc_session::config::JoinCfaMode;
 use rustc_span::{FileName, Ident, Span, kw, sym};
 use smallvec::SmallVec;
 
@@ -140,10 +139,12 @@ pub(crate) fn expand_join_impl<'cx>(
         Ok(definition) => definition,
         Err(error) => return ExpandResult::Ready(DummyResult::any(span, error.emit())),
     };
-    // Only optimize mode selects the caller-owned isolated-unary
-    // representation. Off/analyze retain the compatibility matcher so the
-    // semantic and CFA modes can be compared against the same expansion.
-    let direct_unary = cx.sess.opts.unstable_opts.join_cfa == JoinCfaMode::Optimize;
+    // The isolated unary representation is a semantic lowering, not an
+    // optional CFA rewrite.  All modes therefore construct the same
+    // caller-owned future; `-Zjoin-cfa` only controls whether optional proofs
+    // are collected or consumed later in MIR. Shared/multi-input definitions
+    // continue through the compatibility matcher.
+    let direct_unary = true;
     let generated = match generate_endpoint(&definition, direct_unary) {
         Ok(generated) => generated,
         Err(message) => {
@@ -420,12 +421,17 @@ fn generate_restricted_endpoint(
         }
     }
 
-    let prefix =
-        rewrite_early_return_maps(definition, &resolved, &prefix, EarlyReturnMode::UnaryOrPair, 0)?;
     let direct_shape = direct_unary
         && channels.len() == 1
         && channels[0].reply.is_some()
         && aliases.is_empty();
+    let prefix = rewrite_early_return_maps(
+        definition,
+        &resolved,
+        &prefix,
+        if direct_shape { EarlyReturnMode::DirectUnary } else { EarlyReturnMode::UnaryOrPair },
+        0,
+    )?;
     let queue_bound = if channels.len() == 1 {
         if direct_shape { 0 } else { 1 }
     } else {
@@ -561,31 +567,107 @@ fn generate_unary_endpoint(
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let result = if channel.reply.is_some() { expression.to_string() } else { "()".into() };
-    let reaction = reaction_result_body(aliases, prefix, &result, output_type, rule.is_async);
+    let use_direct_unary = direct_unary && channel.reply.is_some() && aliases.is_empty();
+    let reaction = if use_direct_unary {
+        reaction_value_body(aliases, prefix, &result, rule.is_async)
+    } else {
+        reaction_result_body(aliases, prefix, &result, output_type, rule.is_async)
+    };
     // A closed unary endpoint with no nested channel aliases has the exact
     // ordinary-future shape: capture the argument now and evaluate the body
     // only when the returned future is first polled. Returning an opaque
     // future keeps the capture inline, like an ordinary `async fn`, instead
-    // of allocating the compatibility `Reply` thunk. This path is selected
-    // only in `-Zjoin-cfa=optimize`; the MIR pass still records and checks the
-    // body, while shared/multi-input rules retain the compatibility matcher.
+    // of allocating the compatibility `Reply` thunk. The MIR pass still
+    // records and checks the body, while shared/multi-input rules retain the
+    // compatibility matcher.
     // An `async when` body is already an ordinary coroutine; await that inner
     // body from the generated outer future so the isolated case has the same
     // construction and first-poll contract as an `async fn`.
-    let use_direct_unary = direct_unary && channel.reply.is_some() && aliases.is_empty();
     let direct_reaction = if rule.is_async {
         format!("({reaction}).await")
     } else {
         reaction.clone()
     };
+    let scoped_constructor = if use_direct_unary {
+        String::new()
+    } else {
+        format!(
+            "    {visibility}fn new_in_scope(scope: ::joins_runtime::QueryScope) -> Self\n{scope_bounds}{{\n        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded_in_scope(scope) }}\n    }}\n\n",
+            visibility = visibility,
+            scope_bounds = scope_bounds,
+        )
+    };
+    let dispatch_bounds = if use_direct_unary { String::new() } else { scope_bounds.clone() };
+    let dispatch = if use_direct_unary {
+        // The direct method never submits to the matcher. Keep the private
+        // compatibility hook type-correct without constructing a second
+        // reaction closure (and, importantly, without reintroducing a
+        // JoinError conversion into the public future).
+        "false".to_string()
+    } else if rule.is_async {
+        format!(
+            "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
+        )
+    } else {
+        format!(
+            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
+        )
+    };
+    let storage = if use_direct_unary {
+        direct_struct_decl(definition, &visibility)
+    } else {
+        format!(
+            "{visibility}struct {struct_name} {{\n    matcher: ::joins_runtime::UnaryMatcher<{input_type}, {output_type}>,\n}}",
+            visibility = visibility,
+            struct_name = struct_name(definition),
+            input_type = input_type,
+            output_type = output_type,
+        )
+    };
+    let clone_impl = if use_direct_unary {
+        format!(
+            "impl {impl_generics}Clone for {impl_name} {{\n    fn clone(&self) -> Self {{ {clone_value} }}\n}}",
+            impl_generics = impl_generics(definition),
+            impl_name = impl_name(definition),
+            clone_value = direct_struct_value(definition),
+        )
+    } else {
+        format!(
+            "impl {impl_generics}Clone for {impl_name} {{\n    fn clone(&self) -> Self {{\n        Self {{ matcher: self.matcher.clone() }}\n    }}\n}}",
+            impl_generics = impl_generics(definition),
+            impl_name = impl_name(definition),
+        )
+    };
+    let constructor = if use_direct_unary {
+        format!(
+            "    {visibility}fn new() -> Self {{ {value} }}",
+            visibility = visibility,
+            value = direct_struct_value(definition),
+        )
+    } else {
+        format!(
+            "    {visibility}fn new() -> Self {{\n        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded() }}\n    }}",
+            visibility = visibility,
+        )
+    };
+    let dispatch_method = if use_direct_unary {
+        String::new()
+    } else {
+        format!(
+            "    fn __join_dispatch_once(&self) -> bool\n{dispatch_bounds}{{\n        let __join_endpoint = self.clone();\n        {dispatch}\n    }}",
+            dispatch_bounds = dispatch_bounds,
+            dispatch = dispatch,
+        )
+    };
     let method = if use_direct_unary {
         format!(
-            "{visibility}fn {channel}(&self{argument}) -> impl ::core::future::Future<Output = ::core::result::Result<{output_type}, ::joins_runtime::JoinError>> {{ let __join_input_value = {value}; async move {{ {unpack} {direct_reaction} }} }}",
+            "{visibility}fn {channel}(&self{argument}) -> impl ::core::future::Future<Output = {output_type}>{future_captures} {{ let __join_input_value = {value}; async move {{ {unpack} {direct_reaction} }} }}",
             channel = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
             unpack = unpack,
             direct_reaction = direct_reaction,
+            future_captures = opaque_future_captures(definition),
         )
     } else if channel.reply.is_some() {
         format!(
@@ -604,58 +686,33 @@ fn generate_unary_endpoint(
             scope_bounds = scope_bounds,
         )
     };
-    let dispatch = if rule.is_async {
-        format!(
-            "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
-        )
-    } else {
-        format!(
-            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{binding}| {{\n{unpack}\n{reaction}\n}})"
-        )
-    };
     Ok(format!(
-        r#"{struct_attributes}{visibility}struct {struct_name} {{
-    matcher: ::joins_runtime::UnaryMatcher<{input_type}, {output_type}>,
-}}
+        r#"{struct_attributes}{storage}
 
-impl {impl_generics}Clone for {impl_name} {{
-    fn clone(&self) -> Self {{
-        Self {{ matcher: self.matcher.clone() }}
-    }}
-}}
+{clone_impl}
 
 {impl_attributes}{endpoint_attribute}
 impl {impl_generics}{impl_name} {{
 
-    {visibility}fn new() -> Self {{
-        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded() }}
-    }}
+{constructor}
 
-    {visibility}fn new_in_scope(scope: ::joins_runtime::QueryScope) -> Self
-{scope_bounds}{{
-        Self {{ matcher: ::joins_runtime::UnaryMatcher::new_bounded_in_scope(scope) }}
-    }}
+{scoped_constructor}
 
-    {method}
+{method}
 
-    fn __join_dispatch_once(&self) -> bool
-{scope_bounds}{{
-        let __join_endpoint = self.clone();
-        {dispatch}
-    }}
+{dispatch_method}
 }}
 "#,
-        visibility = visibility,
         struct_attributes = struct_attributes,
+        storage = storage,
+        clone_impl = clone_impl,
         impl_attributes = impl_attributes,
-        struct_name = struct_name(definition),
+        constructor = constructor,
         impl_generics = impl_generics(definition),
         impl_name = impl_name(definition),
-        input_type = input_type,
-        output_type = output_type,
-        scope_bounds = scope_bounds,
+        scoped_constructor = scoped_constructor,
         method = method,
-        dispatch = dispatch,
+        dispatch_method = dispatch_method,
         endpoint_attribute = endpoint_attribute,
     ))
 }
@@ -683,6 +740,21 @@ fn reaction_result_body(
     }
 }
 
+/// Build the body for an isolated unary reaction whose declared output is
+/// already the public future output.  Unlike the shared matcher path this
+/// does not add a transport `Result` or translate panics/errors: the generated
+/// async block has exactly the same output and unwind behaviour as an ordinary
+/// `async fn` with the equivalent body.
+fn reaction_value_body(aliases: &str, prefix: &str, value: &str, is_async: bool) -> String {
+    if is_async {
+        format!(
+            "async move {{\n{aliases}{prefix}\n{value}\n}}"
+        )
+    } else {
+        format!("{{\n{aliases}{prefix}\n{value}\n}}")
+    }
+}
+
 fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> {
     let dispatch_bounds = endpoint_dispatch_bounds(definition);
     let mut method_definitions = Vec::with_capacity(definition.channels.len());
@@ -696,6 +768,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     }
 
     let mut rule_definitions = Vec::with_capacity(definition.rules.len());
+    let mut direct_method_definitions = Vec::new();
     for (rule_index, rule) in definition.rules.iter().enumerate() {
         let resolved = resolve_rule(definition, rule, rule_index)?;
         let (body, aliases) = rewrite_body(definition, &rule.body, rule.is_async);
@@ -715,6 +788,45 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         let pattern =
             resolved.iter().map(|(index, _, _)| index.to_string()).collect::<Vec<_>>().join(", ");
         let body = dynamic_rule_body(&resolved, &aliases, &prefix, &replies, rule.is_async)?;
+        // A dynamic endpoint may still contain one private, synchronous,
+        // unary result rule (for example because the declaration also has an
+        // unrelated one-way channel).  Emit a hidden ready-reply adapter for
+        // the compiler's proof-driven forwarding rewrite.  It is never used
+        // by ordinary source calls and does not change registration or
+        // matching semantics until a MIR certificate retargets one call.
+        if definition.rules.len() == 1
+            && !rule.is_async
+            && resolved.len() == 1
+            && resolved[0].1.reply.is_some()
+            && aliases.is_empty()
+        {
+            let channel = resolved[0].1;
+            let input_type = channel_input_type(channel);
+            let output_type = channel.reply.as_deref().unwrap_or("()");
+            let binding = "__join_direct_input";
+            let unpack = pattern_unpack(&rule.patterns[0], binding);
+            let expression = reply_expression(&replies, channel)?;
+            let reaction = reaction_result_body("", &prefix, expression, output_type, false);
+            direct_method_definitions.push(format!(
+                "    #[doc(hidden)]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        let {binding}: {input_type} = {value};\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n    }}",
+                name = channel.name.name,
+                argument = channel_method_argument(channel),
+                output_type = output_type,
+                scope_bounds = dispatch_bounds,
+                binding = binding,
+                input_type = input_type,
+                value = channel_submit_value(channel),
+                unpack = unpack,
+                reaction = reaction,
+            ));
+        }
+        for method in &mut direct_method_definitions {
+            *method = method.replacen(
+                "    #[doc(hidden)]\n",
+                "    #[doc(hidden)]\n    #[join_direct_adapter]\n",
+                1,
+            );
+        }
         let dispatch = if rule.is_async {
             format!(
                 "self.matcher.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}})"
@@ -733,6 +845,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
     let methods = method_definitions.join("\n\n    ");
+    let direct_methods = direct_method_definitions.join("\n\n");
     let rules = rule_definitions.join("\n        ");
     let endpoint_attribute = join_endpoint_attribute(definition, false, u32::MAX);
     Ok(format!(
@@ -759,6 +872,8 @@ impl {impl_generics}{impl_name} {{
 
     {methods}
 
+{direct_methods}
+
     fn __join_dispatch_once(&self) -> bool
 {dispatch_bounds}{{
         let __join_endpoint = self.clone();
@@ -775,6 +890,7 @@ impl {impl_generics}{impl_name} {{
         impl_name = impl_name(definition),
         channel_count = definition.channels.len(),
         methods = methods,
+        direct_methods = direct_methods,
         rules = rules,
         dispatch_bounds = dispatch_bounds,
         endpoint_attribute = endpoint_attribute,
@@ -988,6 +1104,78 @@ fn attributes_prefix(attributes: &str) -> String {
 
 fn struct_name(definition: &Definition) -> String {
     format!("{}{}{}", definition.name.name, definition.generic_params, where_suffix(definition),)
+}
+
+/// Declare the zero-sized storage used by an isolated unary endpoint. Generic
+/// parameters still need a non-recursive witness in the type definition so
+/// lifetimes and type parameters are checked normally without adding runtime
+/// state or a queue.
+fn direct_struct_decl(definition: &Definition, visibility: &str) -> String {
+    if definition.generic_params.is_empty() {
+        return format!("{visibility}struct {};", definition.name.name);
+    }
+    format!(
+        "{visibility}struct {}(::core::marker::PhantomData<fn() -> {}>){where_suffix};",
+        format!("{}{}", definition.name.name, definition.generic_params),
+        direct_phantom_type(definition),
+        where_suffix = where_suffix(definition),
+    )
+}
+
+fn direct_struct_value(definition: &Definition) -> String {
+    if definition.generic_params.is_empty() {
+        "Self".to_string()
+    } else {
+        "Self(::core::marker::PhantomData)".to_string()
+    }
+}
+
+fn direct_phantom_type(definition: &Definition) -> String {
+    let Some(end) = matching_delimiter(&definition.generic_params, 0, '<', '>') else {
+        return "()".to_string();
+    };
+    let inner = &definition.generic_params[1..end];
+    let components = split_top_level_with_angles(inner, ',')
+        .into_iter()
+        .filter_map(|parameter| {
+            let parameter = parameter.trim();
+            if parameter.is_empty() {
+                return None;
+            }
+            if let Some(parameter) = parameter.strip_prefix("const ") {
+                let name = parameter.split(|character: char| character == ':' || character == '=' || character.is_whitespace()).next()?;
+                return Some(format!("[(); {name}]"));
+            }
+            let name = parameter
+                .split(|character: char| character == ':' || character == '=')
+                .next()?
+                .trim();
+            if name.is_empty() {
+                None
+            } else if name.starts_with('\'') {
+                Some(format!("&{name} ()"))
+            } else {
+                Some(name.to_string())
+            }
+        })
+        .collect::<Vec<_>>();
+    match components.as_slice() {
+        [] => "()".to_string(),
+        [component] => format!("({component},)"),
+        components => format!("({})", components.join(", ")),
+    }
+}
+
+/// `impl Trait` return types do not automatically expose lifetimes which are
+/// captured only by an argument. Preserve every declared generic parameter in
+/// the precise-capture bound so a borrowed unary input has the same lifetime
+/// contract as an ordinary `async fn`.
+fn opaque_future_captures(definition: &Definition) -> String {
+    if definition.generic_args.is_empty() {
+        String::new()
+    } else {
+        format!(" + use{}", definition.generic_args)
+    }
 }
 
 fn impl_name(definition: &Definition) -> String {
@@ -1461,6 +1649,7 @@ fn has_explicit_receiver(bytes: &[u8], mut at: usize) -> bool {
 
 #[derive(Clone, Copy)]
 enum EarlyReturnMode {
+    DirectUnary,
     UnaryOrPair,
     Dynamic,
 }
@@ -1494,6 +1683,13 @@ fn rewrite_early_return_maps(
         validate_replies(definition, resolved, &replies, rule_index)?;
         rewritten.push_str(&body[cursor..return_at]);
         let value = match mode {
+            EarlyReturnMode::DirectUnary => {
+                if resolved.len() == 1 {
+                    reply_value_expression(&replies, resolved[0].1)?.to_string()
+                } else {
+                    return Err("direct unary early return matched multiple channels".into());
+                }
+            }
             EarlyReturnMode::UnaryOrPair => {
                 if resolved.len() == 1 {
                     reply_value_expression(&replies, resolved[0].1)?.to_string()

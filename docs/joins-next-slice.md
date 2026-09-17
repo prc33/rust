@@ -1,7 +1,10 @@
 # Execution specification: authoritative join MIR and first result fusion
 
-Updated 2026-09-17. Step 1 and the call-carrier portion of step 2 are now
-implemented on the working branch; the remaining steps below are pending.
+Updated 2026-09-17. Steps 1 and 2's call carrier, the mode-independent unary
+contract, and the first result-channel forwarding rewrite are implemented on
+the working branch. The remaining steps below are deliberately narrower:
+typed cross-crate identities, a complete certificate/rejection domain, and
+shared/fixed-storage optimisation.
 This document is the immediate implementation order, superseding conflicting
 sequencing in earlier IR plans.
 The companion library's `docs/async-join-semantics.md` is the language contract;
@@ -12,6 +15,8 @@ its `JOINS-IMPLEMENTATION-HANDOVER.md` retains the longer research programme.
 Deliver one compiler-produced elimination of an intermediate result channel,
 with identical source semantics in off/analyze/optimize modes, an explicit CFA
 certificate, rejected counterexamples, MIR/LLVM evidence and matched timings.
+The scalar witness is now present; it remains a deliberately small forwarding
+rewrite and is not yet the general JCAM fusion pass.
 Do not mark this complete for adding metadata, choosing an expansion by mode,
 or retaining a manually selected fused runtime implementation.
 
@@ -20,17 +25,22 @@ markers survived optimized runtime MIR. Since that baseline, the first IR
 slice has removed duplicate operand visitation, moved call-site identity onto
 the real `Call` terminator, and made the storage strategy conservative. This
 still establishes neither correctness under every MIR transformation nor
-compiler-driven fusion. Remaining limitations are:
+general compiler-driven fusion. Remaining limitations are:
 
 - `JoinCall` currently carries endpoint/rule `DefId`s derived from the compact
   summary; group/channel indices and full typed policy are still to be added,
   and cross-crate import/remapping is not yet authoritative.
 - `Body::join_info` still describes an earlier body and is not a current proof
   after inlining, local renumbering, CFG rewriting or coroutine transformation.
-- Isolated unary expansion still depends on CFA mode and exposes a universal
-  error wrapper. The existing optimize fixture tests that older behaviour.
-- Shared operation forms remain operand-free legacy metadata; only call-site
-  classification has the new authoritative carrier. No result fusion has run.
+- Isolated unary expansion is now mode-independent: the direct endpoint is a
+  zero-state caller-owned future with the declared `Future::Output`, including
+  borrowed and non-`Send` local cases. Shared operation forms remain
+  operand-free compatibility metadata.
+- A narrow optimize-only consumer now retargets one proven monomorphic result
+  call to a compiler-private inline-ready adapter. It requires one constructor,
+  one channel, unique local alias flow, one consuming reply move and no known
+  competing join edge. It does not yet remove the explicit `Reply` await or
+  prove all JCAM cancellation/admission conditions.
 
 This is the owner's explicitly authorized AI-written research fork. No upstream
 review is requested; any upstream proposal would be separately rewritten by hand.
@@ -106,8 +116,9 @@ The descriptor must contain:
 
 Validate every role index and argument/destination type when constructing MIR.
 Unknown roles/effects prevent specialization. Ordinary function calls have None.
-Generated operation functions are identified by compiler-owned definitions,
-never helper spelling. Import descriptors through rustc's DefId remapping.
+Generated operation functions are identified by a compiler-owned
+`#[join_direct_adapter]` marker and the resulting method `DefId`, never by
+helper spelling. Import descriptors through rustc's normal `DefId` remapping.
 Construct these operations in every mode. Off disables optional CFA/rewrite,
 analyze computes facts without consuming them, optimize consumes checked proofs.
 Mandatory correct lowering does not depend on mode or analysis budget.
@@ -147,10 +158,12 @@ consumed them, or explicitly transfer descriptors to the replacement operations.
 Once consumed, ordinary inlining is free to optimize the generated computation.
 An annotation that outlives its associated call cannot authorize a rewrite.
 
-Gate status: partial. Optimized MIR now prints the descriptor on the real call,
-with actual call operands and no operand-bearing duplicate marker; codegen
-clears it only at the backend boundary. Cross-crate group/channel typed-index
-remapping and full ownership policy are still open.
+Gate status: partial but executable. Optimized MIR prints the descriptor on the
+real call, with actual call operands and no operand-bearing duplicate marker;
+codegen clears it only at the backend boundary. The descriptor now also records
+an optional body-local fusion witness. Cross-crate group/channel typed-index
+remapping, full ownership policy and native shared operation forms are still
+open.
 
 ## 3. Establish isolated unary semantics in every mode
 
@@ -173,10 +186,13 @@ Result outputs remain exactly the declared Result. Panic unwinds through poll.
 Choose caller ownership for isolated default unary rules in all three modes.
 Explicit executor/scope placement is a separate policy and excludes this rewrite.
 
-The canonical unary lowering constructs a compiler-generated wrapper future
-containing the ordinary reaction future; Demand delegates polling and drop owns
-that future normally. Optional simplification may remove the wrapper. Thus off
-and analyze already have correct semantics even with zero analysis budget.
+The direct unary lowering is itself an ordinary opaque future: construction
+captures the payload without running the body, and polling drives the generated
+future. The direct endpoint is zero-sized (including generic `PhantomData`),
+has no matcher/reply allocation, and does not add `Send`, `'static`, pool or
+`JoinError` requirements. Existing shared/multi-input forms retain the matcher
+and their distinct registration-before-demand semantics. Thus off, analyze and
+optimize have the same unary contract even with zero analysis budget.
 Do not preserve eager execution as the off-mode baseline.
 
 Extend the fixture with: side effects absent before poll; drop before poll;
@@ -186,41 +202,48 @@ source lifetime parameter; Rc payload; application Err; catch_unwind around poll
 Run matching ordinary async controls and compare event sequences. Borrow escaping
 its owner must fail normal borrowck; local non-Send futures must compile.
 
-Gate: identical output types and traces in off/analyze/optimize, including budget
-zero. Update the old optimize-only fixture and delete its obsolete assertions.
+Gate: passed for the current contract witness in off/analyze/optimize, including
+budget zero. The fixture covers deferred side effects, Pending+wake, drop before
+poll, non-`Send` `Rc`, borrowed input, application `Result` and panic unwinding.
+Keep expanding it with post-Pending drop and explicit ordinary-async trace
+comparisons. Update the old optimize-only fixture and delete obsolete claims.
 Keep shared registration-before-demand semantics separate: do not delay shared
 registration just because unary uses an ordinary captured future.
 
 ## 4. First result-channel fusion witness and bounded CFA
 
-Create `joins_fusion_result.rs`; use the following source shape (local join
-declarations inside ordinary Rust blocks use the same item grammar):
+Create `joins_fusion_result.rs`; the checked first witness uses a static inner
+endpoint with an extra one-way channel so its public `step` call remains on the
+shared compatibility matcher until the compiler rewrites it:
 
 ```rust
+join impl Inner {
+    channel step(y: u32) -> u32;
+    channel notify();
+    when step(y) {
+        return { step: y + 1 };
+    }
+}
 join impl Outer {
     channel run(x: u32) -> u32;
     async when run(x) {
-        join impl Inner {
-            channel step(y: u32) -> u32;
-            async when step(y) {
-                return { step: y + 1 };
-            }
-        }
         let inner = Inner::new();
-        let result = inner.step(x).await;
+        let reply = inner.step(x);
+        let result = reply.await.expect("private inner reply");
         return { run: result * 2 };
     }
 }
-async fn inner_control(y: u32) -> u32 { y + 1 }
-async fn outer_control(x: u32) -> u32 { inner_control(x).await * 2 }
 ```
 
 Acceptance: run(20).await = 42 and matching poll/drop/effect sequences. First
-version is scalar, caller-owned, isolated unary, acyclic and intraprocedural in
-the outer reaction body. This is result-forwarding fusion; it does not establish
-shared multi-input fusion. A second fixture replaces inner body with PendingOnce
-and proves the suspension boundary is retained. Existing explicit-continuation
-examples are additional tests, not substitutes for this result-bearing witness.
+version is scalar, caller-owned, isolated inner reaction, acyclic and
+intraprocedural in the outer reaction body. This is result-forwarding fusion; it
+does not establish shared multi-input fusion. The optimize MIR gate now shows
+`Inner::step` in off/analyze and `Inner::__join_direct_step` in optimize, with a
+`fusion.rewritten=true` body certificate. A second fixture must replace the
+inner body with PendingOnce and prove that the suspension boundary is retained.
+Existing explicit-continuation examples are additional tests, not substitutes
+for this result-bearing witness.
 
 Implement CFA over the current pre-coroutine body using rustc CFG/worklist
 infrastructure. Domain per local: Bottom, finite set of origins (maximum 8), Top.
@@ -271,6 +294,19 @@ dependencies and a body revision/fingerprint. Check it immediately before the
 rewrite. Any changed operand/CFG/policy invalidates it. Do not use the old
 Body::join_info snapshot or unchecked cross-crate summary as authority.
 
+Current implementation status: `JoinSemanticOps` performs a conservative
+optimize-only call-target rewrite in the pre-cleanup body.  It consumes a
+typed summary containing one constructor edge, one channel edge, unique
+copy/move/borrow alias flow, one consuming reply move, and the channel's
+compiler-owned `direct_method_def_id`.  The rewrite changes only the existing
+MIR call's function operand to the private `Reply::ready` adapter; arguments,
+destination, unwind edge and the explicit `.await` remain intact.  The body
+summary records `fusion.rewritten=true`, and the native MIR gate checks the
+off/analyze versus optimize call targets.  This is a real proof-gated result
+forwarding step, but not yet the full certificate described below: it does not
+remove the inner constructor or reply state, carry a revision fingerprint, or
+emit refusal codes for every matrix entry.
+
 For the first witness, replace construction/request/wrapper protocol with the
 ordinary reaction future construction and the existing await of that future.
 Remove the proven-dead inner group and intermediate reply ownership state.
@@ -303,7 +339,7 @@ type-preserving machinery and test that extension before enabling the consumer.
 No arbitrary semantic rewriting is allowed in codegen after parameter/ABI
 attributes have already been deduced; only the descriptor is erased there.
 
-Gate: pre/post MIR shows the exact consumed operations; optimized IR contains
+Gate target: pre/post MIR shows the exact consumed operations; optimized IR contains
 ordinary future/body computation and no inner group/reply runtime calls. Run
 with MIR validation after passes. With zero budget the canonical lowering
 remains valid and rewritten=0. Renaming channels changes neither decision nor
@@ -410,18 +446,22 @@ this evidence, retaining the larger handover's gates.
 - [x] 1: duplicate effects removed; misleading storage proof labels corrected.
 - [ ] 2: authoritative typed call operations, remapping and ownership gates pass
       (call carrier is in place; typed group/channel remapping is pending).
-- [ ] 3: isolated unary semantics equal across modes and ordinary async controls.
+- [x] 3: isolated unary semantics equal across modes and ordinary async controls
+      for the current direct unary contract (shared/multi-input controls remain).
 - [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons.
-- [ ] 5: a checked certificate drives the actual result-channel MIR rewrite.
+- [ ] 5: a complete checked certificate drives the actual result-channel MIR
+      rewrite (the narrow adapter rewrite is an executable partial gate).
 - [ ] 6: negative, drop/unwind, incremental and cross-crate regressions pass.
 - [ ] 7: committed IR, allocation and timing evidence; fork summary updated.
 
 Evidence for this slice: rust stage1 `./x check compiler --stage 1 -j 2`,
 `./x build compiler --stage 1 -j 2`, `./x build library --stage 1 -j 2`, and
-`JOIN_CFA_MODE=off JOIN_CFA_DUMP=... JOIN_MIR_DUMP=... bash
-compiler-tests/run_native.sh` all passed on 2026-09-17. The dump contains
-descriptors such as `join::Match` on ordinary calls and no operand-bearing
-semantic marker.
+`JOIN_CFA_MODE=optimize JOIN_CFA_DUMP=... JOIN_MIR_DUMP=... bash
+compiler-tests/run_native.sh` all passed on 2026-09-17. The optimized witness
+contains `Inner::__join_direct_step` on the rewritten call and a JSON
+`fusion.rewritten=true` certificate; off/analyze contain `Inner::step`. The
+dump also retains descriptors such as `join::Match` on ordinary calls and no
+operand-bearing semantic marker.
 
 Commit each passing slice. Continue to the next gate without commissioning a
 separate slow review; do a substantial review after the proof-consuming rewrite.

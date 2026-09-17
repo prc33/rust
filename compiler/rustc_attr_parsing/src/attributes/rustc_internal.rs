@@ -134,6 +134,22 @@ impl NoArgsAttributeParser for RustcNoImplicitAutorefsParser {
     const CREATE: fn(Span) -> AttributeKind = |_| AttributeKind::RustcNoImplicitAutorefs;
 }
 
+/// Parses the compiler-only marker attached to a generated direct unary join
+/// adapter. Unlike the endpoint shape marker, this attribute carries no
+/// source-level data: its presence identifies the exact method which the
+/// join descriptor query may use after proving a result-forwarding rewrite.
+pub(crate) struct RustcJoinDirectAdapterParser;
+
+impl NoArgsAttributeParser for RustcJoinDirectAdapterParser {
+    const PATH: &[Symbol] = &[sym::join_direct_adapter];
+    const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[
+        Allow(Target::Method(MethodKind::Inherent)),
+    ]);
+    const STABILITY: AttributeStability = unstable!(joins);
+
+    const CREATE: fn(Span) -> AttributeKind = |_| AttributeKind::RustcJoinDirectAdapter;
+}
+
 pub(crate) struct RustcLegacyConstGenericsParser;
 
 /// Parses the marker emitted by the experimental `join impl` builtin

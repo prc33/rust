@@ -362,6 +362,7 @@ impl<'tcx> CheckAttrVisitor<'tcx> {
             AttributeKind::RustcInsignificantDtor => (),
             AttributeKind::RustcIntrinsic => (),
             AttributeKind::RustcIntrinsicConstStableIndirect => (),
+            AttributeKind::RustcJoinDirectAdapter => (),
             AttributeKind::RustcJoinEndpoint { .. } => (),
             AttributeKind::RustcLintOptDenyFieldAccess { .. } => (),
             AttributeKind::RustcLintOptTy => (),
