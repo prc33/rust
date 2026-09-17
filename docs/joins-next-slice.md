@@ -33,6 +33,11 @@ general compiler-driven fusion. Remaining limitations are:
   authoritative.
 - `Body::join_info` still describes an earlier body and is not a current proof
   after inlining, local renumbering, CFG rewriting or coroutine transformation.
+  Each summary now carries a deterministic structural `mir_fingerprint`, and
+  the result-fusion consumer refuses a changed snapshot. This is a conservative
+  local freshness guard, not yet a pass-wide revision/certificate protocol:
+  fingerprints do not replace re-analysis after every transformation and do
+  not by themselves provide cross-crate type or policy evidence.
 - Isolated unary expansion is now mode-independent: the direct endpoint is a
   zero-state caller-owned future with the declared `Future::Output`, including
   borrowed and non-`Send` local cases. Shared operation forms remain
@@ -313,10 +318,12 @@ compiler-owned `direct_method_def_id`.  The rewrite changes only the existing
 MIR call's function operand to the private `Reply::ready` adapter; arguments,
 destination, unwind edge and the explicit `.await` remain intact.  The body
 summary records `fusion.rewritten=true`, and the native MIR gate checks the
-off/analyze versus optimize call targets.  This is a real proof-gated result
-forwarding step, but not yet the full certificate described below: it does not
-remove the inner constructor or reply state, carry a revision fingerprint, or
-emit refusal codes for every matrix entry.
+  summary's MIR fingerprint immediately before the rewrite; a stale summary is
+  rejected without mutating the call. The native MIR gate checks the off/analyze
+  versus optimize call targets.  This is a real proof-gated result forwarding
+  step, but not yet the full certificate described below: it does not remove
+  the inner constructor or reply state, or emit refusal codes for every matrix
+  entry.
 
 For the first witness, replace construction/request/wrapper protocol with the
 ordinary reaction future construction and the existing await of that future.

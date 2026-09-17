@@ -9,7 +9,7 @@
 //! infer semantics from generated method names or call into the library
 //! runtime.
 
-use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxHasher, FxIndexSet};
 use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
@@ -29,6 +29,7 @@ use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::hash::{Hash, Hasher};
 
 use crate::{MirPass, PassPolicy};
 
@@ -202,6 +203,36 @@ fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
     }
 }
 
+/// Compute a cheap deterministic identity for the MIR snapshot consumed by
+/// the local join proof. This is deliberately structural rather than a hash of
+/// pretty-printed MIR: block/statement shape, terminator kinds and all typed
+/// extracted facts are enough to reject a stale proof after the transformations
+/// that can invalidate locations or ownership flow. It is not a cryptographic
+/// certificate and must only be used as a conservative freshness guard.
+fn join_mir_fingerprint<'tcx>(
+    body: &Body<'tcx>,
+    operations: &[JoinMirOperation],
+    value_flows: &[JoinValueFlow],
+    call_edges: &[JoinCallEdge],
+) -> u64 {
+    let mut hasher = FxHasher::default();
+    body.local_decls.len().hash(&mut hasher);
+    body.basic_blocks.len().hash(&mut hasher);
+    for block in body.basic_blocks.iter() {
+        block.statements.len().hash(&mut hasher);
+        for statement in &block.statements {
+            std::mem::discriminant(&statement.kind).hash(&mut hasher);
+        }
+        let terminator = block.terminator();
+        std::mem::discriminant(&terminator.kind).hash(&mut hasher);
+        terminator.successors().count().hash(&mut hasher);
+    }
+    operations.hash(&mut hasher);
+    value_flows.hash(&mut hasher);
+    call_edges.hash(&mut hasher);
+    hasher.finish()
+}
+
 struct JoinBodyFacts {
     endpoint_def_id: Option<u32>,
     rule_def_id: Option<u32>,
@@ -307,6 +338,12 @@ impl JoinBodyFacts {
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
+        let mir_fingerprint = join_mir_fingerprint(
+            body,
+            &self.operations,
+            &self.value_flows,
+            &self.call_edges,
+        );
         let endpoint_escapes = self.endpoint_escapes.iter().copied().collect::<Vec<_>>();
         let (local_facts, solver_steps, solver_complete, locally_closed) = solve_local_facts(
             local_count,
@@ -353,6 +390,7 @@ impl JoinBodyFacts {
             body_def_id,
             endpoint_def_id,
             rule_def_id,
+            mir_fingerprint,
             role,
             arity,
             is_async,
@@ -588,6 +626,15 @@ fn try_fuse_private_result<'tcx>(
         || summary.role != JoinBodyRole::ReactionBody
         || !summary.endpoint_escapes.is_empty()
     {
+        return None;
+    }
+    if summary.mir_fingerprint
+        != join_mir_fingerprint(body, &summary.operations, &summary.value_flows, &summary.call_edges)
+    {
+        // The proof is tied to the executable snapshot from which its local
+        // locations and ownership facts were extracted. Any intervening MIR
+        // rewrite must force a fresh analysis instead of consuming stale
+        // coordinates.
         return None;
     }
 
@@ -1990,10 +2037,11 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
+        summary.mir_fingerprint,
         summary.role,
         summary.arity,
         summary.is_async,

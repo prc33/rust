@@ -40,6 +40,14 @@ admission/match/reply MIR, full certificate invalidation and general shared-join
 fusion remain incomplete. The marker is metadata beside the compatibility
 runtime call, not a claim that the runtime helper is itself the semantic IR.
 
+Every per-body CFA record now includes a deterministic structural
+`mir_fingerprint` covering the executable CFG shape and extracted operation,
+value-flow and call-edge facts. The fusion consumer compares that fingerprint
+with the body immediately before changing a call and refuses stale snapshots.
+This closes the local stale-location hole without pretending to be a complete
+pass-wide revision certificate; cross-crate type/policy remapping and
+re-analysis after later MIR transforms remain open.
+
 The quick unary microbenchmark used 200,000 iterations, five repetitions per
 mode and black-boxed checksums. Medians below are nanoseconds per operation;
 `block_on` rows include the caller-driven executor and stack-poll rows isolate a

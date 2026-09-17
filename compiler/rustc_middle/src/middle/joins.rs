@@ -433,6 +433,10 @@ pub struct JoinCfaSummary {
     pub body_def_id: u32,
     pub endpoint_def_id: u32,
     pub rule_def_id: u32,
+    /// Fingerprint of the executable MIR snapshot plus the extracted typed
+    /// facts. A proof consumer must compare this with the current body before
+    /// rewriting; a changed CFG or operation stream invalidates the snapshot.
+    pub mir_fingerprint: u64,
     pub role: JoinBodyRole,
     pub arity: u32,
     pub is_async: bool,
