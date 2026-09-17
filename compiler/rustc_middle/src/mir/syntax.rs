@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 use super::{BasicBlock, Const, Local, UserTypeProjection};
 use crate::mir::coverage::CoverageKind;
-use crate::middle::joins::{JoinCall, JoinOperationKind};
+use crate::middle::joins::{JoinCall, JoinOperationKind, JoinQueueBound};
 use crate::ty::adjustment::PointerCoercion;
 use crate::ty::{self, GenericArgsRef, List, Region, Ty, UserTypeAnnotationIndex};
 
@@ -511,6 +511,7 @@ pub struct JoinIntrinsic<'tcx> {
     pub group_def_id: Option<u32>,
     pub channel_index: Option<u32>,
     pub rule_index: Option<u32>,
+    pub queue_bound: JoinQueueBound,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,
     pub receiver: Option<Place<'tcx>>,
@@ -1806,6 +1807,6 @@ mod size_asserts {
     static_assert_size!(PlaceElem<'_>, 24);
     static_assert_size!(Rvalue<'_>, 40);
     static_assert_size!(StatementKind<'_>, 16);
-    static_assert_size!(TerminatorKind<'_>, 128);
+    static_assert_size!(TerminatorKind<'_>, 136);
     // tidy-alphabetical-end
 }

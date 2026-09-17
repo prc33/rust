@@ -17,7 +17,9 @@ function, arguments, destination and unwind edges remain the sole executable
 operands. Legacy body-boundary markers are operand-free metadata only. The
 descriptor carries operation kind, group identity and typed channel/rule
 coordinates, with provisional endpoint/rule identities retained for transition,
-and survives optimized runtime MIR; codegen clears it at its final boundary.
+the declared queue/storage bound, and survives optimized runtime MIR; codegen
+clears it at its final boundary. The bound is descriptive metadata only until
+the instance CFA proves a concrete representation.
 The same descriptor is attached to known calls in ordinary and async caller
 bodies, so source-side registrations remain visible without classifying the
 caller as a generated join body.

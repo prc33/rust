@@ -153,6 +153,10 @@ pub struct JoinCall {
     /// Source-declaration rule index, when this call targets a dispatch or
     /// reaction body. This is stable within the typed group definition.
     pub rule_index: Option<u32>,
+    /// Static queue/storage bound carried by the group definition. Unknown is
+    /// the safe fallback; this fact is descriptive until a later proof
+    /// validates the concrete instance.
+    pub queue_bound: JoinQueueBound,
     /// Transitional endpoint identity retained for diagnostics and old dump
     /// readers. New consumers should use `group_def_id`.
     /// Cross-crate definition identity for the endpoint/group. Keeping the
@@ -180,6 +184,7 @@ pub struct JoinMirOperation {
     pub group_def_id: Option<u32>,
     pub channel_index: Option<u32>,
     pub rule_index: Option<u32>,
+    pub queue_bound: JoinQueueBound,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,
     pub receiver_local: Option<u32>,
@@ -244,6 +249,7 @@ pub struct JoinCallEdge {
     pub group_def_id: Option<u32>,
     pub channel_index: Option<u32>,
     pub rule_index: Option<u32>,
+    pub queue_bound: JoinQueueBound,
     /// Compiler-owned endpoint identity for a known join call target.  This
     /// is populated for channel, dispatch, reaction-body and constructor
     /// calls; ordinary and unknown calls remain `None`.

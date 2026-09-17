@@ -922,11 +922,12 @@ impl Display for NonDivergingIntrinsic<'_> {
             }
             Self::Join(join) => write!(
                 f,
-                "join::{:?}(group={:?}, channel={:?}, rule_index={:?}, {:?})",
+                "join::{:?}(group={:?}, channel={:?}, rule_index={:?}, queue_bound={:?}, {:?})",
                 join.kind,
                 join.group_def_id,
                 join.channel_index,
                 join.rule_index,
+                join.queue_bound,
                 join.arguments,
             ),
         }
@@ -1016,11 +1017,12 @@ impl<'tcx> TerminatorKind<'tcx> {
                 if let Some(join) = join {
                     write!(
                         fmt,
-                        " [join::{:?} group={:?} channel={:?} rule_index={:?} endpoint={:?} rule={:?}]",
+                        " [join::{:?} group={:?} channel={:?} rule_index={:?} queue_bound={:?} endpoint={:?} rule={:?}]",
                         join.kind,
                         join.group_def_id,
                         join.channel_index,
                         join.rule_index,
+                        join.queue_bound,
                         join.endpoint_def_id,
                         join.rule_def_id,
                     )?;

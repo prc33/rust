@@ -169,6 +169,8 @@ real call, with actual call operands and no operand-bearing duplicate marker;
 ordinary/async caller bodies receive the same descriptor when they contain a
 known join call, and generated channel bodies expose their source channel
 coordinate on the Register operation.
+The descriptor also carries the frontend queue/storage bound as a conservative
+fact; it never authorizes a fixed slot without a concrete instance proof.
 codegen clears it only at the backend boundary. The descriptor now records the
 group identity and typed channel/rule coordinates, plus an optional body-local
 fusion witness. Cross-crate remapping, full ownership policy and native shared
