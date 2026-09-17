@@ -64,6 +64,14 @@ optimized-MIR query remains available for future CFA/fusion passes.
 
 ## Next execution gates
 
+Follow [the concrete next-slice specification](docs/joins-next-slice.md), steps
+0–7. It supersedes older sequencing: first fix duplicate marker effects and
+unjustified storage labels, then authoritative call operations, equal unary
+semantics, bounded instance CFA and one result-channel rewrite. It includes
+exact witnesses, rejection reasons, pass boundaries and verification commands.
+All those gates remain pending. Surviving join descriptors stay through runtime
+MIR to the LLVM-facing boundary; effectful operations cannot be erased as no-ops.
+
 1. Validate the accepted unary/shared async semantics and equivalent benchmark
    protocols, including demand, cancellation, ownership and declared outputs.
 2. Complete native HIR identities and typed semantic MIR for a closed forwarding
@@ -86,8 +94,9 @@ optimized-MIR query remains available for future CFA/fusion passes.
    output and sampled profiles, then resume DataFusion coordination migration
    and performance/complexity comparisons.
 
-The detailed canonical plan is in the companion library checkout at
-`docs/ir-and-rustc-cfa-plan.md`, current execution checkpoint dated 2026-09-17.
+The longer research programme is in the companion library checkout at
+`JOINS-IMPLEMENTATION-HANDOVER.md`; the next-slice specification above controls
+immediate compiler implementation.
 Use focused checks, batch stage-1 builds and avoid broad DataFusion rebuilds
 until the compiler-generated optimisation gate passes. Record evidence and
 limitations here as each gate completes.
