@@ -335,9 +335,10 @@ pub struct Body<'tcx> {
     /// This side table is intentionally optional and starts empty for normal
     /// Rust bodies. It lets join CFA/fusion carry typed operation identities
     /// through MIR without adding queue/runtime details to the ordinary
-    /// `StatementKind` and `TerminatorKind` enums. Any pass that changes a
-    /// body in a way that invalidates the facts must clear this field before
-    /// consuming it; no codegen path relies on stale facts.
+    /// `StatementKind` and `TerminatorKind` enums. A proof-consuming transform
+    /// must validate or clear it after changing the represented operations.
+    /// The LLVM-facing codegen view clears it only after all optimized MIR
+    /// consumers have run; no generated code relies on this metadata.
     pub join_info: Option<Box<JoinCfaSummary>>,
 }
 
