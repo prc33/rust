@@ -1134,6 +1134,14 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
         emit_delayed_lints(tcx);
     });
 
+    // Snapshot the join CFA inputs before type checking/borrow checking can
+    // consume any `mir_built` bodies. The crate query clones those bodies and
+    // never calls `optimized_mir`; forcing it after analysis would race the
+    // normal MIR ownership transition.
+    if tcx.features().joins() && tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Off {
+        tcx.ensure_ok().join_cfa_crate_summary(());
+    }
+
     rustc_hir_analysis::check_crate(tcx);
     // Freeze definitions as we don't add new ones at this point.
     // We need to wait until now since we synthesize a by-move body
@@ -1141,13 +1149,6 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
     //
     // This improves performance by allowing lock-free access to them.
     tcx.untracked().definitions.freeze();
-
-    // Build the crate-level join graph while initial MIR can still be read.
-    // The query performs its own typed extraction; forcing it here avoids
-    // trying to borrow a `Steal<Body>` after a later MIR query has consumed it.
-    if tcx.features().joins() && tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Off {
-        tcx.ensure_ok().join_cfa_crate_summary(());
-    }
 
     sess.time("MIR_borrow_checking", || {
         tcx.par_hir_body_owners(|def_id| {

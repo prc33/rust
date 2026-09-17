@@ -27,7 +27,7 @@ use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use std::fs;
 
-use crate::PassPolicy;
+use crate::{MirPass, PassPolicy};
 
 pub(super) struct JoinSemanticOps;
 
@@ -381,22 +381,29 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     let mut pending_ordinary = Vec::new();
     let join_call_targets = join_call_target_map(tcx);
     for &def_id in tcx.mir_keys(()).iter() {
-        // `mir_keys` also contains consts/statics. `optimized_mir` is a
-        // runtime-MIR query and intentionally rejects those bodies, so keep
-        // the crate graph restricted to executable items. Join descriptors
-        // are emitted for functions and generated helper bodies, never for a
-        // const context.
-        if tcx.hir_body_const_context(def_id).is_some() {
+        // `mir_keys` also contains consts/statics and tuple constructors. The
+        // crate summary must never force `optimized_mir`: that query consumes
+        // the `mir_drops_elaborated_and_const_checked` Steal, and another
+        // analysis/codegen query may still need to own that body. Snapshot an
+        // executable function body from `mir_built` while it is borrowable;
+        // const/static and constructor MIR has a different ownership/CTFE
+        // contract and is not a join instance.
+        if tcx.hir_body_const_context(def_id).is_some()
+            || tcx.is_constructor(def_id.to_def_id())
+            || !tcx.def_kind(def_id).is_fn_like()
+        {
             continue;
         }
-        // At the crate-analysis hook some bodies may already have been
-        // consumed from `mir_built` by borrow checking or promoted MIR. The
-        // optimized query owns that transition and preserves the attached
-        // join metadata, so use it as the read boundary here. The summary is
-        // copied from the pre-cleanup pass rather than re-visiting optimized
-        // MIR: coroutine lowering and cleanup must not change the CFA facts
-        // that describe the source-level join boundary.
-        let body = tcx.optimized_mir(def_id.to_def_id());
+        let mut body = tcx.mir_built(def_id).borrow().clone();
+        // The regular runtime pipeline installs this summary later in
+        // `run_analysis_to_runtime_passes`. Running the same required pass on
+        // the owned snapshot gives the crate graph a pre-cleanup view without
+        // stealing the query-owned body or depending on optimized MIR.
+        if tcx.features().joins()
+            && tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Off
+        {
+            JoinSemanticOps.run_pass(tcx, &mut body);
+        }
         let parent_body_def_id = tcx
             .parent(def_id.to_def_id())
             .as_local()
@@ -442,7 +449,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
             yields: 0,
             unknown_effects: 0,
         };
-        facts.visit_body(body);
+        facts.visit_body(&body);
         if facts.value_flows.is_empty() && facts.call_edges.is_empty() {
             continue;
         }
