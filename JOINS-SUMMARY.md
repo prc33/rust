@@ -15,8 +15,12 @@ local flow and escapes. The current working IR slice attaches a `JoinCall`
 descriptor directly to the ordinary MIR `Call` terminator, so the call's
 function, arguments, destination and unwind edges remain the sole executable
 operands. Legacy body-boundary markers are operand-free metadata only. The
-descriptor carries operation kind and provisional endpoint/rule identities and
-survives optimized runtime MIR; codegen clears it at its final boundary.
+descriptor carries operation kind, group identity and typed channel/rule
+coordinates, with provisional endpoint/rule identities retained for transition,
+and survives optimized runtime MIR; codegen clears it at its final boundary.
+The same descriptor is attached to known calls in ordinary and async caller
+bodies, so source-side registrations remain visible without classifying the
+caller as a generated join body.
 The current slice also runs `join_cfa_crate_summary` after HIR analysis:
 it snapshots each eligible `mir_built` body before the MIR ownership transfer
 and follows a constructor result through same-body copy/move/borrow flow to a

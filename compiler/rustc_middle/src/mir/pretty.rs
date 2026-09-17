@@ -1008,8 +1008,11 @@ impl<'tcx> TerminatorKind<'tcx> {
                 if let Some(join) = join {
                     write!(
                         fmt,
-                        " [join::{:?} endpoint={:?} rule={:?}]",
+                        " [join::{:?} group={:?} channel={:?} rule_index={:?} endpoint={:?} rule={:?}]",
                         join.kind,
+                        join.group_def_id,
+                        join.channel_index,
+                        join.rule_index,
                         join.endpoint_def_id,
                         join.rule_def_id,
                     )?;

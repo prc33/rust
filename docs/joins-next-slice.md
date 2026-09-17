@@ -27,9 +27,10 @@ the real `Call` terminator, and made the storage strategy conservative. This
 still establishes neither correctness under every MIR transformation nor
 general compiler-driven fusion. Remaining limitations are:
 
-- `JoinCall` currently carries endpoint/rule `DefId`s derived from the compact
-  summary; group/channel indices and full typed policy are still to be added,
-  and cross-crate import/remapping is not yet authoritative.
+- `JoinCall` now carries a group `DefId` plus typed channel/rule coordinates,
+  alongside transitional endpoint/rule `DefId`s for old dump readers. Full
+  typed policy, substitutions and cross-crate import/remapping are not yet
+  authoritative.
 - `Body::join_info` still describes an earlier body and is not a current proof
   after inlining, local renumbering, CFG rewriting or coroutine transformation.
 - Isolated unary expansion is now mode-independent: the direct endpoint is a
@@ -47,6 +48,11 @@ review is requested; any upstream proposal would be separately rewritten by hand
 All compiler subsystems are available. Preserve type, ownership and concurrency
 soundness. Never replace recognized protocols with library locks. Ordinary
 fields, futures, atomics and CAS are permitted implementation mechanisms.
+
+Known join calls are annotated in ordinary and async caller bodies as well as
+generated join bodies. This keeps a source registration visible on the real
+caller-side Call terminator; generated channel bodies also carry their typed
+source channel index on the Register operation.
 
 ## 0. Inventory and capture the failing gates
 
@@ -160,10 +166,13 @@ An annotation that outlives its associated call cannot authorize a rewrite.
 
 Gate status: partial but executable. Optimized MIR prints the descriptor on the
 real call, with actual call operands and no operand-bearing duplicate marker;
-codegen clears it only at the backend boundary. The descriptor now also records
-an optional body-local fusion witness. Cross-crate group/channel typed-index
-remapping, full ownership policy and native shared operation forms are still
-open.
+ordinary/async caller bodies receive the same descriptor when they contain a
+known join call, and generated channel bodies expose their source channel
+coordinate on the Register operation.
+codegen clears it only at the backend boundary. The descriptor now records the
+group identity and typed channel/rule coordinates, plus an optional body-local
+fusion witness. Cross-crate remapping, full ownership policy and native shared
+operation forms are still open.
 
 ## 3. Establish isolated unary semantics in every mode
 
@@ -445,7 +454,8 @@ this evidence, retaining the larger handover's gates.
 
 - [x] 1: duplicate effects removed; misleading storage proof labels corrected.
 - [ ] 2: authoritative typed call operations, remapping and ownership gates pass
-      (call carrier is in place; typed group/channel remapping is pending).
+      (call carrier and local group/channel coordinates are in place;
+      cross-crate substitutions and full policy are pending).
 - [x] 3: isolated unary semantics equal across modes and ordinary async controls
       for the current direct unary contract (shared/multi-input controls remain).
 - [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons.

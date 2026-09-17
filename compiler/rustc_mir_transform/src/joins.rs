@@ -81,7 +81,18 @@ impl InstanceAlias {
 fn body_descriptor<'tcx>(
     tcx: TyCtxt<'tcx>,
     local_def_id: LocalDefId,
-) -> Option<(u32, u32, JoinBodyRole, u32, bool, bool, JoinQueueBound, Option<LocalDefId>)> {
+) -> Option<(
+    u32,
+    u32,
+    JoinBodyRole,
+    u32,
+    bool,
+    bool,
+    JoinQueueBound,
+    Option<LocalDefId>,
+    Option<u32>,
+    Option<u32>,
+)> {
     for endpoint in &tcx.join_definitions(()).endpoints {
         if endpoint.constructor_def_id == Some(local_def_id)
             || endpoint.scoped_constructor_def_id == Some(local_def_id)
@@ -95,9 +106,15 @@ fn body_descriptor<'tcx>(
                 endpoint.frontend_direct_unary,
                 frontend_queue_bound(endpoint.frontend_queue_bound),
                 endpoint.endpoint_def_id,
+                None,
+                None,
             ));
         }
-        if endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id) {
+        if let Some(channel) = endpoint
+            .channels
+            .iter()
+            .find(|channel| channel.method_def_id == local_def_id)
+        {
             return Some((
                 endpoint.endpoint_def_id.map_or(u32::MAX, |id| id.index() as u32),
                 0,
@@ -107,10 +124,12 @@ fn body_descriptor<'tcx>(
                 endpoint.frontend_direct_unary,
                 frontend_queue_bound(endpoint.frontend_queue_bound),
                 endpoint.endpoint_def_id,
+                Some(channel.index),
+                None,
             ));
         }
 
-        for rule in &endpoint.rules {
+        for (rule_index, rule) in endpoint.rules.iter().enumerate() {
             if rule.method_def_id == local_def_id
                 || rule.body_def_ids.iter().any(|body_id| body_id == local_def_id)
             {
@@ -127,6 +146,8 @@ fn body_descriptor<'tcx>(
                     endpoint.frontend_direct_unary,
                     frontend_queue_bound(endpoint.frontend_queue_bound),
                     endpoint.endpoint_def_id,
+                    None,
+                    Some(rule_index as u32),
                 ));
             }
         }
@@ -164,6 +185,8 @@ fn body_descriptor<'tcx>(
                 endpoint.frontend_direct_unary,
                 frontend_queue_bound(endpoint.frontend_queue_bound),
                 endpoint.endpoint_def_id,
+                Some(channel.index),
+                Some(0),
             ));
         }
         ancestor = tcx.opt_parent(ancestor_local.to_def_id());
@@ -182,6 +205,8 @@ fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
 struct JoinBodyFacts {
     endpoint_def_id: Option<u32>,
     rule_def_id: Option<u32>,
+    channel_index: Option<u32>,
+    rule_index: Option<u32>,
     operations: Vec<JoinMirOperation>,
     value_flows: Vec<JoinValueFlow>,
     call_edges: Vec<JoinCallEdge>,
@@ -201,6 +226,9 @@ impl JoinBodyFacts {
             kind,
             block: location.block.index() as u32,
             statement: location.statement_index as u32,
+            group_def_id: self.endpoint_def_id,
+            channel_index: self.channel_index,
+            rule_index: self.rule_index,
             endpoint_def_id: self.endpoint_def_id,
             rule_def_id: self.rule_def_id,
             receiver_local: None,
@@ -216,6 +244,8 @@ impl JoinBodyFacts {
         receiver_local: Option<u32>,
         destination_local: Option<u32>,
         argument_locals: impl IntoIterator<Item = Option<u32>>,
+        channel_index: Option<u32>,
+        rule_index: Option<u32>,
         endpoint_def_id: Option<u32>,
         rule_def_id: Option<u32>,
     ) {
@@ -223,6 +253,9 @@ impl JoinBodyFacts {
             kind,
             block: location.block.index() as u32,
             statement: location.statement_index as u32,
+            group_def_id: endpoint_def_id,
+            channel_index,
+            rule_index,
             endpoint_def_id,
             rule_def_id,
             receiver_local,
@@ -395,6 +428,8 @@ fn classify_instance_closedness(
 struct JoinCallTarget {
     kind: JoinCallTargetKind,
     endpoint_def_id: Option<u32>,
+    channel_index: Option<u32>,
+    rule_index: Option<u32>,
     rule_def_id: Option<u32>,
     direct_method_def_id: Option<u32>,
 }
@@ -404,6 +439,8 @@ impl JoinCallTarget {
         Self {
             kind: JoinCallTargetKind::Unknown,
             endpoint_def_id: None,
+            channel_index: None,
+            rule_index: None,
             rule_def_id: None,
             direct_method_def_id: None,
         }
@@ -413,6 +450,8 @@ impl JoinCallTarget {
         Self {
             kind: JoinCallTargetKind::OrdinaryLocal,
             endpoint_def_id: None,
+            channel_index: None,
+            rule_index: None,
             rule_def_id: None,
             direct_method_def_id: None,
         }
@@ -676,6 +715,8 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                 JoinCallTarget {
                     kind: JoinCallTargetKind::Constructor,
                     endpoint_def_id,
+                    channel_index: None,
+                    rule_index: None,
                     rule_def_id: None,
                     direct_method_def_id: None,
                 },
@@ -687,6 +728,8 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                 JoinCallTarget {
                     kind: JoinCallTargetKind::Constructor,
                     endpoint_def_id,
+                    channel_index: None,
+                    rule_index: None,
                     rule_def_id: None,
                     direct_method_def_id: None,
                 },
@@ -698,6 +741,8 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                 JoinCallTarget {
                     kind: JoinCallTargetKind::Channel,
                     endpoint_def_id,
+                    channel_index: Some(channel.index),
+                    rule_index: None,
                     rule_def_id: None,
                     direct_method_def_id: channel
                         .direct_method_def_id
@@ -705,13 +750,15 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                 },
             );
         }
-        for rule in &endpoint.rules {
+        for (rule_index, rule) in endpoint.rules.iter().enumerate() {
             let rule_def_id = Some(rule.method_def_id.index() as u32);
             targets.insert(
                 rule.method_def_id.index() as u32,
                 JoinCallTarget {
                     kind: JoinCallTargetKind::Dispatch,
                     endpoint_def_id,
+                    channel_index: None,
+                    rule_index: Some(rule_index as u32),
                     rule_def_id,
                     direct_method_def_id: None,
                 },
@@ -722,6 +769,8 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                     JoinCallTarget {
                         kind: JoinCallTargetKind::ReactionBody,
                         endpoint_def_id,
+                        channel_index: None,
+                        rule_index: Some(rule_index as u32),
                         rule_def_id,
                         direct_method_def_id: None,
                     },
@@ -802,6 +851,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         let mut facts = JoinBodyFacts {
             endpoint_def_id: None,
             rule_def_id: None,
+            channel_index: None,
+            rule_index: None,
             operations: Vec::new(),
             value_flows: Vec::new(),
             call_edges: Vec::new(),
@@ -1186,7 +1237,7 @@ fn dump_crate_summary(
                         .collect::<Vec<_>>()
                         .join(",");
                     format!(
-                        "{{\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                        "{{\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{}}}",
                         edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
                         edge.target,
                         edge.endpoint_def_id
@@ -1196,6 +1247,12 @@ fn dump_crate_summary(
                         edge.destination_local
                             .map_or_else(|| "null".to_string(), |local| local.to_string()),
                         arguments,
+                        edge.group_def_id
+                            .map_or_else(|| "null".to_string(), |group| group.to_string()),
+                        edge.channel_index
+                            .map_or_else(|| "null".to_string(), |channel| channel.to_string()),
+                        edge.rule_index
+                            .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                     )
                 })
                 .collect::<Vec<_>>()
@@ -1675,6 +1732,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     receiver_local,
                     destination_local,
                     argument_locals.iter().copied(),
+                    target.channel_index,
+                    target.rule_index,
                     target.endpoint_def_id,
                     target.rule_def_id,
                 );
@@ -1685,6 +1744,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                         receiver_local,
                         destination_local,
                         argument_locals.iter().copied(),
+                        target.channel_index,
+                        target.rule_index,
                         target.endpoint_def_id,
                         target.rule_def_id,
                     ),
@@ -1694,6 +1755,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                         receiver_local,
                         destination_local,
                         argument_locals.iter().copied(),
+                        target.channel_index,
+                        target.rule_index,
                         target.endpoint_def_id,
                         target.rule_def_id,
                     ),
@@ -1703,6 +1766,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                         receiver_local,
                         destination_local,
                         argument_locals.iter().copied(),
+                        target.channel_index,
+                        target.rule_index,
                         target.endpoint_def_id,
                         target.rule_def_id,
                     ),
@@ -1715,6 +1780,9 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     statement: location.statement_index as u32,
                     callee: callee_def_id.map(|def_id| def_id.index() as u32),
                     target: target.kind,
+                    group_def_id: target.endpoint_def_id,
+                    channel_index: target.channel_index,
+                    rule_index: target.rule_index,
                     endpoint_def_id: target.endpoint_def_id,
                     rule_def_id: target.rule_def_id,
                     receiver_local,
@@ -1787,10 +1855,19 @@ fn dump_summary(
         .iter()
         .map(|operation| {
             format!(
-                "{{\"kind\":\"{:?}\",\"block\":{},\"statement\":{},\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                "{{\"kind\":\"{:?}\",\"block\":{},\"statement\":{},\"group\":{},\"channel\":{},\"rule_index\":{},\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
                 operation.kind,
                 operation.block,
                 operation.statement,
+                operation
+                    .group_def_id
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .channel_index
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .rule_index
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
                 operation
                     .endpoint_def_id
                     .map_or_else(|| "null".to_string(), |id| id.to_string()),
@@ -1840,7 +1917,7 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{}}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
@@ -1858,6 +1935,12 @@ fn dump_summary(
                     .map(|local| local.map_or_else(|| "null".to_string(), |local| local.to_string()))
                     .collect::<Vec<_>>()
                     .join(","),
+                edge.group_def_id
+                    .map_or_else(|| "null".to_string(), |group| group.to_string()),
+                edge.channel_index
+                    .map_or_else(|| "null".to_string(), |channel| channel.to_string()),
+                edge.rule_index
+                    .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
             )
         })
         .collect::<Vec<_>>()
@@ -1941,23 +2024,101 @@ fn dump_summary(
 /// intrinsics until their dedicated MIR forms are implemented. All of this
 /// metadata remains available through optimized MIR and is consumed only at
 /// the backend boundary.
+fn join_call_kind(kind: JoinOperationKind) -> Option<JoinOperationKind> {
+    match kind {
+        JoinOperationKind::CreateGroup
+        | JoinOperationKind::Register
+        | JoinOperationKind::Demand
+        | JoinOperationKind::Match
+        | JoinOperationKind::CompleteReplies
+        | JoinOperationKind::WithdrawOrAbandon
+        | JoinOperationKind::CancelScope => Some(kind),
+        JoinOperationKind::OrdinaryCall
+        | JoinOperationKind::Yield
+        | JoinOperationKind::Return
+        | JoinOperationKind::Escape => None,
+    }
+}
+
+fn local_join_def_id(index: Option<u32>) -> Option<DefId> {
+    index
+        .filter(|index| *index != u32::MAX)
+        .map(|index| DefId::local(rustc_span::def_id::DefIndex::from_usize(index as usize)))
+}
+
+/// Attach compiler-owned descriptors to known join calls in any body.
+///
+/// Join bodies also receive the body-boundary marker stream below, but callers
+/// such as an ordinary or async function may contain the only observable
+/// registration site. Keeping the call descriptor on the real terminator lets
+/// later MIR passes see the typed group/channel/rule identity without requiring
+/// the caller itself to be classified as a join body.
+fn install_join_call_descriptors<'tcx>(
+    body: &mut Body<'tcx>,
+    operations: &[JoinMirOperation],
+) {
+    if body.basic_blocks.is_empty() {
+        return;
+    }
+
+    let mut call_descriptors = BTreeMap::new();
+    for operation in operations {
+        let Some(kind) = join_call_kind(operation.kind) else { continue };
+        if operation.block == u32::MAX {
+            continue;
+        }
+        let block = mir::BasicBlock::from_usize(operation.block as usize);
+        let Some(block_data) = body.basic_blocks.get(block) else { continue };
+        let statement = operation.statement as usize;
+        if statement != block_data.statements.len()
+            || !matches!(block_data.terminator().kind, TerminatorKind::Call { .. })
+        {
+            continue;
+        }
+        call_descriptors.entry((block.index(), statement)).or_insert(JoinCall {
+            kind,
+            group_def_id: local_join_def_id(operation.group_def_id),
+            channel_index: operation.channel_index,
+            rule_index: operation.rule_index,
+            endpoint_def_id: local_join_def_id(operation.endpoint_def_id),
+            rule_def_id: local_join_def_id(operation.rule_def_id),
+        });
+    }
+
+    for ((block, statement), descriptor) in call_descriptors {
+        let block = mir::BasicBlock::from_usize(block);
+        if statement != body.basic_blocks[block].statements.len() {
+            continue;
+        }
+        if let TerminatorKind::Call { join, .. } = &mut body.basic_blocks_mut()[block]
+            .terminator_mut()
+            .kind
+        {
+            if join.is_none() {
+                *join = Some(descriptor);
+            }
+        }
+    }
+}
+
 fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary) {
-    if body.basic_blocks.is_empty()
-        || body.basic_blocks.iter().any(|block| {
-            block.statements.iter().any(|statement| {
-                matches!(
-                    &statement.kind,
-                    StatementKind::Intrinsic(intrinsic)
-                        if matches!(intrinsic.as_ref(), rustc_middle::mir::NonDivergingIntrinsic::Join(_))
-                )
-            })
+    if body.basic_blocks.is_empty() {
+        return;
+    }
+    install_join_call_descriptors(body, &summary.operations);
+    if body.basic_blocks.iter().any(|block| {
+        block.statements.iter().any(|statement| {
+            matches!(
+                &statement.kind,
+                StatementKind::Intrinsic(intrinsic)
+                    if matches!(intrinsic.as_ref(), rustc_middle::mir::NonDivergingIntrinsic::Join(_))
+            )
         })
-    {
+    }) {
         return;
     }
 
     let mut pending = Vec::new();
-    let mut call_descriptors = BTreeMap::new();
     for operation in &summary.operations {
         // Escape is a fact about ownership, not an executable event, and has
         // no valid MIR location. Keep it in the summary only.
@@ -1974,32 +2135,6 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
         if statement == block_data.statements.len()
             && matches!(block_data.terminator().kind, TerminatorKind::Call { .. })
         {
-            let kind = match operation.kind {
-                JoinOperationKind::CreateGroup
-                | JoinOperationKind::Register
-                | JoinOperationKind::Demand
-                | JoinOperationKind::Match
-                | JoinOperationKind::CompleteReplies
-                | JoinOperationKind::WithdrawOrAbandon
-                | JoinOperationKind::CancelScope => Some(operation.kind),
-                JoinOperationKind::OrdinaryCall
-                | JoinOperationKind::Yield
-                | JoinOperationKind::Return
-                | JoinOperationKind::Escape => None,
-            };
-            if let Some(kind) = kind {
-                call_descriptors.entry((block.index(), statement)).or_insert(JoinCall {
-                    kind,
-                    endpoint_def_id: operation
-                        .endpoint_def_id
-                        .filter(|id| *id != u32::MAX)
-                        .map(|id| DefId::local(rustc_span::def_id::DefIndex::from_usize(id as usize))),
-                    rule_def_id: operation
-                        .rule_def_id
-                        .filter(|id| *id != u32::MAX)
-                        .map(|id| DefId::local(rustc_span::def_id::DefIndex::from_usize(id as usize))),
-                });
-            }
             continue;
         }
 
@@ -2037,19 +2172,6 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
             arguments: Box::new([]),
         };
         pending.push((block, statement.min(block_data.statements.len()), source_info, marker));
-    }
-
-    for ((block, statement), descriptor) in call_descriptors {
-        let block = mir::BasicBlock::from_usize(block);
-        if statement != body.basic_blocks[block].statements.len() {
-            continue;
-        }
-        if let TerminatorKind::Call { join, .. } = &mut body.basic_blocks_mut()[block]
-            .terminator_mut()
-            .kind
-        {
-            *join = Some(descriptor);
-        }
     }
 
     // Insert backwards so the source locations recorded in the operation
@@ -2090,14 +2212,41 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             frontend_direct_unary,
             queue_bound,
             endpoint_def_id_local,
-        )) = body_descriptor(tcx, local_def_id)
-        else {
+            channel_index,
+            rule_index,
+        )) = body_descriptor(tcx, local_def_id) else {
+            // A caller need not itself be generated by the join frontend. It
+            // can still contain the source-level registration or demand that
+            // must remain visible to later MIR analyses. Visit such bodies
+            // with an unclassified fact collector and install only the typed
+            // descriptors on their real call terminators.
+            let mut facts = JoinBodyFacts {
+                endpoint_def_id: None,
+                rule_def_id: None,
+                channel_index: None,
+                rule_index: None,
+                operations: Vec::new(),
+                value_flows: Vec::new(),
+                call_edges: Vec::new(),
+                escapes: FxIndexSet::default(),
+                endpoint_escapes: FxIndexSet::default(),
+                endpoint_locals: vec![false; body.local_decls.len()],
+                join_call_targets: join_call_target_map(tcx),
+                suppress_endpoint_return_escape: false,
+                calls: 0,
+                yields: 0,
+                unknown_effects: 0,
+            };
+            facts.visit_body(body);
+            install_join_call_descriptors(body, &facts.operations);
             return;
         };
 
         let mut facts = JoinBodyFacts {
             endpoint_def_id: Some(endpoint_def_id),
             rule_def_id: Some(rule_def_id),
+            channel_index,
+            rule_index,
             operations: Vec::new(),
             value_flows: Vec::new(),
             call_edges: Vec::new(),
@@ -2165,6 +2314,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 kind: JoinOperationKind::Escape,
                 block: u32::MAX,
                 statement: local,
+                group_def_id: Some(endpoint_def_id),
+                channel_index: None,
+                rule_index: None,
                 endpoint_def_id: Some(endpoint_def_id),
                 rule_def_id: Some(rule_def_id),
                 receiver_local: None,

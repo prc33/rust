@@ -142,6 +142,19 @@ pub enum JoinOperationKind {
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinCall {
     pub kind: JoinOperationKind,
+    /// Typed group identity. For local definitions this is the endpoint
+    /// `DefId`; when metadata is imported the crate number remains part of the
+    /// identity rather than being reconstructed from a local index.
+    pub group_def_id: Option<DefId>,
+    /// Source-declaration channel index, when this call is a channel
+    /// registration. This is stable within the typed group definition and is
+    /// intentionally independent of generated method names.
+    pub channel_index: Option<u32>,
+    /// Source-declaration rule index, when this call targets a dispatch or
+    /// reaction body. This is stable within the typed group definition.
+    pub rule_index: Option<u32>,
+    /// Transitional endpoint identity retained for diagnostics and old dump
+    /// readers. New consumers should use `group_def_id`.
     /// Cross-crate definition identity for the endpoint/group. Keeping the
     /// crate number here prevents local index collisions in downstream MIR.
     pub endpoint_def_id: Option<DefId>,
@@ -164,6 +177,9 @@ pub struct JoinMirOperation {
     pub kind: JoinOperationKind,
     pub block: u32,
     pub statement: u32,
+    pub group_def_id: Option<u32>,
+    pub channel_index: Option<u32>,
+    pub rule_index: Option<u32>,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,
     pub receiver_local: Option<u32>,
@@ -222,6 +238,12 @@ pub struct JoinCallEdge {
     pub statement: u32,
     pub callee: Option<u32>,
     pub target: JoinCallTargetKind,
+    /// Typed group/channel/rule coordinates recovered from the compiler-owned
+    /// descriptor. These remain meaningful after generated method identities
+    /// are remapped across MIR transformations.
+    pub group_def_id: Option<u32>,
+    pub channel_index: Option<u32>,
+    pub rule_index: Option<u32>,
     /// Compiler-owned endpoint identity for a known join call target.  This
     /// is populated for channel, dispatch, reaction-body and constructor
     /// calls; ordinary and unknown calls remain `None`.
