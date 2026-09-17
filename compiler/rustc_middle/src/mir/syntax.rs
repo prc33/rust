@@ -496,15 +496,21 @@ pub enum NonDivergingIntrinsic<'tcx> {
 ///
 /// `JoinMirOperation` in `middle::joins` is the compact encoded summary. New
 /// call-site operations are carried by `TerminatorKind::Call::join`, which
-/// reuses that terminator's real operands. These fields remain only so old
-/// experimental metadata can be decoded; newly generated instances leave all
-/// operand fields empty and MIR visitors intentionally ignore them.
+/// reuses that terminator's real operands. The typed coordinates below are
+/// retained for body-boundary diagnostics and future lowering; marker operands
+/// remain empty and MIR visitors intentionally ignore them.
 #[derive(Clone, TyEncodable, TyDecodable, Debug, PartialEq, StableHash)]
 #[derive(TypeFoldable, TypeVisitable)]
 pub struct JoinIntrinsic<'tcx> {
     pub kind: JoinOperationKind,
     pub block: u32,
     pub statement: u32,
+    /// Compact local identity and source-declaration coordinates. These are
+    /// retained on the marker for MIR diagnostics and future lowering; the
+    /// real operands of a call-site operation remain on the Call terminator.
+    pub group_def_id: Option<u32>,
+    pub channel_index: Option<u32>,
+    pub rule_index: Option<u32>,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,
     pub receiver: Option<Place<'tcx>>,

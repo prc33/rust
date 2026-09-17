@@ -920,7 +920,15 @@ impl Display for NonDivergingIntrinsic<'_> {
             Self::CopyNonOverlapping(CopyNonOverlapping { src, dst, count }) => {
                 write!(f, "copy_nonoverlapping(dst = {dst:?}, src = {src:?}, count = {count:?})")
             }
-            Self::Join(join) => write!(f, "join::{:?}({:?})", join.kind, join.arguments),
+            Self::Join(join) => write!(
+                f,
+                "join::{:?}(group={:?}, channel={:?}, rule_index={:?}, {:?})",
+                join.kind,
+                join.group_def_id,
+                join.channel_index,
+                join.rule_index,
+                join.arguments,
+            ),
         }
     }
 }
