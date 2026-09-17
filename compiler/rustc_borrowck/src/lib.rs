@@ -851,6 +851,11 @@ impl<'a, 'tcx> ResultsVisitor<'tcx, Borrowck<'a, 'tcx>> for MirBorrowckCtxt<'a, 
                     span,
                     "Unexpected CopyNonOverlapping, should only appear after lower_intrinsics",
                 ),
+                // Join markers are compiler-owned analysis metadata and are
+                // removed before runtime MIR. They do not add an additional
+                // ownership event beyond the ordinary call terminator beside
+                // which they are installed.
+                NonDivergingIntrinsic::Join(..) => {}
             },
             // Only relevant for mir typeck
             StatementKind::AscribeUserType(..) => {}

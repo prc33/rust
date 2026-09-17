@@ -609,9 +609,9 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
     assert!(body.phase == MirPhase::Analysis(AnalysisPhase::PostCleanup));
 
     // Keep the summary attached while the crate-level join query is forced at
-    // the end of analysis. It is a cloneable pre-cleanup fact and does not
-    // authorize a rewrite after cleanup; the eventual LowerJoins pass will
-    // consume the crate query only after its own ownership gate.
+    // the end of analysis. It is a cloneable pre-cleanup fact. MIR passes may
+    // inspect it and the typed intrinsic through optimized runtime MIR; the
+    // codegen boundary consumes the metadata after MIR optimization has ended.
 
     // Do a little drop elaboration before const-checking if `const_precise_live_drops` is enabled.
     if check_consts::post_drop_elaboration::checking_enabled(&ConstCx::new(tcx, body)) {

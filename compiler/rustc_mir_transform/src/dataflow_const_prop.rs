@@ -218,6 +218,9 @@ impl<'a, 'tcx> ConstAnalysis<'a, 'tcx> {
             }) => {
                 // This statement represents `*dst = *src`, `count` times.
             }
+            NonDivergingIntrinsic::Join(..) => {
+                // Join markers are removed before runtime const propagation.
+            }
         }
     }
 

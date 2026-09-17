@@ -965,6 +965,12 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 let count = self.eval_operand(count, None)?;
                 self.copy_intrinsic(&src, &dst, &count, /* nonoverlapping */ true)
             }
+            NonDivergingIntrinsic::Join(..) => {
+                // The marker has no runtime effect. It may still be present
+                // when a generated helper is visited by the const-qualification
+                // query; semantic lowering removes it before code generation.
+                interp_ok(())
+            }
         }
     }
 

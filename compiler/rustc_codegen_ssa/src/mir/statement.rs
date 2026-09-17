@@ -113,6 +113,11 @@ impl<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> FunctionCx<'a, 'tcx, Bx> {
 
                 bx.memcpy(dst, align, src, align, bytes, crate::MemFlags::empty(), None);
             }
+            // Join markers are metadata carried through optimized MIR. The
+            // codegen boundary has already cloned and stripped them; retain a
+            // no-op arm for custom/backend-prepared MIR that still contains a
+            // marker.
+            mir::StatementKind::Intrinsic(NonDivergingIntrinsic::Join(..)) => {}
             mir::StatementKind::FakeRead(..)
             | mir::StatementKind::AscribeUserType(..)
             | mir::StatementKind::ConstEvalCounter

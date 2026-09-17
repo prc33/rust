@@ -101,11 +101,12 @@ pub enum JoinBodyRole {
 
 /// Typed operations that are preserved at the join/MIR boundary.
 ///
-/// These are an analysis vocabulary, not runtime calls.  The first vertical
-/// slice records them in the body side table; a later lowering pass will map
-/// the surviving operations to the selected runtime or to a specialised
-/// direct future.  Keeping the vocabulary here prevents CFA from having to
-/// infer semantics from a queue helper's symbol name.
+/// These are a compiler vocabulary, not runtime calls. The first vertical
+/// slice records them in the body side table and materializes them as typed
+/// MIR markers; a later proof-gated lowering can map surviving operations to
+/// the selected runtime or a specialised direct future. Keeping the vocabulary
+/// here prevents CFA from having to infer semantics from a queue helper's
+/// symbol name.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinOperationKind {
@@ -125,15 +126,23 @@ pub enum JoinOperationKind {
 /// A source-positioned operation in the pre-coroutine MIR view.
 ///
 /// MIR locations are body-local and are intentionally represented as compact
-/// indices so this metadata can be encoded with the body.  The actual MIR
-/// remains authoritative; this is an index for diagnostics and transform
-/// decisions, not a second control-flow graph.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+/// indices so this metadata can be encoded with the body.  The operation also
+/// carries the resolved endpoint/rule identity and the MIR locals used by the
+/// operation. This is the typed seam consumed by future MIR/codegen lowering:
+/// transforms do not have to reconstruct a channel from a generated method
+/// name or a runtime helper symbol. `None` operands represent constants or
+/// projections that do not have a single local base.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinMirOperation {
     pub kind: JoinOperationKind,
     pub block: u32,
     pub statement: u32,
+    pub endpoint_def_id: Option<u32>,
+    pub rule_def_id: Option<u32>,
+    pub receiver_local: Option<u32>,
+    pub destination_local: Option<u32>,
+    pub argument_locals: Box<[Option<u32>]>,
 }
 
 /// A typed local-to-local value-flow edge extracted from MIR.  `source` is
@@ -246,6 +255,21 @@ pub enum JoinQueueBound {
     Unknown,
 }
 
+/// Representation selected by the CFA/lowering boundary for one join body.
+///
+/// The value is a proof result, not a user annotation. `Generic` means that
+/// the compatibility matcher remains necessary. The fixed representations
+/// are only selected when the corresponding queue/ownership facts are known;
+/// lowering must still validate the proof against the current MIR body.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinLoweringStrategy {
+    Generic,
+    DirectFuture,
+    FixedUnarySlot,
+    FixedPairMatcher,
+}
+
 /// Body-local occupancy transfer facts for semantic register/match events.
 ///
 /// These facts describe only the event interval visible in one MIR body. A
@@ -341,6 +365,7 @@ pub struct JoinCfaSummary {
     pub is_async: bool,
     pub frontend_direct_unary: bool,
     pub queue_bound: JoinQueueBound,
+    pub lowering: JoinLoweringStrategy,
     pub occupancy: JoinOccupancyFact,
     pub instance_closedness: JoinInstanceClosedness,
     pub instance_closedness_reason: JoinInstanceClosednessReason,

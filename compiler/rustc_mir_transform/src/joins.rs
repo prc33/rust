@@ -17,11 +17,13 @@ use rustc_middle::middle::joins::{
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOccupancyFact,
-    JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind, JoinValueState,
+    JoinLoweringStrategy, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
+    JoinValueState,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    self, Body, Location, Operand, Place, RETURN_PLACE, Rvalue, TerminatorKind,
+    self, Body, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE, Rvalue, Statement,
+    StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
@@ -140,6 +142,8 @@ fn frontend_queue_bound(bound: Option<u32>) -> JoinQueueBound {
 }
 
 struct JoinBodyFacts {
+    endpoint_def_id: Option<u32>,
+    rule_def_id: Option<u32>,
     operations: Vec<JoinMirOperation>,
     value_flows: Vec<JoinValueFlow>,
     call_edges: Vec<JoinCallEdge>,
@@ -159,6 +163,33 @@ impl JoinBodyFacts {
             kind,
             block: location.block.index() as u32,
             statement: location.statement_index as u32,
+            endpoint_def_id: self.endpoint_def_id,
+            rule_def_id: self.rule_def_id,
+            receiver_local: None,
+            destination_local: None,
+            argument_locals: Box::new([]),
+        });
+    }
+
+    fn operation_with_operands(
+        &mut self,
+        kind: JoinOperationKind,
+        location: Location,
+        receiver_local: Option<u32>,
+        destination_local: Option<u32>,
+        argument_locals: impl IntoIterator<Item = Option<u32>>,
+        endpoint_def_id: Option<u32>,
+        rule_def_id: Option<u32>,
+    ) {
+        self.operations.push(JoinMirOperation {
+            kind,
+            block: location.block.index() as u32,
+            statement: location.statement_index as u32,
+            endpoint_def_id,
+            rule_def_id,
+            receiver_local,
+            destination_local,
+            argument_locals: argument_locals.into_iter().collect(),
         });
     }
 
@@ -237,6 +268,14 @@ impl JoinBodyFacts {
         } else {
             None
         };
+        let lowering = select_lowering_strategy(
+            frontend_direct_unary,
+            role,
+            arity,
+            queue_bound,
+            &occupancy,
+            rejection,
+        );
 
         JoinCfaSummary {
             body_def_id,
@@ -247,6 +286,7 @@ impl JoinBodyFacts {
             is_async,
             frontend_direct_unary,
             queue_bound,
+            lowering,
             occupancy,
             instance_closedness,
             instance_closedness_reason,
@@ -266,6 +306,44 @@ impl JoinBodyFacts {
             rejection,
         }
     }
+}
+
+fn select_lowering_strategy(
+    frontend_direct_unary: bool,
+    role: JoinBodyRole,
+    arity: u32,
+    queue_bound: JoinQueueBound,
+    occupancy: &JoinOccupancyFact,
+    rejection: Option<JoinCfaRejection>,
+) -> JoinLoweringStrategy {
+    // The direct future representation is already an ordinary Rust future at
+    // the call boundary. Keep the proof gate explicit so a stale frontend
+    // marker cannot authorize a lowering for a different body role.
+    if frontend_direct_unary
+        && role == JoinBodyRole::Channel
+        && rejection.is_some_and(|reason| reason == JoinCfaRejection::NotReactionBody)
+    {
+        return JoinLoweringStrategy::DirectFuture;
+    }
+
+    if role == JoinBodyRole::Channel
+        && arity == 1
+        && occupancy.complete
+        && occupancy.proven_peak.is_some_and(|peak| peak <= 1)
+        && matches!(queue_bound, JoinQueueBound::AtMost(1) | JoinQueueBound::Exact(0))
+    {
+        return JoinLoweringStrategy::FixedUnarySlot;
+    }
+
+    if role == JoinBodyRole::Channel
+        && arity == 2
+        && occupancy.complete
+        && occupancy.proven_peak.is_some_and(|peak| peak <= 1)
+    {
+        return JoinLoweringStrategy::FixedPairMatcher;
+    }
+
+    JoinLoweringStrategy::Generic
 }
 
 fn is_endpoint_type<'tcx>(endpoint_def_id: LocalDefId, ty: Ty<'tcx>) -> bool {
@@ -437,6 +515,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         // endpoint argument into a helper without making every Rust function
         // part of the join dump.
         let mut facts = JoinBodyFacts {
+            endpoint_def_id: None,
+            rule_def_id: None,
             operations: Vec::new(),
             value_flows: Vec::new(),
             call_edges: Vec::new(),
@@ -934,7 +1014,7 @@ fn solve_body_occupancy<'tcx>(
 
     let mut operations_by_block = vec![Vec::<JoinMirOperation>::new(); block_count];
     let mut events = 0u32;
-    for &operation in operations {
+    for operation in operations {
         if matches!(
             operation.kind,
             JoinOperationKind::Register
@@ -945,7 +1025,7 @@ fn solve_body_occupancy<'tcx>(
             events = events.saturating_add(1);
         }
         if let Some(bucket) = operations_by_block.get_mut(operation.block as usize) {
-            bucket.push(operation);
+            bucket.push(operation.clone());
         }
     }
     for bucket in &mut operations_by_block {
@@ -1282,23 +1362,8 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             TerminatorKind::Call { func, args, .. }
             | TerminatorKind::TailCall { func, args, .. } => {
                 self.calls += 1;
-                self.operation(JoinOperationKind::OrdinaryCall, location);
                 let callee_def_id = func.const_fn_def().and_then(|(def_id, _)| def_id.as_local());
                 let target = self.call_target(callee_def_id);
-                match target.kind {
-                    JoinCallTargetKind::Constructor => {
-                        self.operation(JoinOperationKind::CreateGroup, location)
-                    }
-                    JoinCallTargetKind::Channel => {
-                        self.operation(JoinOperationKind::Register, location)
-                    }
-                    JoinCallTargetKind::Dispatch => {
-                        self.operation(JoinOperationKind::Match, location)
-                    }
-                    JoinCallTargetKind::Unknown
-                    | JoinCallTargetKind::OrdinaryLocal
-                    | JoinCallTargetKind::ReactionBody => {}
-                }
                 let receiver_local = matches!(
                     target.kind,
                     JoinCallTargetKind::Channel
@@ -1318,7 +1383,48 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 let argument_locals = args
                     .iter()
                     .map(|arg| arg.node.place().map(|place| place.local.index() as u32))
-                    .collect();
+                    .collect::<Vec<_>>();
+                self.operation_with_operands(
+                    JoinOperationKind::OrdinaryCall,
+                    location,
+                    receiver_local,
+                    destination_local,
+                    argument_locals.iter().copied(),
+                    target.endpoint_def_id,
+                    target.rule_def_id,
+                );
+                match target.kind {
+                    JoinCallTargetKind::Constructor => self.operation_with_operands(
+                        JoinOperationKind::CreateGroup,
+                        location,
+                        receiver_local,
+                        destination_local,
+                        argument_locals.iter().copied(),
+                        target.endpoint_def_id,
+                        target.rule_def_id,
+                    ),
+                    JoinCallTargetKind::Channel => self.operation_with_operands(
+                        JoinOperationKind::Register,
+                        location,
+                        receiver_local,
+                        destination_local,
+                        argument_locals.iter().copied(),
+                        target.endpoint_def_id,
+                        target.rule_def_id,
+                    ),
+                    JoinCallTargetKind::Dispatch => self.operation_with_operands(
+                        JoinOperationKind::Match,
+                        location,
+                        receiver_local,
+                        destination_local,
+                        argument_locals.iter().copied(),
+                        target.endpoint_def_id,
+                        target.rule_def_id,
+                    ),
+                    JoinCallTargetKind::Unknown
+                    | JoinCallTargetKind::OrdinaryLocal
+                    | JoinCallTargetKind::ReactionBody => {}
+                }
                 self.call_edges.push(JoinCallEdge {
                     block: location.block.index() as u32,
                     statement: location.statement_index as u32,
@@ -1394,7 +1500,32 @@ fn dump_summary(
     let operation_kinds = summary
         .operations
         .iter()
-        .map(|operation| format!("\"{:?}\"", operation.kind))
+        .map(|operation| {
+            format!(
+                "{{\"kind\":\"{:?}\",\"block\":{},\"statement\":{},\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                operation.kind,
+                operation.block,
+                operation.statement,
+                operation
+                    .endpoint_def_id
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .rule_def_id
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .receiver_local
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .destination_local
+                    .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .argument_locals
+                    .iter()
+                    .map(|id| id.map_or_else(|| "null".to_string(), |id| id.to_string()))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            )
+        })
         .collect::<Vec<_>>()
         .join(",");
     let escapes = summary.escapes.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
@@ -1455,7 +1586,7 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -1464,6 +1595,7 @@ fn dump_summary(
         summary.is_async,
         summary.frontend_direct_unary,
         summary.queue_bound,
+        summary.lowering,
         summary.occupancy.proven_peak.map_or_else(|| "null".to_string(), |value| value.to_string()),
         summary
             .occupancy
@@ -1496,6 +1628,92 @@ fn dump_summary(
     let path = directory.join(format!("body-{crate_tag:016x}-{}.json", local_def_id.index()));
     if let Err(error) = fs::write(&path, json) {
         tracing::warn!(target: "rustc_join", ?error, path = ?path, "could not write join CFA summary");
+    }
+}
+
+/// Materialize the typed operation stream as analysis-MIR intrinsics.
+///
+/// The builtin expansion still uses ordinary Rust calls for its compatibility
+/// runtime. The intrinsic is the compiler-owned semantic marker placed beside
+/// that call, with the original MIR operands copied into it. The marker stays
+/// attached through runtime MIR and ordinary MIR optimization. It is metadata
+/// for those passes and is consumed at the codegen boundary, where it emits no
+/// machine operation. Keeping it live until then leaves the door open to
+/// proof-gated MIR rewrites and LLVM-specific lowering without reconstructing
+/// the join pattern from a runtime helper call.
+fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary) {
+    if body.basic_blocks.is_empty()
+        || body.basic_blocks.iter().any(|block| {
+            block.statements.iter().any(|statement| {
+                matches!(
+                    &statement.kind,
+                    StatementKind::Intrinsic(intrinsic)
+                        if matches!(intrinsic.as_ref(), rustc_middle::mir::NonDivergingIntrinsic::Join(_))
+                )
+            })
+        })
+    {
+        return;
+    }
+
+    let mut pending = Vec::new();
+    for operation in &summary.operations {
+        // Escape is a fact about ownership, not an executable event, and has
+        // no valid MIR location. Keep it in the summary only.
+        if operation.block == u32::MAX {
+            continue;
+        }
+        let block = mir::BasicBlock::from_usize(operation.block as usize);
+        let Some(block_data) = body.basic_blocks.get(block) else { continue };
+        let statement = operation.statement as usize;
+        let source_info = block_data
+            .statements
+            .get(statement)
+            .map(|statement| statement.source_info)
+            .unwrap_or(block_data.terminator().source_info);
+
+        // Synthetic body-boundary operations use statement zero but do not
+        // refer to the terminator's later locals. Attach actual operands only
+        // when the operation was recorded at the terminator location.
+        let (receiver, destination, arguments) = if statement == block_data.statements.len() {
+            match &block_data.terminator().kind {
+                TerminatorKind::Call { destination, args, .. } => (
+                    args.first().and_then(|arg| arg.node.place()),
+                    Some(destination.clone()),
+                    args.iter().map(|arg| arg.node.clone()).collect::<Vec<_>>(),
+                ),
+                TerminatorKind::TailCall { args, .. } => (
+                    args.first().and_then(|arg| arg.node.place()),
+                    None,
+                    args.iter().map(|arg| arg.node.clone()).collect::<Vec<_>>(),
+                ),
+                _ => (None, None, Vec::new()),
+            }
+        } else {
+            (None, None, Vec::new())
+        };
+        let marker = JoinIntrinsic {
+            kind: operation.kind,
+            block: operation.block,
+            statement: operation.statement,
+            endpoint_def_id: operation.endpoint_def_id,
+            rule_def_id: operation.rule_def_id,
+            receiver,
+            destination,
+            arguments: arguments.into_boxed_slice(),
+        };
+        pending.push((block, statement.min(block_data.statements.len()), source_info, marker));
+    }
+
+    // Insert backwards so the source locations recorded in the operation
+    // summary continue to denote the original MIR terminator/statement.
+    pending.sort_by_key(|(block, statement, _, _)| (block.index(), *statement));
+    for (block, statement, source_info, marker) in pending.into_iter().rev() {
+        body.basic_blocks_mut()[block]
+            .statements
+            .insert(statement, Statement::new(source_info, StatementKind::Intrinsic(Box::new(
+                rustc_middle::mir::NonDivergingIntrinsic::Join(marker),
+            ))));
     }
 }
 
@@ -1534,6 +1752,8 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         };
 
         let mut facts = JoinBodyFacts {
+            endpoint_def_id: Some(endpoint_def_id),
+            rule_def_id: Some(rule_def_id),
             operations: Vec::new(),
             value_flows: Vec::new(),
             call_edges: Vec::new(),
@@ -1601,6 +1821,11 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 kind: JoinOperationKind::Escape,
                 block: u32::MAX,
                 statement: local,
+                endpoint_def_id: Some(endpoint_def_id),
+                rule_def_id: Some(rule_def_id),
+                receiver_local: None,
+                destination_local: None,
+                argument_locals: Box::new([]),
             });
         }
 
@@ -1627,6 +1852,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let solver_steps = summary.solver_steps;
         let solver_complete = summary.solver_complete;
         let locally_closed = summary.locally_closed;
+        let lowering = summary.lowering;
         let instance_closedness = summary.instance_closedness;
         let instance_closedness_reason = summary.instance_closedness_reason;
         let occupancy = summary.occupancy;
@@ -1634,6 +1860,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         let endpoint_escapes = summary.endpoint_escapes.len();
         let value_flows = summary.value_flows.len();
         let operation_kinds = summary.operations.iter().map(|op| op.kind).collect::<Vec<_>>();
+        install_join_intrinsics(body, &summary);
         body.join_info = Some(Box::new(summary));
         dump_summary(
             tcx,
@@ -1652,6 +1879,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             is_async,
             frontend_direct_unary,
             ?queue_bound,
+            ?lowering,
             ?instance_closedness,
             ?instance_closedness_reason,
             ?occupancy,

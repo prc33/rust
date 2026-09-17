@@ -515,6 +515,10 @@ pub struct CopyNonOverlapping {
 pub enum NonDivergingIntrinsic {
     Assume(Operand),
     CopyNonOverlapping(CopyNonOverlapping),
+    /// Compiler-only join marker. It is normally removed before stable MIR
+    /// consumers observe a runtime body; the opaque variant keeps conversion
+    /// exhaustive for analysis MIR snapshots.
+    Join,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

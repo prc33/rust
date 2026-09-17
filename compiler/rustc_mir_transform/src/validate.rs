@@ -1569,6 +1569,16 @@ impl<'a, 'tcx> Visitor<'tcx> for TypeChecker<'a, 'tcx> {
                     self.fail(location, format!("bad arg ({op_cnt_ty} != usize)"))
                 }
             }
+            StatementKind::Intrinsic(NonDivergingIntrinsic::Join(join)) => {
+                // Join markers are compiler metadata, not executable MIR. They
+                // intentionally survive the Runtime::Optimized phase so MIR
+                // optimization and inspection passes can use the typed pattern
+                // and CFA proof. The LLVM/codegen boundary consumes them and
+                // emits no instruction.
+                for argument in &join.arguments {
+                    let _ = argument.ty(&self.body.local_decls, self.tcx);
+                }
+            }
             StatementKind::SetDiscriminant { place, .. } => {
                 if self.body.phase < MirPhase::Runtime(RuntimePhase::Initial) {
                     self.fail(location, "`SetDiscriminant`is not allowed until deaggregation");

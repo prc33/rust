@@ -65,6 +65,47 @@
 use crate::mir::*;
 use crate::ty::CanonicalUserTypeAnnotation;
 
+macro_rules! visit_join_intrinsic {
+    ($self:ident, $join:ident, $location:ident) => {
+        if let Some(receiver) = $join.receiver.as_ref() {
+            $self.visit_place(
+                receiver,
+                PlaceContext::NonMutatingUse(NonMutatingUseContext::Inspect),
+                $location,
+            );
+        }
+        if let Some(destination) = $join.destination.as_ref() {
+            $self.visit_place(
+                destination,
+                PlaceContext::MutatingUse(MutatingUseContext::Store),
+                $location,
+            );
+        }
+        for argument in $join.arguments.iter() {
+            $self.visit_operand(argument, $location);
+        }
+    };
+    ($self:ident, $join:ident, $location:ident, mut) => {
+        if let Some(receiver) = $join.receiver.as_mut() {
+            $self.visit_place(
+                receiver,
+                PlaceContext::NonMutatingUse(NonMutatingUseContext::Inspect),
+                $location,
+            );
+        }
+        if let Some(destination) = $join.destination.as_mut() {
+            $self.visit_place(
+                destination,
+                PlaceContext::MutatingUse(MutatingUseContext::Store),
+                $location,
+            );
+        }
+        for argument in $join.arguments.iter_mut() {
+            $self.visit_operand(argument, $location);
+        }
+    };
+}
+
 macro_rules! make_mir_visitor {
     ($visitor_trait_name:ident, $($mutability:ident)?) => {
         pub trait $visitor_trait_name<'tcx> {
@@ -484,6 +525,9 @@ macro_rules! make_mir_visitor {
                                 self.visit_operand(src, location);
                                 self.visit_operand(dst, location);
                                 self.visit_operand(count, location);
+                            }
+                            NonDivergingIntrinsic::Join(join) => {
+                                visit_join_intrinsic!(self, join, location $(, $mutability)?);
                             }
                         }
                     }

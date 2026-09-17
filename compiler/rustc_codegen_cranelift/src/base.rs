@@ -968,6 +968,7 @@ fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, cur_block: Block, stmt:
 
                 fx.bcx.call_memcpy(fx.target_config, dst, src, bytes);
             }
+            NonDivergingIntrinsic::Join(..) => {}
         },
     }
 }

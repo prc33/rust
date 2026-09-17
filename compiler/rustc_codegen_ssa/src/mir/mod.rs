@@ -3,7 +3,9 @@ use std::iter;
 use rustc_index::IndexVec;
 use rustc_index::bit_set::DenseBitSet;
 use rustc_middle::middle::codegen_fn_attrs::CodegenFnAttrFlags;
-use rustc_middle::mir::{Body, Local, UnwindTerminateReason, traversal};
+use rustc_middle::mir::{
+    Body, Local, NonDivergingIntrinsic, StatementKind, UnwindTerminateReason, traversal,
+};
 use rustc_middle::ty::layout::{FnAbiOf, HasTyCtxt, HasTypingEnv, TyAndLayout};
 use rustc_middle::ty::{self, Instance, Ty, TyCtxt, TypeFoldable, TypeVisitableExt};
 use rustc_middle::{bug, mir, span_bug};
@@ -47,6 +49,51 @@ enum CachedLlbb<T> {
 
 type PerLocalVarDebugInfoIndexVec<'tcx, V> =
     IndexVec<mir::Local, Vec<PerLocalVarDebugInfo<'tcx, V>>>;
+
+/// Remove compiler-owned join metadata at the backend boundary.
+///
+/// Join markers deliberately remain in optimized runtime MIR. Keeping them
+/// there lets MIR optimization, coroutine lowering, and MIR inspection use the
+/// typed operation and CFA proof instead of reconstructing a pattern from a
+/// compatibility runtime call. They have no runtime semantics themselves, so
+/// the final lowering for the LLVM-family backends is simply to omit the
+/// statement. We clone only when a body actually contains a marker, leaving
+/// the optimized-MIR query result available for diagnostics and future
+/// proof-gated lowering passes.
+fn lower_join_markers<'tcx>(tcx: TyCtxt<'tcx>, mir: &'tcx Body<'tcx>) -> &'tcx Body<'tcx> {
+    let has_markers = mir.basic_blocks.iter().any(|block| {
+        block.statements.iter().any(|statement| {
+            matches!(
+                &statement.kind,
+                StatementKind::Intrinsic(intrinsic)
+                    if matches!(intrinsic.as_ref(), NonDivergingIntrinsic::Join(_))
+            )
+        })
+    });
+    if !has_markers {
+        return mir;
+    }
+
+    let mut lowered = mir.clone();
+    let mut removed = 0;
+    for block in lowered.basic_blocks_mut() {
+        for statement in &mut block.statements {
+            if matches!(
+                &statement.kind,
+                StatementKind::Intrinsic(intrinsic)
+                    if matches!(intrinsic.as_ref(), NonDivergingIntrinsic::Join(_))
+            ) {
+                statement.make_nop(true);
+                removed += 1;
+            }
+        }
+    }
+    // The side table describes the optimized body and must not be copied into
+    // the backend-only view once its executable markers have been consumed.
+    lowered.join_info = None;
+    debug!(target: "rustc_join", removed, "lowered join markers at codegen boundary");
+    tcx.arena.alloc(lowered)
+}
 
 /// Master context for codegenning from MIR.
 pub struct FunctionCx<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>> {
@@ -227,6 +274,10 @@ pub fn codegen_mir<'a, 'tcx, Bx: BuilderMethods<'a, 'tcx>>(
         );
         mir = tcx.arena.alloc(optimize_use_clone::<Bx>(cx, monomorphized_mir));
     }
+
+    // Join markers are intentionally lowered only now, after all MIR passes
+    // and any backend-specific MIR preparation have seen them.
+    mir = lower_join_markers(tcx, mir);
 
     let start_llbb = Bx::append_block(cx, llfn, "start");
     let mut start_bx = Bx::build(cx, start_llbb);

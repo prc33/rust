@@ -17,6 +17,7 @@ use smallvec::SmallVec;
 
 use super::{BasicBlock, Const, Local, UserTypeProjection};
 use crate::mir::coverage::CoverageKind;
+use crate::middle::joins::JoinOperationKind;
 use crate::ty::adjustment::PointerCoercion;
 use crate::ty::{self, GenericArgsRef, List, Region, Ty, UserTypeAnnotationIndex};
 
@@ -481,6 +482,34 @@ pub enum NonDivergingIntrinsic<'tcx> {
     /// **Needs clarification**: Is this typed or not, ie is there a typed load and store involved?
     /// I vaguely remember Ralf saying somewhere that he thought it should not be.
     CopyNonOverlapping(CopyNonOverlapping<'tcx>),
+
+    /// A compiler-owned join semantic operation. This is present from analysis
+    /// MIR through optimized runtime MIR. It is deliberately an intrinsic
+    /// rather than a runtime call: the operation carries typed MIR operands so
+    /// drop/coroutine/MIR optimization passes can inspect the join proof. The
+    /// LLVM/codegen boundary consumes it (without emitting an instruction).
+    Join(JoinIntrinsic<'tcx>),
+}
+
+/// Typed operands for one join operation retained through optimized runtime MIR.
+///
+/// `JoinMirOperation` in `middle::joins` is the compact encoded summary. This
+/// form is the executable MIR carrier: it keeps the actual places/operands
+/// and source location available to borrow/drop-aware lowering. A `None`
+/// place is expected for synthetic body-boundary operations such as
+/// `CompleteReplies`; call-site operations carry the receiver, destination,
+/// and argument operands from the original terminator.
+#[derive(Clone, TyEncodable, TyDecodable, Debug, PartialEq, StableHash)]
+#[derive(TypeFoldable, TypeVisitable)]
+pub struct JoinIntrinsic<'tcx> {
+    pub kind: JoinOperationKind,
+    pub block: u32,
+    pub statement: u32,
+    pub endpoint_def_id: Option<u32>,
+    pub rule_def_id: Option<u32>,
+    pub receiver: Option<Place<'tcx>>,
+    pub destination: Option<Place<'tcx>>,
+    pub arguments: Box<[Operand<'tcx>]>,
 }
 
 /// Describes whether this operand use performs a retag.
