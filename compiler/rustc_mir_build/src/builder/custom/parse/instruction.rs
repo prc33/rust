@@ -183,6 +183,7 @@ impl<'a, 'tcx> ParseCtxt<'a, 'tcx> {
                         CallSource::OverloadedOperator
                     },
                     fn_span: *fn_span,
+                    join: None,
                 })
             },
         )

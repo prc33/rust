@@ -67,42 +67,14 @@ use crate::ty::CanonicalUserTypeAnnotation;
 
 macro_rules! visit_join_intrinsic {
     ($self:ident, $join:ident, $location:ident) => {
-        if let Some(receiver) = $join.receiver.as_ref() {
-            $self.visit_place(
-                receiver,
-                PlaceContext::NonMutatingUse(NonMutatingUseContext::Inspect),
-                $location,
-            );
-        }
-        if let Some(destination) = $join.destination.as_ref() {
-            $self.visit_place(
-                destination,
-                PlaceContext::MutatingUse(MutatingUseContext::Store),
-                $location,
-            );
-        }
-        for argument in $join.arguments.iter() {
-            $self.visit_operand(argument, $location);
-        }
+        // Join markers are metadata only. Call-site operands live on the
+        // ordinary Call terminator, so visiting these legacy fields here would
+        // duplicate uses/defs in every MIR analysis. They are retained only
+        // for decoding old experimental MIR and are not rewritten further.
+        let _ = ($join, $location);
     };
     ($self:ident, $join:ident, $location:ident, mut) => {
-        if let Some(receiver) = $join.receiver.as_mut() {
-            $self.visit_place(
-                receiver,
-                PlaceContext::NonMutatingUse(NonMutatingUseContext::Inspect),
-                $location,
-            );
-        }
-        if let Some(destination) = $join.destination.as_mut() {
-            $self.visit_place(
-                destination,
-                PlaceContext::MutatingUse(MutatingUseContext::Store),
-                $location,
-            );
-        }
-        for argument in $join.arguments.iter_mut() {
-            $self.visit_operand(argument, $location);
-        }
+        let _ = ($join, $location);
     };
 }
 
@@ -617,6 +589,7 @@ macro_rules! make_mir_visitor {
                         unwind: _,
                         call_source: _,
                         fn_span,
+                        join: _,
                     } => {
                         self.visit_span($(& $mutability)? *fn_span);
                         self.visit_operand(func, location);

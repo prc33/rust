@@ -10,10 +10,10 @@
 //! runtime.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxIndexSet};
-use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId};
+use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::middle::joins::{
-    JoinBodyRole, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
+    JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOccupancyFact,
@@ -27,6 +27,7 @@ use rustc_middle::mir::{
 };
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
+use std::collections::BTreeMap;
 use std::fs;
 
 use crate::{MirPass, PassPolicy};
@@ -271,9 +272,6 @@ impl JoinBodyFacts {
         let lowering = select_lowering_strategy(
             frontend_direct_unary,
             role,
-            arity,
-            queue_bound,
-            &occupancy,
             rejection,
         );
 
@@ -311,9 +309,6 @@ impl JoinBodyFacts {
 fn select_lowering_strategy(
     frontend_direct_unary: bool,
     role: JoinBodyRole,
-    arity: u32,
-    queue_bound: JoinQueueBound,
-    occupancy: &JoinOccupancyFact,
     rejection: Option<JoinCfaRejection>,
 ) -> JoinLoweringStrategy {
     // The direct future representation is already an ordinary Rust future at
@@ -326,23 +321,10 @@ fn select_lowering_strategy(
         return JoinLoweringStrategy::DirectFuture;
     }
 
-    if role == JoinBodyRole::Channel
-        && arity == 1
-        && occupancy.complete
-        && occupancy.proven_peak.is_some_and(|peak| peak <= 1)
-        && matches!(queue_bound, JoinQueueBound::AtMost(1) | JoinQueueBound::Exact(0))
-    {
-        return JoinLoweringStrategy::FixedUnarySlot;
-    }
-
-    if role == JoinBodyRole::Channel
-        && arity == 2
-        && occupancy.complete
-        && occupancy.proven_peak.is_some_and(|peak| peak <= 1)
-    {
-        return JoinLoweringStrategy::FixedPairMatcher;
-    }
-
+    // A body-local event trace does not prove a concrete instance's queue
+    // bound: callers, loops, competing rules, and escapes are outside this
+    // body. Fixed slots and pair matchers therefore remain unavailable until
+    // the interprocedural instance proof is wired into this decision.
     JoinLoweringStrategy::Generic
 }
 
@@ -1631,16 +1613,15 @@ fn dump_summary(
     }
 }
 
-/// Materialize the typed operation stream as analysis-MIR intrinsics.
+/// Materialize the typed operation stream in analysis MIR.
 ///
-/// The builtin expansion still uses ordinary Rust calls for its compatibility
-/// runtime. The intrinsic is the compiler-owned semantic marker placed beside
-/// that call, with the original MIR operands copied into it. The marker stays
-/// attached through runtime MIR and ordinary MIR optimization. It is metadata
-/// for those passes and is consumed at the codegen boundary, where it emits no
-/// machine operation. Keeping it live until then leaves the door open to
-/// proof-gated MIR rewrites and LLVM-specific lowering without reconstructing
-/// the join pattern from a runtime helper call.
+/// A call-site operation is attached to the ordinary `Call` terminator. That
+/// terminator already owns the function, argument and destination operands, so
+/// no second statement is needed (or permitted) to describe their uses. The
+/// remaining body-boundary operations are represented by operand-free legacy
+/// intrinsics until their dedicated MIR forms are implemented. All of this
+/// metadata remains available through optimized MIR and is consumed only at
+/// the backend boundary.
 fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary) {
     if body.basic_blocks.is_empty()
         || body.basic_blocks.iter().any(|block| {
@@ -1657,6 +1638,7 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
     }
 
     let mut pending = Vec::new();
+    let mut call_descriptors = BTreeMap::new();
     for operation in &summary.operations {
         // Escape is a fact about ownership, not an executable event, and has
         // no valid MIR location. Keep it in the summary only.
@@ -1666,43 +1648,89 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
         let block = mir::BasicBlock::from_usize(operation.block as usize);
         let Some(block_data) = body.basic_blocks.get(block) else { continue };
         let statement = operation.statement as usize;
+
+        // The location immediately after a block's statements denotes its
+        // terminator. Preserve the join identity on that terminator instead
+        // of materialising a duplicate operand-bearing statement beside it.
+        if statement == block_data.statements.len()
+            && matches!(block_data.terminator().kind, TerminatorKind::Call { .. })
+        {
+            let kind = match operation.kind {
+                JoinOperationKind::CreateGroup
+                | JoinOperationKind::Register
+                | JoinOperationKind::Demand
+                | JoinOperationKind::Match
+                | JoinOperationKind::CompleteReplies
+                | JoinOperationKind::WithdrawOrAbandon
+                | JoinOperationKind::CancelScope => Some(operation.kind),
+                JoinOperationKind::OrdinaryCall
+                | JoinOperationKind::Yield
+                | JoinOperationKind::Return
+                | JoinOperationKind::Escape => None,
+            };
+            if let Some(kind) = kind {
+                call_descriptors.entry((block.index(), statement)).or_insert(JoinCall {
+                    kind,
+                    endpoint_def_id: operation
+                        .endpoint_def_id
+                        .filter(|id| *id != u32::MAX)
+                        .map(|id| DefId::local(rustc_span::def_id::DefIndex::from_usize(id as usize))),
+                    rule_def_id: operation
+                        .rule_def_id
+                        .filter(|id| *id != u32::MAX)
+                        .map(|id| DefId::local(rustc_span::def_id::DefIndex::from_usize(id as usize))),
+                });
+            }
+            continue;
+        }
+
+        // Ordinary calls have their complete semantics in the terminator and
+        // do not need a marker at all. A TailCall is intentionally unsupported
+        // by this first descriptor slice; its operation remains in the CFA
+        // summary for diagnostics and future lowering.
+        if operation.kind == JoinOperationKind::OrdinaryCall {
+            continue;
+        }
+        // Completion is a body effect, not an entry marker. The compatibility
+        // expansion currently records it at START_BLOCK, but materialising
+        // that location would falsely claim that replies were published
+        // before the reaction body executes. Keep it in the summary until a
+        // real completion operation is available.
+        if operation.kind == JoinOperationKind::CompleteReplies
+            && statement != block_data.statements.len()
+        {
+            continue;
+        }
         let source_info = block_data
             .statements
             .get(statement)
             .map(|statement| statement.source_info)
             .unwrap_or(block_data.terminator().source_info);
 
-        // Synthetic body-boundary operations use statement zero but do not
-        // refer to the terminator's later locals. Attach actual operands only
-        // when the operation was recorded at the terminator location.
-        let (receiver, destination, arguments) = if statement == block_data.statements.len() {
-            match &block_data.terminator().kind {
-                TerminatorKind::Call { destination, args, .. } => (
-                    args.first().and_then(|arg| arg.node.place()),
-                    Some(destination.clone()),
-                    args.iter().map(|arg| arg.node.clone()).collect::<Vec<_>>(),
-                ),
-                TerminatorKind::TailCall { args, .. } => (
-                    args.first().and_then(|arg| arg.node.place()),
-                    None,
-                    args.iter().map(|arg| arg.node.clone()).collect::<Vec<_>>(),
-                ),
-                _ => (None, None, Vec::new()),
-            }
-        } else {
-            (None, None, Vec::new())
-        };
         let marker = JoinIntrinsic {
             kind: operation.kind,
             block: operation.block,
             statement: operation.statement,
             endpoint_def_id: operation.endpoint_def_id,
             rule_def_id: operation.rule_def_id,
-            receiver,
-            destination,
-            arguments: arguments.into_boxed_slice(),
+            receiver: None,
+            destination: None,
+            arguments: Box::new([]),
         };
         pending.push((block, statement.min(block_data.statements.len()), source_info, marker));
+    }
+
+    for ((block, statement), descriptor) in call_descriptors {
+        let block = mir::BasicBlock::from_usize(block);
+        if statement != body.basic_blocks[block].statements.len() {
+            continue;
+        }
+        if let TerminatorKind::Call { join, .. } = &mut body.basic_blocks_mut()[block]
+            .terminator_mut()
+            .kind
+        {
+            *join = Some(descriptor);
+        }
     }
 
     // Insert backwards so the source locations recorded in the operation
@@ -1730,9 +1758,6 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             return;
         }
         let cfa_mode = tcx.sess.opts.unstable_opts.join_cfa;
-        if cfa_mode == JoinCfaMode::Off {
-            return;
-        }
 
         let Some(local_def_id) = body.source.def_id().as_local() else {
             return;

@@ -381,6 +381,7 @@ where
                 unwind: unwind_with_dead.into_action(),
                 call_source: CallSource::Misc,
                 fn_span: self.source_info.span,
+                join: None,
             },
         );
 
@@ -411,6 +412,7 @@ where
                 unwind: unwind.into_action(),
                 call_source: CallSource::Misc,
                 fn_span: span,
+                join: None,
             },
         )
     }
@@ -578,6 +580,7 @@ where
                 unwind: unwind.into_action(),
                 call_source: CallSource::Misc,
                 fn_span: source_info.span,
+                join: None,
             },
         );
 
@@ -605,6 +608,7 @@ where
                     unwind: unwind.into_action(),
                     call_source: CallSource::Misc,
                     fn_span: source_info.span,
+                    join: None,
                 },
             )
         };
@@ -633,9 +637,10 @@ where
                 destination: fut_pin_local.into(),
                 target: Some(get_context_bb),
                 unwind: unwind.into_action(),
-                call_source: CallSource::Misc,
-                fn_span: source_info.span,
-            },
+                    call_source: CallSource::Misc,
+                    fn_span: source_info.span,
+                    join: None,
+                },
         );
 
         (pin_bb, resume_bb, dropline_bb)
@@ -1256,6 +1261,7 @@ where
                 unwind: unwind.into_action(),
                 call_source: CallSource::Misc,
                 fn_span: self.source_info.span,
+                join: None,
             },
         )
     }

@@ -927,6 +927,7 @@ impl<'a, 'tcx> ResultsVisitor<'tcx, Borrowck<'a, 'tcx>> for MirBorrowckCtxt<'a, 
                 unwind: _,
                 call_source: _,
                 fn_span: _,
+                join: _,
             } => {
                 self.consume_operand(loc, (func, span), state);
                 for arg in args {

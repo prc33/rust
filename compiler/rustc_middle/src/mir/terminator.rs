@@ -769,7 +769,16 @@ impl<'tcx> TerminatorKind<'tcx> {
                 }
             }
 
-            Call { unwind, destination, target, func: _, args: _, fn_span: _, call_source: _ } => {
+            Call {
+                unwind,
+                destination,
+                target,
+                func: _,
+                args: _,
+                fn_span: _,
+                call_source: _,
+                join: _,
+            } => {
                 TerminatorEdges::AssignOnReturn {
                     return_: target.into_iter().collect(),
                     cleanup: unwind.cleanup_block(),

@@ -338,6 +338,7 @@ pub fn build_drop_shim<'tcx>(
                 unwind: UnwindAction::Continue,
                 call_source: CallSource::Misc,
                 fn_span: span,
+                join: None,
             },
             attributes: ThinVec::new(),
         });
@@ -651,6 +652,7 @@ impl<'tcx> CloneShimBuilder<'tcx> {
                 unwind: UnwindAction::Cleanup(cleanup),
                 call_source: CallSource::Normal,
                 fn_span: self.span,
+                join: None,
             },
             false,
         );
@@ -946,6 +948,7 @@ fn build_call_shim<'tcx>(
             },
             call_source: CallSource::Misc,
             fn_span: span,
+            join: None,
         },
         false,
     );

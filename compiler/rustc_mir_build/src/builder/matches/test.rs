@@ -378,6 +378,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 unwind: UnwindAction::Continue,
                 call_source: CallSource::Misc,
                 fn_span: source_info.span,
+                join: None,
             },
         );
     }
@@ -454,6 +455,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 unwind: UnwindAction::Continue,
                 call_source: CallSource::MatchCmp,
                 fn_span: source_info.span,
+                join: None,
             },
         );
         self.diverge_from(block);

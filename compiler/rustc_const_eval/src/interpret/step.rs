@@ -566,6 +566,7 @@ impl<'tcx, M: Machine<'tcx>> InterpCx<'tcx, M> {
                 unwind,
                 call_source: _,
                 fn_span: _,
+                join: _,
             } => {
                 let old_stack = self.frame_idx();
                 let old_loc = self.frame().loc;

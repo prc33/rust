@@ -56,21 +56,21 @@ type PerLocalVarDebugInfoIndexVec<'tcx, V> =
 /// there lets MIR optimization, coroutine lowering, and MIR inspection use the
 /// typed operation and CFA proof instead of reconstructing a pattern from a
 /// compatibility runtime call. They have no runtime semantics themselves, so
-/// the final lowering for the LLVM-family backends is simply to omit the
-/// statement. We clone only when a body actually contains a marker, leaving
-/// the optimized-MIR query result available for diagnostics and future
-/// proof-gated lowering passes.
+/// the final lowering for the LLVM-family backends is simply to omit marker
+/// statements and clear call descriptors. We clone only when a body actually
+/// contains metadata, leaving the optimized-MIR query result available for
+/// diagnostics and future proof-gated lowering passes.
 fn lower_join_markers<'tcx>(tcx: TyCtxt<'tcx>, mir: &'tcx Body<'tcx>) -> &'tcx Body<'tcx> {
-    let has_markers = mir.basic_blocks.iter().any(|block| {
+    let has_metadata = mir.basic_blocks.iter().any(|block| {
         block.statements.iter().any(|statement| {
             matches!(
                 &statement.kind,
                 StatementKind::Intrinsic(intrinsic)
                     if matches!(intrinsic.as_ref(), NonDivergingIntrinsic::Join(_))
             )
-        })
+        }) || matches!(block.terminator().kind, mir::TerminatorKind::Call { join: Some(_), .. })
     });
-    if !has_markers {
+    if !has_metadata {
         return mir;
     }
 
@@ -87,11 +87,16 @@ fn lower_join_markers<'tcx>(tcx: TyCtxt<'tcx>, mir: &'tcx Body<'tcx>) -> &'tcx B
                 removed += 1;
             }
         }
+        if let mir::TerminatorKind::Call { join, .. } = &mut block.terminator_mut().kind {
+            if join.take().is_some() {
+                removed += 1;
+            }
+        }
     }
     // The side table describes the optimized body and must not be copied into
     // the backend-only view once its executable markers have been consumed.
     lowered.join_info = None;
-    debug!(target: "rustc_join", removed, "lowered join markers at codegen boundary");
+    debug!(target: "rustc_join", removed, "lowered join metadata at codegen boundary");
     tcx.arena.alloc(lowered)
 }
 

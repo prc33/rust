@@ -9,10 +9,12 @@ then applies that work to DataFusion.
 
 Restricted isolated unary lowering produces ordinary caller-owned futures.
 Typed compiler descriptors and MIR summaries record operations, call identities,
-local flow and escapes; the current pushed tip `973c809b84f` adds a typed
-`NonDivergingIntrinsic::Join` carrier and keeps it visible through optimized
-runtime MIR. The marker carries operation kind, endpoint/rule identities, source
-location, and actual receiver/destination/argument operands at known call sites.
+local flow and escapes. The current working IR slice attaches a `JoinCall`
+descriptor directly to the ordinary MIR `Call` terminator, so the call's
+function, arguments, destination and unwind edges remain the sole executable
+operands. Legacy body-boundary markers are operand-free metadata only. The
+descriptor carries operation kind and provisional endpoint/rule identities and
+survives optimized runtime MIR; codegen clears it at its final boundary.
 The current slice also runs `join_cfa_crate_summary` after HIR analysis:
 it snapshots each eligible `mir_built` body before the MIR ownership transfer
 and follows a constructor result through same-body copy/move/borrow flow to a
@@ -55,10 +57,12 @@ executable benchmark drivers. Pair/multi-input compatibility lowering exists.
 These quick baseline samples establish no join performance advantage.
 
 The late-MIR boundary is verified with the stage-1 compiler and native suite:
-`JOIN_CFA_MODE=analyze` and `JOIN_CFA_MODE=optimize` both pass all fixtures and
-UI gates. With `JOIN_MIR_DUMP` enabled, five `runtime-optimized` MIR bodies
-contain `join::Register`/`join::Match`. The LLVM-facing codegen path clones only
-marked bodies, removes those metadata statements and clears the backend-only
+`JOIN_CFA_MODE=off`, `analyze` and `optimize` pass all fixtures and UI gates.
+With `JOIN_MIR_DUMP` enabled in off mode, five `runtime-optimized` MIR bodies
+contain `join::Register`/`join::Match` descriptors on ordinary calls; no
+operand-bearing semantic marker or duplicated `OrdinaryCall` marker appears.
+The LLVM-facing codegen path clones only metadata-bearing bodies, removes
+legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
@@ -69,7 +73,10 @@ Follow [the concrete next-slice specification](docs/joins-next-slice.md), steps
 unjustified storage labels, then authoritative call operations, equal unary
 semantics, bounded instance CFA and one result-channel rewrite. It includes
 exact witnesses, rejection reasons, pass boundaries and verification commands.
-All those gates remain pending. Surviving join descriptors stay through runtime
+The duplicate-visitor and body-local-storage portions of gate 1 are complete;
+the call-carrier portion of gate 2 is partial. Typed group/channel remapping,
+mode-independent unary semantics, proof-consuming result fusion and fixed
+storage remain pending. Surviving join descriptors stay through runtime
 MIR to the LLVM-facing boundary; effectful operations cannot be erased as no-ops.
 
 1. Validate the accepted unary/shared async semantics and equivalent benchmark

@@ -6,7 +6,7 @@
 //! later CFA/MIR work: identities are local `DefId`s and channel signatures
 //! are rustc's resolved types rather than source strings.
 
-use rustc_hir::def_id::LocalDefId;
+use rustc_hir::def_id::{DefId, LocalDefId};
 use rustc_macros::{StableHash, TyDecodable, TyEncodable, TypeFoldable, TypeVisitable};
 use rustc_span::{Span, Symbol};
 
@@ -121,6 +121,26 @@ pub enum JoinOperationKind {
     Yield,
     Return,
     Escape,
+}
+
+/// Metadata attached directly to an ordinary MIR call that the join CFA has
+/// classified as a join operation.
+///
+/// The call already owns the function operand, argument operands and return
+/// destination.  Keeping only the semantic identity here avoids introducing a
+/// second, metadata-only statement which would make ordinary MIR visitors see
+/// every argument twice.  This descriptor is not an executable operation and
+/// is stripped at the backend boundary after MIR optimisations have had a
+/// chance to consume it.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCall {
+    pub kind: JoinOperationKind,
+    /// Cross-crate definition identity for the endpoint/group. Keeping the
+    /// crate number here prevents local index collisions in downstream MIR.
+    pub endpoint_def_id: Option<DefId>,
+    /// Cross-crate definition identity for the selected rule, when known.
+    pub rule_def_id: Option<DefId>,
 }
 
 /// A source-positioned operation in the pre-coroutine MIR view.
@@ -259,8 +279,8 @@ pub enum JoinQueueBound {
 ///
 /// The value is a proof result, not a user annotation. `Generic` means that
 /// the compatibility matcher remains necessary. The fixed representations
-/// are only selected when the corresponding queue/ownership facts are known;
-/// lowering must still validate the proof against the current MIR body.
+/// are reserved for a later interprocedural instance proof; body-local event
+/// counts must never select them.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinLoweringStrategy {

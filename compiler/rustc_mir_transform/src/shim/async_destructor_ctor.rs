@@ -392,6 +392,7 @@ fn build_adrop_for_adrop_shim<'tcx>(
                 unwind: UnwindAction::Continue,
                 call_source: CallSource::Misc,
                 fn_span: span,
+                join: None,
             },
 
             attributes: ThinVec::new(),
@@ -417,6 +418,7 @@ fn build_adrop_for_adrop_shim<'tcx>(
                 unwind: UnwindAction::Continue,
                 call_source: CallSource::Misc,
                 fn_span: span,
+                join: None,
             },
 
             attributes: ThinVec::new(),

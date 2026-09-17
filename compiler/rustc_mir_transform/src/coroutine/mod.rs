@@ -1320,6 +1320,7 @@ impl<'tcx> Visitor<'tcx> for EnsureCoroutineFieldAssignmentsNeverAlias<'_> {
                 unwind: _,
                 call_source: _,
                 fn_span: _,
+                join: _,
             } => {
                 self.check_assigned_place(*destination, |this| {
                     this.visit_operand(func, location);

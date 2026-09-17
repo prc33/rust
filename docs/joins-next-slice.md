@@ -1,7 +1,9 @@
 # Execution specification: authoritative join MIR and first result fusion
 
-Updated 2026-09-17. All steps below are pending. This document is the immediate
-implementation order, superseding conflicting sequencing in earlier IR plans.
+Updated 2026-09-17. Step 1 and the call-carrier portion of step 2 are now
+implemented on the working branch; the remaining steps below are pending.
+This document is the immediate implementation order, superseding conflicting
+sequencing in earlier IR plans.
 The companion library's `docs/async-join-semantics.md` is the language contract;
 its `JOINS-IMPLEMENTATION-HANDOVER.md` retains the longer research programme.
 
@@ -14,19 +16,21 @@ Do not mark this complete for adding metadata, choosing an expansion by mode,
 or retaining a manually selected fused runtime implementation.
 
 Baseline: rust `b967581afa1`, library `56f38dc`. The native suites passed and
-markers survived optimized runtime MIR. This establishes neither correctness
-under every MIR transformation nor compiler-driven fusion. In particular:
+markers survived optimized runtime MIR. Since that baseline, the first IR
+slice has removed duplicate operand visitation, moved call-site identity onto
+the real `Call` terminator, and made the storage strategy conservative. This
+still establishes neither correctness under every MIR transformation nor
+compiler-driven fusion. Remaining limitations are:
 
-- `mir/visit.rs::visit_join_intrinsic` reports a destination Store and visits
-  copied call operands, including Move, before the real call visits them again.
-  Analyses can therefore observe duplicate ownership events and early writes.
-- `select_lowering_strategy` uses a body-local peak to label pair/fixed-slot
-  strategies. A peak within one method is not a bound on a live group instance.
-- Numeric endpoint/rule indices are not sufficient cross-crate identities.
-- `Body::join_info` describes an earlier body and is not a current proof after
-  inlining, local renumbering, CFG rewriting or coroutine transformation.
+- `JoinCall` currently carries endpoint/rule `DefId`s derived from the compact
+  summary; group/channel indices and full typed policy are still to be added,
+  and cross-crate import/remapping is not yet authoritative.
+- `Body::join_info` still describes an earlier body and is not a current proof
+  after inlining, local renumbering, CFG rewriting or coroutine transformation.
 - Isolated unary expansion still depends on CFA mode and exposes a universal
   error wrapper. The existing optimize fixture tests that older behaviour.
+- Shared operation forms remain operand-free legacy metadata; only call-site
+  classification has the new authoritative carrier. No result fusion has run.
 
 This is the owner's explicitly authorized AI-written research fork. No upstream
 review is requested; any upstream proposal would be separately rewritten by hand.
@@ -75,9 +79,10 @@ Do not reintroduce `optimized_mir` scans over all `mir_keys`.
    Invalidate attached proof data before ordinary transformations. Regenerate
    proofs from current executable operations when running the fusion pass.
 
-Gate: visitor regression counts one Move and one return-edge destination write
-per consuming call, including unwind; no claim that a channel has capacity one
-from a unary/pair method shape. Drop counters and unwind fixtures still pass.
+Gate status: passed by the stage1 compiler check and native MIR dump. The
+visitor no longer reports descriptor operands a second time, and method-local
+occupancy cannot select a fixed slot or pair matcher. Drop counters and unwind
+fixtures still pass. The exact cross-crate typed-definition gate remains open.
 
 ## 2. Authoritative operation carrier and typed group definition
 
@@ -142,11 +147,10 @@ consumed them, or explicitly transfer descriptors to the replacement operations.
 Once consumed, ordinary inlining is free to optimize the generated computation.
 An annotation that outlives its associated call cannot authorize a rewrite.
 
-Gate: dump shows resolved group/channel/body identities and actual operands;
-cross-crate fixture does not confuse same-numbered local definitions; all call
-ownership, borrowck, unwind and drop tests pass. Metadata survives optimized MIR
-where its associated operation survives. No duplicate Join intrinsic remains
-on the migrated path.
+Gate status: partial. Optimized MIR now prints the descriptor on the real call,
+with actual call operands and no operand-bearing duplicate marker; codegen
+clears it only at the backend boundary. Cross-crate group/channel typed-index
+remapping and full ownership policy are still open.
 
 ## 3. Establish isolated unary semantics in every mode
 
@@ -403,13 +407,21 @@ this evidence, retaining the larger handover's gates.
 
 ## Completion checklist
 
-- [ ] 1: duplicate effects removed; misleading storage proof labels corrected.
-- [ ] 2: authoritative typed call operations, remapping and ownership gates pass.
+- [x] 1: duplicate effects removed; misleading storage proof labels corrected.
+- [ ] 2: authoritative typed call operations, remapping and ownership gates pass
+      (call carrier is in place; typed group/channel remapping is pending).
 - [ ] 3: isolated unary semantics equal across modes and ordinary async controls.
 - [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons.
 - [ ] 5: a checked certificate drives the actual result-channel MIR rewrite.
 - [ ] 6: negative, drop/unwind, incremental and cross-crate regressions pass.
 - [ ] 7: committed IR, allocation and timing evidence; fork summary updated.
+
+Evidence for this slice: rust stage1 `./x check compiler --stage 1 -j 2`,
+`./x build compiler --stage 1 -j 2`, `./x build library --stage 1 -j 2`, and
+`JOIN_CFA_MODE=off JOIN_CFA_DUMP=... JOIN_MIR_DUMP=... bash
+compiler-tests/run_native.sh` all passed on 2026-09-17. The dump contains
+descriptors such as `join::Match` on ordinary calls and no operand-bearing
+semantic marker.
 
 Commit each passing slice. Continue to the next gate without commissioning a
 separate slow review; do a substantial review after the proof-consuming rewrite.

@@ -995,7 +995,7 @@ impl<'tcx> TerminatorKind<'tcx> {
             Yield { value, resume_arg, .. } => write!(fmt, "{resume_arg:?} = yield({value:?})"),
             Unreachable => write!(fmt, "unreachable"),
             Drop { place, .. } => write!(fmt, "drop({place:?})"),
-            Call { func, args, destination, .. } => {
+            Call { func, args, destination, join, .. } => {
                 write!(fmt, "{destination:?} = ")?;
                 write!(fmt, "{func:?}(")?;
                 for (index, arg) in args.iter().enumerate() {
@@ -1004,7 +1004,17 @@ impl<'tcx> TerminatorKind<'tcx> {
                     }
                     write!(fmt, "{:?}", arg.node)?;
                 }
-                write!(fmt, ")")
+                write!(fmt, ")")?;
+                if let Some(join) = join {
+                    write!(
+                        fmt,
+                        " [join::{:?} endpoint={:?} rule={:?}]",
+                        join.kind,
+                        join.endpoint_def_id,
+                        join.rule_def_id,
+                    )?;
+                }
+                Ok(())
             }
             TailCall { func, args, .. } => {
                 write!(fmt, "tailcall {func:?}(")?;

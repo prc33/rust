@@ -765,6 +765,7 @@ impl<'tcx> Stable<'tcx> for mir::TerminatorKind<'tcx> {
                 unwind,
                 call_source: _,
                 fn_span: _,
+                join: _,
             } => TerminatorKind::Call {
                 func: func.stable(tables, cx),
                 args: args.iter().map(|arg| arg.node.stable(tables, cx)).collect(),

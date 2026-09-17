@@ -17,7 +17,7 @@ use smallvec::SmallVec;
 
 use super::{BasicBlock, Const, Local, UserTypeProjection};
 use crate::mir::coverage::CoverageKind;
-use crate::middle::joins::JoinOperationKind;
+use crate::middle::joins::{JoinCall, JoinOperationKind};
 use crate::ty::adjustment::PointerCoercion;
 use crate::ty::{self, GenericArgsRef, List, Region, Ty, UserTypeAnnotationIndex};
 
@@ -483,22 +483,22 @@ pub enum NonDivergingIntrinsic<'tcx> {
     /// I vaguely remember Ralf saying somewhere that he thought it should not be.
     CopyNonOverlapping(CopyNonOverlapping<'tcx>),
 
-    /// A compiler-owned join semantic operation. This is present from analysis
-    /// MIR through optimized runtime MIR. It is deliberately an intrinsic
-    /// rather than a runtime call: the operation carries typed MIR operands so
-    /// drop/coroutine/MIR optimization passes can inspect the join proof. The
-    /// LLVM/codegen boundary consumes it (without emitting an instruction).
+    /// A compiler-owned join semantic operation retained for body-boundary
+    /// metadata while the dedicated operation terminators are being developed.
+    /// Call-site operations use `TerminatorKind::Call::join` instead, so this
+    /// legacy intrinsic is operand-free and has no executable semantics. The
+    /// LLVM/codegen boundary consumes it without emitting an instruction.
     Join(JoinIntrinsic<'tcx>),
 }
 
-/// Typed operands for one join operation retained through optimized runtime MIR.
+/// Legacy body-boundary metadata for one join operation retained through
+/// optimized runtime MIR.
 ///
-/// `JoinMirOperation` in `middle::joins` is the compact encoded summary. This
-/// form is the executable MIR carrier: it keeps the actual places/operands
-/// and source location available to borrow/drop-aware lowering. A `None`
-/// place is expected for synthetic body-boundary operations such as
-/// `CompleteReplies`; call-site operations carry the receiver, destination,
-/// and argument operands from the original terminator.
+/// `JoinMirOperation` in `middle::joins` is the compact encoded summary. New
+/// call-site operations are carried by `TerminatorKind::Call::join`, which
+/// reuses that terminator's real operands. These fields remain only so old
+/// experimental metadata can be decoded; newly generated instances leave all
+/// operand fields empty and MIR visitors intentionally ignore them.
 #[derive(Clone, TyEncodable, TyDecodable, Debug, PartialEq, StableHash)]
 #[derive(TypeFoldable, TypeVisitable)]
 pub struct JoinIntrinsic<'tcx> {
@@ -835,6 +835,10 @@ pub enum TerminatorKind<'tcx> {
         /// This `Span` is the span of the function, without the dot and receiver
         /// e.g. `foo(a, b)` in `x.foo(a, b)`
         fn_span: Span,
+        /// Compiler-owned join classification for this call, when the join
+        /// CFA has resolved it to a known endpoint operation. The ordinary
+        /// call operands above remain the sole source of MIR uses/defs.
+        join: Option<JoinCall>,
     },
 
     /// Tail call.
@@ -1796,6 +1800,6 @@ mod size_asserts {
     static_assert_size!(PlaceElem<'_>, 24);
     static_assert_size!(Rvalue<'_>, 40);
     static_assert_size!(StatementKind<'_>, 16);
-    static_assert_size!(TerminatorKind<'_>, 80);
+    static_assert_size!(TerminatorKind<'_>, 104);
     // tidy-alphabetical-end
 }

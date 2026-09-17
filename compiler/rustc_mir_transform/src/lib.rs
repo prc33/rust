@@ -308,6 +308,7 @@ fn remap_mir_for_const_eval_select<'tcx>(
                     unwind,
                     call_source: CallSource::Misc,
                     fn_span,
+                    join: None,
                 };
             }
             _ => {}
