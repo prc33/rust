@@ -6,7 +6,7 @@ extending fusion or shared matcher specialisation. It identifies gaps in adapter
 association, scope preservation, instance privacy, and the snapshot fingerprint
 described below. Earlier completion claims here do not establish those gates.
 
-Updated 2026-09-18 at Rust commit `c53d044d913`. Steps 1 and 2's call carrier, the mode-independent unary
+Updated 2026-09-18 at the Rust safety checkpoint after `c53d044d913`. Steps 1 and 2's call carrier, the mode-independent unary
 contract, and the first result-channel forwarding rewrite are implemented on
 the working branch. The review safety gates for adapter identity, scoped
 construction, candidate-instance aggregate escapes, concrete operand checks,
@@ -55,10 +55,11 @@ general compiler-driven fusion. Remaining limitations are:
   call to a compiler-private inline-ready adapter. It requires one constructor,
   one channel, unique local alias flow, one consuming reply move and no known
   competing join edge. It also requires the unscoped constructor identity,
-  rejects endpoint aliases passed to unsupported calls or aggregates, validates
-  the concrete call operands, and records an explicit `fusion_rejection` when
-  the proof is declined. It does not yet remove the explicit `Reply` await or
-  prove all JCAM cancellation/admission conditions.
+  rejects endpoint aliases passed to unsupported calls, projections/casts,
+  returns/yields, ordinary aggregates, indirect calls, or later call-result
+  overwrites, validates the concrete call operands, and records an explicit
+  `fusion_rejection` when the proof is declined. It does not yet remove the
+  explicit `Reply` await or prove all JCAM cancellation/admission conditions.
 
 This is the owner's explicitly authorized AI-written research fork. No upstream
 review is requested; any upstream proposal would be separately rewritten by hand.

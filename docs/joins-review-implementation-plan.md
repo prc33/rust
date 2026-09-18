@@ -30,18 +30,21 @@ for the backend boundary.
 
 ## What is already present
 
-Checkpoint update, 2026-09-17: Gates 1A/1B/1C and 3 have a first conservative
+Checkpoint update, 2026-09-18: Gates 1A/1B/1C and 3 have a first conservative
 vertical slice in the working tree. Generated direct adapters carry explicit
 channel/rule coordinates and the descriptor query checks the one-rule unary
 shape plus exact resolved ABI. Optimize-only fusion rejects scoped constructor
-identity, candidate aliases passed to unsupported calls or ordinary
-aggregates, and stale concrete operands; the body dump records a machine-
-readable refusal. Dynamic rule aliases bind to each rule's cloned endpoint.
+identity, candidate aliases passed to unsupported calls, projections/casts,
+returns/yields, ordinary aggregates, or later call-result overwrites, and stale
+concrete operands; the body dump records a machine-readable refusal. Direct
+local copy/move/borrow flow and the reaction coroutine's own capture are the
+only accepted alias propagation forms. Dynamic rule aliases bind to each rule's
+cloned endpoint.
 Fresh stage-1 off/analyze/optimize native runs pass the same-signature adapter,
 aggregate-capture, cancelled-scope, and sync/async re-emission witnesses.
 These are deliberately conservative fixes, not completion of the full gates:
-complete source patterns, all candidate uses, pass-wide proof invalidation and
-shared semantic baseline remain open.
+complete source patterns, interprocedural candidate proofs, pass-wide proof
+invalidation and shared semantic baseline remain open.
 
 - Restricted isolated unary joins have zero-sized endpoints and caller-owned
   futures with declared outputs in all CFA modes. Preserve this behaviour.
@@ -134,9 +137,14 @@ precisely, disable this rewrite until the next gate is complete.
 
 The current endpoint escape summary is based on the enclosing endpoint type;
 the candidate inner group can have a different type. Ordinary local helper
-calls are not sufficient evidence that its handles remain private. The consumer
-does not currently use the crate-level instance proof. Its aggregate check
-tracks reply aliases, not all aliases of the constructed group.
+calls are not sufficient evidence that its handles remain private. The narrow
+consumer now builds a candidate-alias use set from the actual constructor
+result, rejects unsupported local uses (including projections/casts,
+returns/yields, ordinary aggregates, indirect calls, and call-result
+overwrites), and permits only direct local propagation plus the reaction's own
+coroutine aggregate. This closes the intraprocedural use-domain hole; it does
+not replace the crate-level instance proof or establish interprocedural
+ownership.
 
 Build an explicit candidate-instance use set from the constructor result.
 Account for copies, moves, borrows, projections, captures, storage, returns,

@@ -96,19 +96,24 @@ legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
-At Rust commit `c53d044d913`, the supervisor safety slice is exercised by
+At the Rust safety checkpoint (with the follow-up local-use refinement staged),
+the supervisor safety slice is exercised by
 compiler-owned checks. Direct
 adapters carry explicit source channel/rule coordinates, are accepted only for
 the one-rule unary group shape, and must have the exact resolved channel ABI.
 The MIR consumer rejects scoped constructors, competing/unknown calls, and
-candidate endpoint aliases captured by ordinary aggregates; it rechecks the
-concrete callee, arguments and destination at the rewrite point. Optimize-mode
-summaries record the refusal (`SharedPolicy`, `Escape`, `UnknownOrigin`, etc.)
-instead of silently presenting a missing fusion as success. The native suite
-now includes same-signature channel association, dynamic per-rule re-emission,
-aggregate capture, and cancelled-scope witnesses; fresh off/analyze/optimize
-runs pass all of them. These checks deliberately narrow fusion until complete
-instance/policy proofs exist; they do not claim the broader JCAM certificate.
+candidate endpoint aliases used through projections/casts, returns/yields,
+ordinary aggregates, indirect calls, or later call-result overwrites. Direct
+local copy/move/borrow propagation and the reaction's own coroutine capture are
+the only accepted alias-flow forms; terminal cleanup remains allowed. The
+consumer rechecks the concrete callee, arguments and destination at the rewrite
+point. Optimize-mode summaries record the refusal (`SharedPolicy`, `Escape`,
+`UnknownOrigin`, etc.) instead of silently presenting a missing fusion as
+success. The native suite now includes same-signature channel association,
+dynamic per-rule re-emission, aggregate capture, and cancelled-scope witnesses;
+fresh off/analyze/optimize runs pass all of them. These checks deliberately
+narrow fusion until complete instance/policy proofs exist; they do not claim
+the broader JCAM certificate.
 
 ## Next execution gates
 
@@ -119,7 +124,9 @@ semantics, bounded instance CFA and one result-channel rewrite. It includes
 exact witnesses, rejection reasons, pass boundaries and verification commands.
 The duplicate-visitor and body-local-storage portions of gate 1 are complete;
 the adapter identity, unscoped-policy, candidate-alias, and dynamic-capture
-regressions are now covered. The call-carrier portion of gate 2 is partial:
+regressions are now covered. Candidate alias classification is complete for the
+current intraprocedural domain (including unsupported-use rejection); full
+interprocedural instance proofs remain open. The call-carrier portion of gate 2 is partial:
 freshness is a local structural guard plus concrete operand validation, not a
 pass-wide revision protocol. Mode-independent unary semantics and a narrow
 result-adapter rewrite are complete; typed group/channel remapping, full

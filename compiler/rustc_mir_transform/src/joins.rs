@@ -618,26 +618,135 @@ struct CandidateEndpointUseFacts<'tcx> {
     local_types: Vec<Ty<'tcx>>,
     aliases: FxHashSet<u32>,
     captured: bool,
+    unsupported: bool,
+    allow_alias_flow: bool,
+    constructor_location: (u32, u32),
 }
 
 impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
     fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
-        if let Rvalue::Aggregate(_, operands) = rvalue {
-            let captures_endpoint = operands.iter().any(|operand| {
-                operand
-                    .place()
-                    .is_some_and(|source| self.aliases.contains(&(source.local.index() as u32)))
-            });
-            if captures_endpoint
-                && place
-                    .as_local()
-                    .and_then(|local| self.local_types.get(local.index()))
-                    .is_none_or(|ty| !ty.is_coroutine())
-            {
-                self.captured = true;
+        let destination = place.as_local().map(|local| local.index() as u32);
+        let source = match rvalue {
+            Rvalue::Use(operand, _) => operand.place(),
+            Rvalue::Ref(_, _, source) | Rvalue::Reborrow(_, _, source) => Some(*source),
+            _ => None,
+        };
+        let direct_alias_flow = source.is_some_and(|source| {
+            source.projection.is_empty()
+                && self.aliases.contains(&(source.local.index() as u32))
+                && destination.is_some_and(|destination| self.aliases.contains(&destination))
+        });
+        let aggregate_capture = match rvalue {
+            Rvalue::Aggregate(_, operands) => operands.iter().any(|operand| {
+                operand.place().is_some_and(|source| {
+                    self.aliases.contains(&(source.local.index() as u32))
+                        && source.projection.is_empty()
+                })
+            }),
+            _ => false,
+        };
+        let coroutine_capture = aggregate_capture
+            && destination
+                .and_then(|destination| self.local_types.get(destination as usize))
+                .is_some_and(|ty| ty.is_coroutine());
+        if aggregate_capture && !coroutine_capture {
+            self.captured = true;
+        }
+        // Only a direct local copy/move/borrow, or the reaction's own
+        // coroutine aggregate, is an understood propagation step. Casts,
+        // projections, field stores and arbitrary aggregates are rejected
+        // rather than being mistaken for a private endpoint alias.
+        self.allow_alias_flow = direct_alias_flow || coroutine_capture;
+        self.super_assign(place, rvalue, location);
+        self.allow_alias_flow = false;
+        if source.is_some_and(|source| {
+            self.aliases.contains(&(source.local.index() as u32))
+                && !direct_alias_flow
+                && !coroutine_capture
+        }) {
+            self.unsupported = true;
+        }
+    }
+
+    fn visit_local(&mut self, local: mir::Local, context: mir::visit::PlaceContext, location: Location) {
+        if self.aliases.contains(&(local.index() as u32)) {
+            let allowed = self.allow_alias_flow
+                || context.is_drop()
+                || context.is_storage_marker()
+                || matches!(
+                    context,
+                    mir::visit::PlaceContext::NonUse(_)
+                        | mir::visit::PlaceContext::NonMutatingUse(
+                            mir::visit::NonMutatingUseContext::Inspect
+                                | mir::visit::NonMutatingUseContext::PlaceMention
+                                | mir::visit::NonMutatingUseContext::FakeBorrow
+                        )
+                );
+            if !allowed {
+                self.unsupported = true;
             }
         }
-        self.super_assign(place, rvalue, location);
+        self.super_local(local, context, location);
+    }
+
+    fn visit_terminator(&mut self, terminator: &mir::Terminator<'tcx>, location: Location) {
+        match &terminator.kind {
+            // Call arguments are classified with their resolved join target
+            // below. Skipping the generic visitor here avoids treating the
+            // allowed `&candidate` receiver at the one proven channel call as
+            // an escape; unknown/non-join calls are rejected by that edge
+            // classification instead.
+            TerminatorKind::Call { func, destination, .. } => {
+                if func.const_fn_def().is_none()
+                    && func
+                        .place()
+                        .is_some_and(|place| self.aliases.contains(&(place.local.index() as u32)))
+                {
+                    self.unsupported = true;
+                }
+                let destination_is_alias = self
+                    .aliases
+                    .contains(&(destination.local.index() as u32));
+                let is_constructor_destination = destination.projection.is_empty()
+                    && destination_is_alias
+                    && (location.block.index() as u32, location.statement_index as u32)
+                        == self.constructor_location;
+                // The constructor's own result is the only call result that
+                // may introduce the candidate alias. Any later call that
+                // overwrites an alias is an unknown replacement and must
+                // reject the rewrite; otherwise a channel could be
+                // retargeted after the original endpoint was discarded.
+                if destination_is_alias && !is_constructor_destination {
+                    self.unsupported = true;
+                }
+                return;
+            }
+            TerminatorKind::TailCall { func, .. } => {
+                if func.const_fn_def().is_none()
+                    && func
+                        .place()
+                        .is_some_and(|place| self.aliases.contains(&(place.local.index() as u32)))
+                {
+                    self.unsupported = true;
+                }
+                return;
+            }
+            TerminatorKind::Return => {
+                if self.aliases.contains(&(RETURN_PLACE.index() as u32)) {
+                    self.unsupported = true;
+                }
+            }
+            TerminatorKind::Yield { value, .. } => {
+                if value
+                    .place()
+                    .is_some_and(|place| self.aliases.contains(&(place.local.index() as u32)))
+                {
+                    self.unsupported = true;
+                }
+            }
+            _ => {}
+        }
+        self.super_terminator(terminator, location);
     }
 }
 
@@ -776,9 +885,12 @@ fn try_fuse_private_result<'tcx>(
             local_types: body.local_decls.iter().map(|decl| decl.ty).collect(),
             aliases: candidate_aliases,
             captured: false,
+            unsupported: false,
+            allow_alias_flow: false,
+            constructor_location: (constructor.block, constructor.statement),
         };
         endpoint_uses.visit_body(&*body);
-        endpoint_uses.captured
+        endpoint_uses.captured || endpoint_uses.unsupported
     };
     if endpoint_captured {
         return (None, Some(JoinCfaRejection::Escape));
