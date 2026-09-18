@@ -621,7 +621,7 @@ struct CandidateEndpointUseFacts<'tcx> {
     unsupported: bool,
     allow_alias_flow: bool,
     constructor_location: (u32, u32),
-    reaction_body_def_id: u32,
+    reaction_body_def_id: DefId,
 }
 
 impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
@@ -653,7 +653,7 @@ impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
                     matches!(
                         ty.kind(),
                         ty::Coroutine(def_id, _)
-                            if def_id.index.index() as u32 == self.reaction_body_def_id
+                            if *def_id == self.reaction_body_def_id
                     )
                 });
         if aggregate_capture && !coroutine_capture {
@@ -780,6 +780,7 @@ fn try_fuse_private_result<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &mut Body<'tcx>,
     summary: &JoinCfaSummary,
+    reaction_body_def_id: LocalDefId,
 ) -> (Option<JoinFusionFact>, Option<JoinCfaRejection>) {
     if tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Optimize
         || summary.role != JoinBodyRole::ReactionBody
@@ -895,7 +896,7 @@ fn try_fuse_private_result<'tcx>(
             unsupported: false,
             allow_alias_flow: false,
             constructor_location: (constructor.block, constructor.statement),
-            reaction_body_def_id: summary.body_def_id,
+            reaction_body_def_id: reaction_body_def_id.to_def_id(),
         };
         endpoint_uses.visit_body(&*body);
         endpoint_uses.captured || endpoint_uses.unsupported
@@ -2678,7 +2679,8 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
-        let (fusion, fusion_rejection) = try_fuse_private_result(tcx, body, &summary);
+        let (fusion, fusion_rejection) =
+            try_fuse_private_result(tcx, body, &summary, local_def_id);
         let mut summary = summary;
         summary.fusion = fusion;
         summary.fusion_rejection = fusion_rejection;
