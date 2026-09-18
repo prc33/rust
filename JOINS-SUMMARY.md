@@ -7,7 +7,36 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
-### Current full-lifecycle forwarding evidence — September 18
+### Reply ownership proof tightened — September 18
+
+Fusion now requires an executable MIR move path into rustc's compiler-generated
+`.await`, replacing the first-move heuristic. Two named local aliases still
+fuse; nine unsupported-use callers retain public channel calls, including
+helper consumption, borrowing, dropping, returning, conditional consumption,
+and explicit `IntoFuture::into_future`. All three CFA-mode native suites pass
+with rebuilt compiler and standard library. See [proof details and verification](docs/joins-reply-consumer-proof.md).
+This reuses ordinary coroutine lowering; it does not add a joins polling state
+machine or complete general shared-reaction analysis.
+
+The [fresh lifecycle run](docs/joins-forwarding-reply-proof-20260918/summary.md)
+after this proof change used 30 randomized blocks of one million operations:
+
+| Case (ns/op) | CFA off | Analyze | Optimize |
+| --- | ---: | ---: | ---: |
+| Direct function | 1.54 | 1.61 | 1.61 |
+| Ordinary async | 1.60 | 1.69 | 1.75 |
+| Isolated unary join | 1.50 | 1.49 | 1.48 |
+| Private result forwarding | 541.99 | 550.21 | 97.01 |
+
+Forwarding retains a 5.59× ratio-of-medians improvement; the paired
+optimize/off ratio is 0.184 (bootstrap 95% CI [0.179, 0.191]). Allocation
+counts remain 11/11/2. Absolute timings moved versus the preceding run;
+this supports preservation of the benefit, not an additional speedup from
+the proof change. The driver again verified one optimize rewrite and zero
+off/analyze rewrites. Raw samples, provenance and a standalone HTML report
+are committed alongside the new summary.
+
+### Full-lifecycle forwarding evidence — September 18
 
 Compiler `2112e3e7052`, runtime `2626909`: the result adapter now preserves
 synchronous trampoline scheduling. A reproduced nested-poll miscompile is
@@ -36,7 +65,8 @@ The remaining optimized forwarding cost is still about 60× ordinary async.
 The group constructor survives; allocation count alone does not attribute the
 entire remaining runtime cost. The benchmark asserts one rewritten forwarding
 call in optimize and zero in off/analyze before timing. Full shared fusion,
-scope policy and reply-consumer proofs remain open.
+scope policy and general reply-consumer proofs remain open; the narrow
+immediate-await consumer proof is now implemented as described above.
 
 Reproduce with `python3 ../joins-library/scripts/run_compiler_forwarding.py
 /tmp/NEW-OUTPUT --iterations 1000000 --samples 30` (use a fresh output path).

@@ -1,5 +1,10 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+Latest immediate-await proof and all-mode native gates passed. The follow-up
+[lifecycle run](joins-forwarding-reply-proof-20260918/summary.md) retains the
+benefit (541.99/550.21/97.01 ns/op off/analyze/optimize, 11/11/2 allocations).
+Next is item 2 below: safe constructor elimination, not widening eligibility.
+
 September 18 measured follow-up: the guarded private forwarding path is now
 472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and
 drop (30 randomized blocks). Allocation probes count 11/11/2 calls per op.
@@ -7,8 +12,11 @@ See [the committed raw evidence](joins-forwarding-20260918/summary.md) and
 [the reproduced/fixed scheduling regression](joins-reentrancy-evidence.md).
 Prioritize the following bounded slice before expanding the eligible domain:
 
-1. Finish the explicit reply-consumer proof and its negative witnesses; an
-   initial local move alone must not certify an eventual await.
+1. Completed the narrow immediate-await reply-consumer proof and negative
+   witnesses. See [proof and gates](joins-reply-consumer-proof.md). Sequential
+   moves must lead to rustc's await desugaring; helpers, borrowing, storage,
+   returns, drops, branches and explicit user-written `into_future` refuse.
+   General interprocedural reply-consumer analysis remains open.
 2. Preserve the scheduling guard in any constructor elimination. The existing
    adapter needs a real endpoint on its nested-dispatch fallback. Hoisting or
    sinking construction requires a proof that admission, drop and panic
@@ -75,7 +83,7 @@ general compiler-driven fusion. Remaining limitations are:
   operand-free compatibility metadata.
 - A narrow optimize-only consumer now retargets one proven monomorphic result
   call to a compiler-private inline-ready adapter. It requires one constructor,
-  one channel, unique local alias flow, one consuming reply move and no known
+  one channel, unique local alias flow, a verified immediate-await reply path and no known
   competing join edge. It also requires the unscoped constructor identity,
   rejects endpoint aliases passed to unsupported calls, projections/casts,
   returns/yields, ordinary aggregates, indirect calls, or later call-result

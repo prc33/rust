@@ -30,6 +30,14 @@ for the backend boundary.
 
 ## What is already present
 
+September 18 reply follow-up: the first-move approximation is replaced by an
+executable MIR walk to rustc's own await boundary. Three newly added negative
+cases were incorrectly accepted by the previous proof; the expanded nine-case
+negative fixture now retains all public channel calls. The positive case
+supports two named move aliases. Stage-1 native gates pass off/analyze/optimize.
+See [the precise proof domain](joins-reply-consumer-proof.md). This closes that
+local proof gap, not the full shared execution or instance-privacy gates.
+
 Checkpoint update, 2026-09-18 at Rust commit `8398cbf0782`: Gates 1A/1B/1C
 and 3 have a first conservative vertical slice. Generated direct adapters carry explicit
 channel/rule coordinates and the descriptor query checks the one-rule unary

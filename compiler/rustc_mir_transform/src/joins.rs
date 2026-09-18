@@ -589,24 +589,69 @@ fn alias_closure(flows: &[JoinValueFlow], source: u32) -> FxHashSet<u32> {
     aliases
 }
 
-struct AggregateUseFacts {
-    aliases: FxHashSet<u32>,
-    captured: bool,
-}
-
-impl<'tcx> Visitor<'tcx> for AggregateUseFacts {
-    fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
-        if let Rvalue::Aggregate(_, operands) = rvalue {
-            if operands.iter().any(|operand| {
-                operand
-                    .place()
-                    .is_some_and(|place| self.aliases.contains(&(place.local.index() as u32)))
-            }) {
-                self.captured = true;
+/// Prove the reply is transferred directly into Rust's own `.await` lowering.
+/// Follow executable moves in order, not just a whole-body alias set. Before
+/// the await boundary allow only moves and non-executable bookkeeping. Calls,
+/// borrows, projections, stores, branches, drops and returns refuse the proof.
+/// After the boundary, polling, suspension and drop remain owned by rustc's
+/// ordinary coroutine machinery; no join-specific poll loop is reconstructed.
+fn reply_has_immediate_await<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    channel: &JoinCallEdge,
+) -> bool {
+    let start = mir::BasicBlock::from_usize(channel.block as usize);
+    let TerminatorKind::Call { destination, target: Some(mut block), .. } =
+        body.basic_blocks[start].terminator().kind
+    else {
+        return false;
+    };
+    let Some(mut reply) = destination.as_local() else { return false };
+    let reply_ty = body.local_decls[reply].ty;
+    let mut visited = FxHashSet::default();
+    while visited.insert(block) {
+        let data = &body.basic_blocks[block];
+        for statement in &data.statements {
+            match &statement.kind {
+                StatementKind::Assign(assignment) => {
+                    let (destination, value) = &**assignment;
+                    let Rvalue::Use(Operand::Move(source), _) = value else { return false };
+                    let Some(next) = destination.as_local() else { return false };
+                    if source.as_local() != Some(reply)
+                        || next == RETURN_PLACE
+                        || body.local_decls[next].ty != reply_ty
+                    {
+                        return false;
+                    }
+                    reply = next;
+                }
+                StatementKind::StorageLive(local) | StatementKind::StorageDead(local)
+                    if *local != reply => {}
+                StatementKind::FakeRead(_)
+                | StatementKind::PlaceMention(_)
+                | StatementKind::AscribeUserType(..)
+                | StatementKind::Nop => {}
+                _ => return false,
             }
         }
-        self.super_rvalue(rvalue, location);
+        let terminator = data.terminator();
+        match &terminator.kind {
+            TerminatorKind::Goto { target } => block = *target,
+            TerminatorKind::Call { func, args, destination, target: Some(_), .. } => {
+                return terminator.source_info.span.is_desugaring(rustc_span::DesugaringKind::Await)
+                    && func.const_fn_def().is_some_and(|(callee, _)| {
+                        Some(callee) == tcx.lang_items().into_future_fn()
+                    })
+                    && args.len() == 1
+                    && matches!(&args[0].node, Operand::Move(place) if place.as_local() == Some(reply))
+                    && destination
+                        .as_local()
+                        .is_some_and(|local| body.local_decls[local].ty == reply_ty);
+            }
+            _ => return false,
+        }
     }
+    false
 }
 
 /// Track whether a proven candidate endpoint is moved into an aggregate that
@@ -918,43 +963,7 @@ fn try_fuse_private_result<'tcx>(
         return (None, Some(JoinCfaRejection::RecursiveOrCyclic));
     }
 
-    // The reply itself must have one consuming move into the same concrete
-    // `Reply<T>` type.  This is the first-use approximation of an explicit
-    // `.await`: copies, borrows, aggregate storage and direct calls all reject
-    // the rewrite rather than risking a changed observation or drop order.
-    let Some(reply_local) = channel.destination_local else {
-        return (None, Some(JoinCfaRejection::UnsupportedUse));
-    };
-    let reply_flows = summary
-        .value_flows
-        .iter()
-        .filter(|flow| flow.source == Some(reply_local))
-        .collect::<Vec<_>>();
-    if reply_flows.len() != 1 || reply_flows[0].kind != JoinValueFlowKind::Move {
-        return (None, Some(JoinCfaRejection::UnsupportedUse));
-    }
-    let mut aggregate_uses = AggregateUseFacts {
-        aliases: alias_closure(&summary.value_flows, reply_local),
-        captured: false,
-    };
-    aggregate_uses.visit_body(body);
-    if aggregate_uses.captured {
-        return (None, Some(JoinCfaRejection::Escape));
-    }
-    let reply_destination = mir::Local::from_usize(reply_flows[0].destination as usize);
-    let reply_source = mir::Local::from_usize(reply_local as usize);
-    if body
-        .local_decls
-        .get(reply_destination)
-        .zip(body.local_decls.get(reply_source))
-        .is_none_or(|(destination, source)| destination.ty != source.ty)
-    {
-        return (None, Some(JoinCfaRejection::UnsupportedUse));
-    }
-    if summary.call_edges.iter().any(|edge| {
-        (edge.block != channel.block || edge.statement != channel.statement)
-            && edge.argument_locals.iter().any(|local| *local == Some(reply_local))
-    }) {
+    if !reply_has_immediate_await(tcx, body, channel) {
         return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
 

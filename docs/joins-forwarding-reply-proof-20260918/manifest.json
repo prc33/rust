@@ -1,0 +1,18 @@
+{
+  "rust_revision": "9d4b4ee731fc198c1e57a4470ced4171bca7d3a9",
+  "rust_diff_sha256": "5eb88a251fdfad8c824d9939636d4b05e8c6c40404af4de5dbaf7d1632ab0101",
+  "library_revision": "bd0e116d9ccafc264b818bd8b66b6e808da4025b",
+  "source_sha256": "7cdcfd1cb7201ad2914b1b74644c6105e00b22e29326b613b5506b67bd6404fa",
+  "runtime_sha256": "41ee6d13bdb32548cd4fda497ede1d79a1cb19679cc3e33d3d99bc9bc27d76f2",
+  "compiler_version": "rustc 1.100.0-dev\nbinary: rustc\ncommit-hash: unknown\ncommit-date: unknown\nhost: x86_64-unknown-linux-gnu\nrelease: 1.100.0-dev\nLLVM version: 23.1.1\n",
+  "compiler_sha256": "51d6d67b7977e72333d93b27afd59cdfe7c0bfc3db11253d8eb6dfbcf2db0c21",
+  "compiler_driver_sha256": {
+    "librustc_driver-d6c0352f445722b2.so": "5027ca573355f9786dcbcd444489afa6f2f3ff213fa89a2e606e07eb1aa4c491"
+  },
+  "iterations": 1000000,
+  "samples": 30,
+  "warmups": 3,
+  "order_seed": 20260918,
+  "flags": "-O -Ccodegen-units=1 -Clto=off",
+  "scope": "standalone ready futures; construction, polling, and destruction included; no executor/thread handoff"
+}
