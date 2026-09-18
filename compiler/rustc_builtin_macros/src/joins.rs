@@ -815,8 +815,17 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
             let unpack = pattern_unpack(&rule.patterns[0], binding);
             let expression = reply_expression(&replies, channel)?;
             let reaction = reaction_result_body("", &prefix, expression, output_type, false);
+            let fallback_bindings = channel.arguments.iter().enumerate()
+                .map(|(index, _)| format!("__join_fallback_{index}"))
+                .collect::<Vec<_>>();
+            let fallback_pattern = match fallback_bindings.as_slice() {
+                [] => "()".to_string(),
+                [binding] => binding.clone(),
+                bindings => format!("({})", bindings.join(", ")),
+            };
+            let fallback_args = fallback_bindings.join(", ");
             direct_method_definitions.push(format!(
-                "    #[doc(hidden)]\n    #[join_direct_adapter(channel = {channel_index}, rule = {rule_index})]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        let {binding}: {input_type} = {value};\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n    }}",
+                "    #[doc(hidden)]\n    #[join_direct_adapter(channel = {channel_index}, rule = {rule_index})]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        ::joins_runtime::__join_sync_inline({value}, |{binding}: {input_type}| {{\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n        }}, |{fallback_pattern}| self.{name}({fallback_args}))\n    }}",
                 name = channel.name.name,
                 channel_index = resolved[0].0,
                 rule_index = rule_index,

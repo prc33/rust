@@ -77,11 +77,19 @@ The LLVM probe at opt-level 3, one codegen unit, LTO off emits 14,934 versus
 occurrences for off versus optimize. These are module-wide static counts, not
 dynamic execution counts. See [LLVM boundary and evidence](docs/optimisations-vs-llvm.md).
 
-The standalone `join-benchmarks` controls ran 1,000 iterations, two warmups and
-five samples: mpsc 241 ns/op, work/resource 1,169 ns/op, rendezvous 19,672 ns/op,
-Tokio request/reply 392 ns/op. Join snippets still need protocol validation and
-executable benchmark drivers. Pair/multi-input compatibility lowering exists.
-These quick baseline samples establish no join performance advantage.
+The standalone `join-benchmarks` checkout also contains a later full comparison
+at `results/trampoline-pump-20260916T195000Z`: 30 randomized sample blocks,
+5,000 iterations and five warmups. The prior summary incorrectly described
+only its earlier baseline run. Historical optimize/native median ratios include
+MPMC 0.95, barrier 1.08, thread join 1.06, MPSC 9.42, mutex/counter 32.2 and
+completion 211. These predate the current compiler changes. Rendezvous crosses
+different execution boundaries; the timed RWLock row is an admission probe;
+the historical async optimize gain changed executor placement and is not
+general CFA evidence. See the benchmark checkout's `PROTOCOL-MATRIX.md`.
+The HTML renderer has been corrected to pair each operation with its own
+baseline samples; previously its paired intervals reused the last operation's
+baseline. Raw measurements were unaffected. The latest historical report was
+regenerated and a regression test added in `join-benchmarks/scripts`.
 
 The late-MIR boundary is verified with the stage-1 compiler and native suite:
 `JOIN_CFA_MODE=off`, `analyze` and `optimize` pass all fixtures and UI gates.
@@ -124,9 +132,9 @@ semantics, bounded instance CFA and one result-channel rewrite. It includes
 exact witnesses, rejection reasons, pass boundaries and verification commands.
 The duplicate-visitor and body-local-storage portions of gate 1 are complete;
 the adapter identity, unscoped-policy, candidate-alias, and dynamic-capture
-regressions are now covered. Candidate alias classification is complete for the
-current intraprocedural domain (including unsupported-use rejection); full
-interprocedural instance proofs remain open. The call-carrier portion of gate 2 is partial:
+regressions are now covered. Candidate alias classification rejects unsupported
+local uses; full reply-consumer and interprocedural instance proofs remain
+open. The call-carrier portion of gate 2 is partial:
 freshness is a local structural guard plus concrete operand validation, not a
 pass-wide revision protocol. Mode-independent unary semantics and a narrow
 result-adapter rewrite are complete; typed group/channel remapping, full

@@ -129,6 +129,14 @@ Audit the synchronous trampoline and reentrancy behaviour too. Reject situations
 where the baseline queues execution but the adapter executes immediately unless
 equivalence is established.
 
+September 18 follow-up: the nested-poll counterexample was reproduced (off
+passes, optimize fails). Generated adapters now preserve the dispatch context
+and use the original channel path when the synchronous trampoline is already
+active. See [the regression and scheduling contract](joins-reentrancy-evidence.md).
+This is a guarded runtime scheduling boundary, not a static proof that all
+callers execute outside the trampoline. The full gate remains open for the
+other policy and reply-consumer cases listed here.
+
 Completion: MIR confirms rejection of unsupported policies and behaviour matches
 across all modes. If the supported domain cannot yet be stated and enforced
 precisely, disable this rewrite until the next gate is complete.
