@@ -1300,7 +1300,7 @@ pub enum AttributeKind {
     /// The source channel/rule coordinates are part of the marker so a
     /// descriptor query cannot accidentally associate two same-typed channels
     /// with the first adapter found in an impl.
-    RustcJoinDirectAdapter { channel: u32, rule: u32 },
+    RustcJoinDirectAdapter { channel: u32, rule: u32, constructor: bool },
 
     /// Represents the compiler-generated join endpoint contract.
     ///

@@ -71,10 +71,10 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                 let mut adapters = impl_.items.iter().filter_map(|item_id| {
                     let item = tcx.hir_impl_item(*item_id);
                     let method_def_id = item.owner_id.def_id;
-                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter { channel, rule } =>
-                        (*channel, *rule))
-                        .filter(|(channel, _)| *channel == index as u32)
-                        .map(|(_, rule)| (method_def_id, rule))
+                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter { channel, rule, constructor } =>
+                        (*channel, *rule, *constructor))
+                        .filter(|(channel, _, constructor)| *channel == index as u32 && !constructor)
+                        .map(|(_, rule, _)| (method_def_id, rule))
                 });
                 let direct_method_def_id = match (adapters.next(), adapters.next()) {
                     (Some((adapter_def_id, rule)), None)
@@ -97,9 +97,32 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                     }
                     _ => None,
                 };
+                let mut private_constructors = impl_.items.iter().filter_map(|item_id| {
+                    let method_def_id = tcx.hir_impl_item(*item_id).owner_id.def_id;
+                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter { channel, rule, constructor } =>
+                        (*channel, *rule, *constructor))
+                        .filter(|(channel, rule, constructor)|
+                            *channel == index as u32 && *rule == 0 && *constructor)
+                        .map(|_| method_def_id)
+                });
+                let private_constructor_def_id = match (
+                    direct_method_def_id,
+                    constructor_def_id,
+                    private_constructors.next(),
+                    private_constructors.next(),
+                ) {
+                    (Some(_), Some(original), Some(private), None)
+                        if tcx.erase_and_anonymize_regions(
+                            tcx.fn_sig(original).instantiate_identity(),
+                        ) == tcx.erase_and_anonymize_regions(
+                            tcx.fn_sig(private).instantiate_identity(),
+                        ) => Some(private),
+                    _ => None,
+                };
                 JoinChannel {
                     method_def_id: channel_method_def_id,
                     direct_method_def_id,
+                    private_constructor_def_id,
                     index: index as u32,
                     name,
                     signature: tcx

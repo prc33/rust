@@ -812,6 +812,34 @@ fn is_unscoped_constructor<'tcx>(tcx: TyCtxt<'tcx>, edge: &JoinCallEdge) -> bool
     })
 }
 
+/// Ephemeral representation-selection capability. Holding the exclusive body
+/// borrow prevents another pass from invalidating either validated call site
+/// between proof construction and application. Never store this in join_info:
+/// the serializable JoinFusionFact is an audit record, not this capability.
+struct PrivateInstancePlan<'body, 'tcx> {
+    body: &'body mut Body<'tcx>,
+    channel: (Location, DefId),
+    constructor: Option<(Location, DefId)>,
+    fact: JoinFusionFact,
+}
+
+impl<'tcx> PrivateInstancePlan<'_, 'tcx> {
+    fn apply(self, tcx: TyCtxt<'tcx>) -> JoinFusionFact {
+        // No fallible proof checks may follow the first mutation. Both sites
+        // and ABIs were checked before the exclusive capability was created.
+        for (location, target) in self.constructor.into_iter().chain([self.channel]) {
+            let data = &mut self.body.basic_blocks_mut()[location.block];
+            assert_eq!(location.statement_index, data.statements.len());
+            let terminator = data.terminator_mut();
+            let TerminatorKind::Call { func, .. } = &mut terminator.kind else {
+                unreachable!("validated private-instance call changed under exclusive borrow");
+            };
+            *func = Operand::function_handle(tcx, target, &[], terminator.source_info.span);
+        }
+        self.fact
+    }
+}
+
 /// Proof-gated result forwarding for a private, synchronous unary channel.
 ///
 /// The generated adapter has the same `&self`/payload/`Reply<T>` ABI as the
@@ -982,16 +1010,54 @@ fn try_fuse_private_result<'tcx>(
     if tcx.generics_of(direct_def_id).count() != 0 {
         return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
+    // Representation selection is a paired rewrite. The empty endpoint is
+    // valid only when its sole channel use is retargeted to the guarded
+    // adapter. Validate both calls before mutating either of them.
+    let definition = tcx.join_definitions(()).endpoints.iter().find(|endpoint| {
+        endpoint.endpoint_def_id.map(|id| id.index() as u32) == constructor.endpoint_def_id
+    });
+    let Some(definition) = definition else {
+        return (None, Some(JoinCfaRejection::UnknownOrigin));
+    };
+    if definition.endpoint_def_id.is_some_and(|id| tcx.adt_def(id).has_dtor(tcx)) {
+        // A user destructor may observe the endpoint's representation. It is
+        // not sufficient that the only channel invocation is private.
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
+    }
+    let private_constructor = definition.channels.iter()
+        .find(|candidate| candidate.method_def_id.index() as u32 == channel_callee)
+        .and_then(|candidate| candidate.private_constructor_def_id);
+    if let Some(private) = private_constructor {
+        if tcx.generics_of(private).count() != 0 {
+            return (None, Some(JoinCfaRejection::UnsupportedUse));
+        }
+        let data = &body.basic_blocks[constructor_block];
+        let TerminatorKind::Call { func, args, destination, target: Some(_), .. } =
+            &data.terminator().kind
+        else {
+            return (None, Some(JoinCfaRejection::StaleProof));
+        };
+        if constructor.statement as usize != data.statements.len()
+            || !args.is_empty()
+            || destination.as_local().map(|local| local.index() as u32)
+                != constructor.destination_local
+            || func.const_fn_def().is_none_or(|(callee, args)| {
+                callee.as_local() != definition.constructor_def_id || !args.is_empty()
+            })
+        {
+            return (None, Some(JoinCfaRejection::StaleProof));
+        }
+    }
     let block = mir::BasicBlock::from_usize(channel.block as usize);
     let statement = channel.statement as usize;
-    let Some(block_data) = body.basic_blocks_mut().get_mut(block) else {
+    let Some(block_data) = body.basic_blocks.get(block) else {
         return (None, Some(JoinCfaRejection::StaleProof));
     };
     if statement != block_data.statements.len() {
         return (None, Some(JoinCfaRejection::StaleProof));
     }
-    let terminator = block_data.terminator_mut();
-    let TerminatorKind::Call { func, args, destination, .. } = &mut terminator.kind else {
+    let terminator = block_data.terminator();
+    let TerminatorKind::Call { func, args, destination, .. } = &terminator.kind else {
         return (None, Some(JoinCfaRejection::StaleProof));
     };
     // Check the concrete executable operands again at the consumption point.
@@ -1012,19 +1078,25 @@ fn try_fuse_private_result<'tcx>(
     {
         return (None, Some(JoinCfaRejection::StaleProof));
     }
-    *func = Operand::function_handle(tcx, direct_def_id, &[], terminator.source_info.span);
-    (
-        Some(JoinFusionFact {
+    let plan = PrivateInstancePlan {
+        body,
+        channel: (Location { block, statement_index: statement }, direct_def_id),
+        constructor: private_constructor.map(|id| (
+            Location { block: constructor_block, statement_index: constructor.statement as usize },
+            id.to_def_id(),
+        )),
+        fact: JoinFusionFact {
             constructor_block: constructor.block,
             constructor_statement: constructor.statement,
             channel_block: channel.block,
             channel_statement: channel.statement,
             channel_method_def_id: channel_callee,
             direct_method_def_id: direct_method,
+            private_constructor_def_id: private_constructor.map(|id| id.index() as u32),
             rewritten: true,
-        }),
-        None,
-    )
+        },
+    };
+    (Some(plan.apply(tcx)), None)
 }
 
 fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
@@ -2287,13 +2359,14 @@ fn dump_summary(
         || "null".to_string(),
         |fact| {
             format!(
-                "{{\"constructor_block\":{},\"constructor_statement\":{},\"channel_block\":{},\"channel_statement\":{},\"channel_method\":{},\"direct_method\":{},\"rewritten\":{}}}",
+                "{{\"constructor_block\":{},\"constructor_statement\":{},\"channel_block\":{},\"channel_statement\":{},\"channel_method\":{},\"direct_method\":{},\"private_constructor\":{},\"rewritten\":{}}}",
                 fact.constructor_block,
                 fact.constructor_statement,
                 fact.channel_block,
                 fact.channel_statement,
                 fact.channel_method_def_id,
                 fact.direct_method_def_id,
+                fact.private_constructor_def_id.map_or_else(|| "null".to_string(), |id| id.to_string()),
                 fact.rewritten,
             )
         },

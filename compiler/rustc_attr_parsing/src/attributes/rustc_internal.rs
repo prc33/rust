@@ -146,12 +146,13 @@ impl SingleAttributeParser for RustcJoinDirectAdapterParser {
         Allow(Target::Method(MethodKind::Inherent)),
     ]);
     const STABILITY: AttributeStability = unstable!(joins);
-    const TEMPLATE: AttributeTemplate = template!(List: &["channel = N, rule = N"]);
+    const TEMPLATE: AttributeTemplate = template!(List: &["channel = N, rule = N, constructor = 0|1"]);
 
     fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
         let list = cx.expect_list(args, cx.attr_span)?;
         let mut channel = None;
         let mut rule = None;
+        let mut constructor = None;
         let mut errored = false;
 
         for item in list.mixed() {
@@ -162,10 +163,11 @@ impl SingleAttributeParser for RustcJoinDirectAdapterParser {
             let slot = match ident.name {
                 sym::channel => &mut channel,
                 sym::rule => &mut rule,
+                sym::constructor => &mut constructor,
                 _ => {
                     cx.adcx().expected_specific_argument(
                         ident.span,
-                        &[sym::channel, sym::rule],
+                        &[sym::channel, sym::rule, sym::constructor],
                     );
                     errored = true;
                     continue;
@@ -182,7 +184,11 @@ impl SingleAttributeParser for RustcJoinDirectAdapterParser {
             cx.adcx().expected_specific_argument(attr_span, &[sym::channel, sym::rule]);
             return None;
         };
-        Some(AttributeKind::RustcJoinDirectAdapter { channel, rule })
+        Some(AttributeKind::RustcJoinDirectAdapter {
+            channel,
+            rule,
+            constructor: constructor == Some(1),
+        })
     }
 }
 

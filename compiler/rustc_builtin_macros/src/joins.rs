@@ -757,18 +757,9 @@ fn reaction_value_body(aliases: &str, prefix: &str, value: &str, is_async: bool)
 
 fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> {
     let dispatch_bounds = endpoint_dispatch_bounds(definition);
-    let mut method_definitions = Vec::with_capacity(definition.channels.len());
-    for (index, channel) in definition.channels.iter().enumerate() {
-        method_definitions.push(dynamic_channel_method(
-            &visibility_prefix(&definition.visibility),
-            index,
-            channel,
-            &dispatch_bounds,
-        ));
-    }
-
     let mut rule_definitions = Vec::with_capacity(definition.rules.len());
     let mut direct_method_definitions = Vec::new();
+    let mut private_constructor = String::new();
     for (rule_index, rule) in definition.rules.iter().enumerate() {
         let resolved = resolve_rule(definition, rule, rule_index)?;
         // Each rule owns a distinct endpoint clone below. Generate aliases
@@ -824,8 +815,12 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
                 bindings => format!("({})", bindings.join(", ")),
             };
             let fallback_args = fallback_bindings.join(", ");
+            private_constructor = format!(
+                "#[doc(hidden)]\n    #[join_direct_adapter(channel = {}, rule = {rule_index}, constructor = 1)]\n    fn __join_private_new() -> Self {{ Self {{ matcher: None }} }}",
+                resolved[0].0,
+            );
             direct_method_definitions.push(format!(
-                "    #[doc(hidden)]\n    #[join_direct_adapter(channel = {channel_index}, rule = {rule_index})]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        ::joins_runtime::__join_sync_inline({value}, |{binding}: {input_type}| {{\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n        }}, |{fallback_pattern}| self.{name}({fallback_args}))\n    }}",
+                "    #[doc(hidden)]\n    #[join_direct_adapter(channel = {channel_index}, rule = {rule_index})]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        ::joins_runtime::__join_sync_inline({value}, |{binding}: {input_type}| {{\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n        }}, |{fallback_pattern}| {{\n            if self.matcher.is_some() {{ self.{name}({fallback_args}) }}\n            else {{ Self::new().{name}({fallback_args}) }}\n        }})\n    }}",
                 name = channel.name.name,
                 channel_index = resolved[0].0,
                 rule_index = rule_index,
@@ -844,13 +839,18 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         // this is required when a reaction re-emits state (for example a
         // reusable lock or once-cell protocol) and multiple rules share the
         // same dynamic matcher.
+        let matcher = if private_constructor.is_empty() {
+            "self.matcher"
+        } else {
+            "self.matcher.as_ref().expect(\"private join used without its proven adapter\")"
+        };
         let dispatch = if rule.is_async {
             format!(
-                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; self.matcher.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; {matcher}.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
             )
         } else {
             format!(
-                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; {matcher}.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
             )
         };
         rule_definitions.push(format!("if {dispatch} {{ return true; }}"));
@@ -861,13 +861,32 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let visibility = visibility_prefix(&definition.visibility);
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
-    let methods = method_definitions.join("\n\n    ");
+    // Only definitions with a private adapter need the alternative empty
+    // representation. Public construction is unchanged (Some(real matcher));
+    // the private constructor is selected only by an instance proof in MIR.
+    let private_storage = !private_constructor.is_empty();
+    let matcher = if private_storage {
+        "self.matcher.as_ref().expect(\"private join used without its proven adapter\")"
+    } else {
+        "self.matcher"
+    };
+    let methods = definition.channels.iter().enumerate().map(|(index, channel)| {
+        dynamic_channel_method(&visibility, index, channel, &dispatch_bounds, matcher)
+    }).collect::<Vec<_>>().join("\n\n    ");
+    let matcher_type = if private_storage {
+        "::core::option::Option<::joins_runtime::DynamicMatcher>"
+    } else {
+        "::joins_runtime::DynamicMatcher"
+    };
+    let new_matcher = format!("::joins_runtime::DynamicMatcher::new({})", definition.channels.len());
+    let scoped_matcher = format!("::joins_runtime::DynamicMatcher::new_in_scope(scope, {})", definition.channels.len());
+    let wrap = |expression: String| if private_storage { format!("Some({expression})") } else { expression };
     let direct_methods = direct_method_definitions.join("\n\n");
     let rules = rule_definitions.join("\n        ");
     let endpoint_attribute = join_endpoint_attribute(definition, false, u32::MAX);
     Ok(format!(
         r#"{struct_attributes}{visibility}struct {struct_name} {{
-    matcher: ::joins_runtime::DynamicMatcher,
+    matcher: {matcher_type},
 }}
 
 impl {impl_generics}Clone for {impl_name} {{
@@ -880,14 +899,16 @@ impl {impl_generics}Clone for {impl_name} {{
 impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
-        Self {{ matcher: ::joins_runtime::DynamicMatcher::new({channel_count}) }}
+        Self {{ matcher: {new_matcher} }}
     }}
 
     {visibility}fn new_in_scope(scope: ::joins_runtime::QueryScope) -> Self {{
-        Self {{ matcher: ::joins_runtime::DynamicMatcher::new_in_scope(scope, {channel_count}) }}
+        Self {{ matcher: {scoped_matcher} }}
     }}
 
     {methods}
+
+    {private_constructor}
 
 {direct_methods}
 
@@ -905,7 +926,10 @@ impl {impl_generics}{impl_name} {{
         struct_name = struct_name(definition),
         impl_generics = impl_generics(definition),
         impl_name = impl_name(definition),
-        channel_count = definition.channels.len(),
+        matcher_type = matcher_type,
+        new_matcher = wrap(new_matcher),
+        scoped_matcher = wrap(scoped_matcher),
+        private_constructor = private_constructor,
         methods = methods,
         direct_methods = direct_methods,
         rules = rules,
@@ -1053,6 +1077,7 @@ fn dynamic_channel_method(
     index: usize,
     channel: &Channel,
     dispatch_bounds: &str,
+    matcher: &str,
 ) -> String {
     let argument = channel_method_argument(channel);
     let value = channel_submit_value(channel);
@@ -1060,13 +1085,13 @@ fn dynamic_channel_method(
     let output_type = channel.reply.as_deref().unwrap_or("()");
     if channel.reply.is_some() {
         format!(
-            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let reply = self.matcher.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
+            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let reply = {matcher}.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
             name = channel.name.name,
             dispatch_bounds = dispatch_bounds,
         )
     } else {
         format!(
-            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = self.matcher.submit_at::<{input_type}, ()>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = {matcher}.submit_at::<{input_type}, ()>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             name = channel.name.name,
             dispatch_bounds = dispatch_bounds,
         )

@@ -68,6 +68,9 @@ pub struct JoinChannel<'tcx> {
     /// still prove a private unique instance before retargeting a channel
     /// call to it.
     pub direct_method_def_id: Option<LocalDefId>,
+    /// Allocation-free private representation constructor, paired with the
+    /// direct adapter. Only a whole-instance MIR proof may select this target.
+    pub private_constructor_def_id: Option<LocalDefId>,
     /// Position in the source declaration. This remains stable even when the
     /// generated method has a hygienic name or the declaration is generic.
     pub index: u32,
@@ -413,6 +416,7 @@ pub struct JoinFusionFact {
     pub channel_statement: u32,
     pub channel_method_def_id: u32,
     pub direct_method_def_id: u32,
+    pub private_constructor_def_id: Option<u32>,
     pub rewritten: bool,
 }
 

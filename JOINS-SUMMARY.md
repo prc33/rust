@@ -7,6 +7,17 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
+### In-progress structural handover — validation pending
+
+The next patch implements paired private-constructor/result-call selection,
+an empty endpoint representation with guarded matcher reconstruction, and an
+exclusive-body `PrivateInstancePlan`. It also adds destructor rejection and
+stronger native/allocation gates. **The full rebuild is still running; native
+tests and benchmarks for this patch have not run.** No zero-allocation or new
+speedup claim is established. Start with the exact resume instructions in
+[the handover](docs/joins-private-storage-handover.md). The measurements below
+remain the latest validated results.
+
 ### Reply ownership proof tightened — September 18
 
 Fusion now requires an executable MIR move path into rustc's compiler-generated

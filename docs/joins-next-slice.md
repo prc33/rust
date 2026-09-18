@@ -1,5 +1,10 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+Credit-limited handover: the paired private-storage implementation is now in
+the working branch, but its rebuild/native/benchmark gates remain unfinished.
+**Start at [the handover resume block](joins-private-storage-handover.md)**;
+do not repeat design work or claim constructor elimination verified yet.
+
 Latest immediate-await proof and all-mode native gates passed. The follow-up
 [lifecycle run](joins-forwarding-reply-proof-20260918/summary.md) retains the
 benefit (541.99/550.21/97.01 ns/op off/analyze/optimize, 11/11/2 allocations).
