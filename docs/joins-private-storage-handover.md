@@ -1,5 +1,8 @@
 # Private storage elimination: implementation and bounded follow-on work
 
+**Sequencing superseded:** start with [the next execution plan](joins-next-plan.md).
+This document retains the private-fusion design, evidence and safety gates.
+
 Date: 2026-09-18. This is the next-agent entry point. It supersedes the
 constructor-elimination instructions in `joins-next-slice.md`, but not the
 review's remaining correctness gates or the accepted async semantics.

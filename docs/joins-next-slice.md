@@ -1,5 +1,8 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+**Sequencing superseded:** [the next execution plan](joins-next-plan.md) now
+controls implementation order. Retain this document's applicable safety gates.
+
 The paired private-storage implementation is now validated in all three native
 modes and in a fresh 30-block lifecycle benchmark. The latest queue-pump
 follow-up measures 533.90/536.86/21.89 ns/op off/analyze/optimize, with 13/13/0

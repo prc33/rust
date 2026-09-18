@@ -1,5 +1,8 @@
 # Joins research checkpoint — 2026-09-18
 
+**Next execution plan: [analysis-driven shared join specialization](docs/joins-next-plan.md).**
+This supersedes the immediate sequencing in the older handovers.
+
 This is the owner's AI-authored research fork, with no intended upstream review
 of this branch. The goal is a sound Rust extension that combines ordinary async
 reaction bodies with join coordination, compiler CFA and measured optimisations,
