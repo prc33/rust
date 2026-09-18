@@ -1,0 +1,17 @@
+timestamp=2026-09-18T19:07:33Z
+host=Linux claude-code-basic 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux
+cpu_count=2
+rustc_stage1=rustc 1.100.0-dev;binary: rustc;commit-hash: unknown;commit-date: unknown;host: x86_64-unknown-linux-gnu;release: 1.100.0-dev;LLVM version: 23.1.1;
+rustc_checkout=97f51cf9de323c6a0f99699fb1b9fe5268c315c1
+rustc_status= D AGENTS.md; M JOINS-SUMMARY.md; M compiler/rustc_builtin_macros/src/joins.rs; M docs/joins-next-slice.md; M docs/joins-private-storage-handover.md; M docs/joins-project-report-20260918.html;?? docs/joins-forwarding-queuehint-20260918/;?? ph2;
+joins_library_revision=c09b6db1e578730b9aac07382107e7c7693079db
+joins_library_status= M joins-runtime/src/lib.rs;?? docs/motivating-examples.html;?? rustc-ice-2026-09-16T08_54_39-2250918.txt;?? rustc-ice-2026-09-16T09_14_57-2256836.txt;?? rustc-ice-2026-09-16T09_29_52-180.txt;?? rustc-ice-2026-09-16T10_03_38-180.txt;?? rustc-ice-2026-09-17T06_34_56-42.txt;?? rustc-ice-2026-09-17T07_27_28-43.txt;?? rustc-ice-2026-09-17T07_36_05-84.txt;?? rustc-ice-2026-09-17T13_00_18-43.txt;?? scripts/__pycache__/;
+iterations=5000
+samples=30
+warmups=5
+threads=4
+order_seed=20260918
+order_strategy=deterministic_xorshift_variant_shuffle_per_operation_block
+bootstrap_repetitions=10000
+protocol_matrix=PROTOCOL-MATRIX.md
+compiler_build_workaround=expand_then_clone_dynamic_endpoint_per_rule_in_temporary_artifact

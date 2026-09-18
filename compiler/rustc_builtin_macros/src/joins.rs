@@ -1091,7 +1091,7 @@ fn dynamic_channel_method(
         )
     } else {
         format!(
-            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = {matcher}.submit_at::<{input_type}, ()>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ {matcher}.submit_oneway_at::<{input_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             name = channel.name.name,
             dispatch_bounds = dispatch_bounds,
         )

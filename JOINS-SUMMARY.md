@@ -12,20 +12,24 @@ then applies that work to DataFusion.
 The patch implements paired private-constructor/result-call selection, an empty
 endpoint representation with guarded matcher reconstruction, and an exclusive-
 body `PrivateInstancePlan`. Rebuilt stage-1 compiler/library artifacts and all
-three `-Zvalidate-mir` native modes pass. The fresh lifecycle benchmark shows:
+three `-Zvalidate-mir` native modes pass. The latest clean lifecycle benchmark
+also skips the empty synchronous-dispatch queue pump when no nested work was
+emitted:
 
 | Case (ns/op) | CFA off | Analyze | Optimize |
 | --- | ---: | ---: | ---: |
-| Direct function | 1.51 | 1.44 | 1.50 |
-| Ordinary async | 1.41 | 1.65 | 1.56 |
-| Isolated unary join | 1.45 | 1.46 | 1.51 |
-| Private result forwarding | 483.45 | 489.10 | 30.43 |
+| Direct function | 1.47 | 1.42 | 1.41 |
+| Ordinary async | 1.40 | 1.39 | 1.38 |
+| Isolated unary join | 1.28 | 1.44 | 1.44 |
+| Private result forwarding | 533.90 | 536.86 | 21.89 |
 
-Forwarding allocation calls are 11/11/0. The optimize/off median ratio is 0.063
-(bootstrap 95% interval [0.062, 0.064]), a 15.89× ratio-of-medians improvement.
+Forwarding allocation calls are 13/13/0. The optimize/off median ratio is 0.041
+(bootstrap 95% interval [0.040, 0.042]). The previous private-storage checkpoint
+was 30.43 ns/op optimized; the new result is archived in
+[the queue-pump follow-up](docs/joins-forwarding-queuehint-20260918/summary.md).
 This is the narrow private unary result domain only; shared semantics, fixed
 queue selection and DataFusion remain open. See the [complete HTML report](docs/joins-project-report-20260918.html)
-and [raw run](docs/joins-forwarding-private-storage-20260918/summary.md).
+and [prior raw run](docs/joins-forwarding-private-storage-20260918/summary.md).
 Static LLVM/assembly inspection for the same binaries is recorded in the
 [hot-path attribution note](docs/joins-llvm-attribution-20260918.md). After the
 owner authorized lowering `perf_event_paranoid` from 4 to 1, sequential
@@ -37,6 +41,48 @@ dispatch-pump and drop work, while the off path spends its time in dynamic
 allocation, matcher/queue growth, source-location copying and reply cleanup;
 the profile report records the sampled addresses and the limits of that
 attribution.
+
+### Expanded coordination matrix — 2026-09-18
+
+At the natural point after the focused forwarding run, the benchmark set was
+restored to the complete coordination matrix: eleven synchronous operations
+plus the Tokio request/reply control, 5,000 iterations, five warmups and 30
+randomized blocks. The [committed HTML report](docs/joins-benchmark-expanded-20260918/benchmark-report.html)
+contains raw samples, paired confidence intervals, provenance and CFA dump
+counts; every row passed its count/checksum invariant.
+
+| Operation (ns/op) | Handwritten | Joins off | Analyze | Optimize |
+| --- | ---: | ---: | ---: | ---: |
+| rendezvous | 24,669 | 624 | 627 | 609 |
+| mpsc | 88 | 792 | 782 | 911 |
+| mpmc | 840 | 934 | 873 | 906 |
+| condvar | 22,372 | 11,772 | 12,686 | 12,271 |
+| work-resource | 1,184 | 1,661 | 1,590 | 1,698 |
+| completion | 65 | 2,226 | 1,923 | 1,933 |
+| barrier | 15,097 | 15,408 | 17,614 | 17,133 |
+| rwlock admission probe | 47 | 3,822 | 3,766 | 3,743 |
+| mutex/counter | 32 | 1,119 | 1,099 | 1,166 |
+| thread-join | 74,565 | 72,464 | 70,636 | 72,830 |
+| once | 59,804 | 63,216 | 64,618 | 67,021 |
+| async-request | 436 (Tokio) | 53 | 52 | 55 |
+
+The matrix confirms the current boundary. Barrier, thread-join and once are
+within measurement noise of their controls; mpmc/work-resource are modestly
+slower; mpsc, completion, mutex and the rwlock admission probe retain large
+runtime costs. The direct unary async row is the caller-driven ordinary-future
+path, so its Tokio comparison includes executor overhead. Rendezvous and
+condvar have intentionally different participant/wake protocols and must not
+be read as generic matcher speedups. CFA dumps contain 156 records per mode,
+57 reaction bodies, four frontend direct-unary endpoints and four exact
+queue-bound-zero facts; no general shared matcher fusion is present yet.
+
+The run also exposed and fixed a real semantic edge: generated one-way dynamic
+emissions now use a no-reply admission operation. They no longer create a
+temporary `Reply<()>` whose destructor withdraws the message before a later
+input can complete a match. The runtime suite (53 tests) and all three native
+compiler suites pass after rebuilding stage1 and its standard library. This
+fix removes an allocation and preserves the specified distinction between an
+emission and a result-bearing request.
 
 ### Reply ownership proof tightened — September 18
 

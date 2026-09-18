@@ -1,8 +1,9 @@
 # Execution specification: authoritative join MIR and first result fusion
 
 The paired private-storage implementation is now validated in all three native
-modes and in a fresh 30-block lifecycle benchmark. Forwarding is 483.45/489.10/
-30.43 ns/op off/analyze/optimize, with 11/11/0 allocation calls. **Start at
+modes and in a fresh 30-block lifecycle benchmark. The latest queue-pump
+follow-up measures 533.90/536.86/21.89 ns/op off/analyze/optimize, with 13/13/0
+allocation calls. **Start at
 [the handover](joins-private-storage-handover.md)** for the remaining
 privileged-profiling and negative-coverage gates; do not widen the proof domain
 yet.
@@ -16,12 +17,21 @@ The result-forwarding and reentrant witnesses now have isolated per-fixture
 rewrite accounting. Do not widen eligibility until the guarded adapter's
 execution-context proof and the shared semantic policy are complete.
 
-September 18 measured follow-up: the guarded private forwarding path is now
-472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and
-drop (30 randomized blocks). Allocation probes count 11/11/2 calls per op.
-See [the committed raw evidence](joins-forwarding-20260918/summary.md) and
+September 18 measured follow-up: after the empty-dispatch-queue fast path, the
+private forwarding path is 533.90 ns/op off, 536.86 analyze and 21.89 optimize,
+including construction and drop (30 randomized blocks). Allocation probes count
+13/13/0 calls per op. See [the committed raw evidence](joins-forwarding-queuehint-20260918/summary.md)
+and the earlier [private-storage run](joins-forwarding-private-storage-20260918/summary.md) and
 [the reproduced/fixed scheduling regression](joins-reentrancy-evidence.md).
 Prioritize the following bounded slice before expanding the eligible domain:
+
+The focused witness has now been complemented by the [expanded coordination
+matrix](joins-benchmark-expanded-20260918/README.md). It covers all eleven
+synchronous rows plus `async-request` (30 randomized blocks, 5,000 iterations,
+five warmups). The report is a baseline for the next compiler slice: dynamic
+multi-input rows still use the compatibility matcher, while only four
+frontend-marked unary endpoints have an exact zero queue bound and no general
+shared fusion is selected.
 
 1. Completed the narrow immediate-await reply-consumer proof and negative
    witnesses. See [proof and gates](joins-reply-consumer-proof.md). Sequential

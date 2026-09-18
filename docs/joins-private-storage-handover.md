@@ -13,13 +13,31 @@ designed. Optimized MIR contains the paired
 `Inner::__join_private_new()`/`Inner::__join_direct_step()` calls, while the
 other modes retain public construction and registration.
 
-The fresh lifecycle run is archived at
-`docs/joins-forwarding-private-storage-20260918/`: 30 randomized blocks of one
-million operations, three warmups, construction/poll/drop included. Forwarding
-is 483.45/489.10/30.43 ns/op off/analyze/optimize; allocation calls are 11/11/0.
-The paired optimize/off ratio is 0.063 with bootstrap 95% interval [0.062,
-0.064]. This validates private storage for the narrow eligible domain; it does
-not validate shared joins, fixed queues or general JCAM fusion.
+The private-storage lifecycle run is archived at
+`docs/joins-forwarding-private-storage-20260918/`. A clean follow-up after the
+empty-dispatch-queue optimization is archived at
+`docs/joins-forwarding-queuehint-20260918/`: 30 randomized blocks of one
+million operations, three warmups, construction/poll/drop included. Its
+forwarding medians are 533.90/536.86/21.89 ns/op off/analyze/optimize, with
+allocation calls 13/13/0 and paired optimize/off ratio 0.041 (bootstrap 95%
+interval [0.040, 0.042]). This validates the small hot-path improvement in the
+narrow eligible domain; it does not validate shared joins, fixed queues or
+general JCAM fusion.
+
+The focused witness was followed by the restored [expanded coordination
+matrix](joins-benchmark-expanded-20260918/README.md): 11 synchronous rows plus
+the Tokio async control, 5,000 iterations, five warmups and 30 randomized
+blocks. It records the current native/join CFA-off/analyze/optimize comparison
+and keeps the protocol caveats explicit. The matrix shows joins within noise
+on barrier, thread-join and once, modestly behind on mpmc/work-resource, and
+still far behind specialized mpsc/completion/mutex/rwlock admission paths. No
+lock recognition or lock-library substitution is part of the result.
+
+During this run a correctness issue in the dynamic one-way path was fixed:
+compiler-generated emissions now use `DynamicMatcher::submit_oneway_at`, so a
+temporary result cell cannot withdraw an unmatched one-way message. The
+runtime tests and all three rebuilt native suites pass. This is a semantic
+admission fix and a lower-allocation path, not a benchmark-only workaround.
 
 Static LLVM/assembly attribution is recorded in
 [`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md), and
@@ -184,12 +202,14 @@ allocation. First improvement target is unnecessary hot-path work, not removal
 of a required scheduling branch.
 
 Completion so far: allocation evidence is committed and the optimized path is
-zero-allocation. Static LLVM/assembly inspection and sequential privileged
-`perf` call graphs are committed in
+zero-allocation. Static LLVM/assembly inspection, sequential privileged `perf`
+call graphs, the fixture-local rewrite gates and the empty-queue follow-up are
+committed in
 [`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md) and
-[`joins-perf-profile-20260918/README.md`](joins-perf-profile-20260918/README.md). No speculative
-optimization patch is needed until the generated control-flow and cleanup cost
-is addressed with an explicit proof.
+[`joins-perf-profile-20260918/README.md`](joins-perf-profile-20260918/README.md).
+The remaining measured cost is the guarded active-context path, coroutine/state
+handling and endpoint cleanup. Removing its guard requires an execution-context
+proof in addition to the reaction-body proof.
 
 ## Task 3 — small cleanup only, with preserved evidence (complete for this slice)
 

@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>Joins benchmark report — full-20260918T-expanded3</title>
+<style>
+body{font:15px system-ui,-apple-system,sans-serif;line-height:1.4;color:#17202a;margin:2rem;max-width:1500px}
+h1{font-size:1.7rem}h2{margin-top:2rem}table{border-collapse:collapse;width:100%;margin:1rem 0}
+th,td{border:1px solid #ccd3da;padding:.55rem;vertical-align:top;text-align:left}th{background:#eef2f5}
+td strong{font-size:1.05rem}small{color:#46515b}.faster{color:#087f23}.slower{color:#ad1a1a}
+.unclear{color:#8a5a00}.missing{color:#7b8790;font-style:italic}
+code{background:#f2f4f6;padding:.1rem .25rem;border-radius:3px}
+</style></head><body>
+<h1>Joins benchmark report — full-20260918T-expanded3</h1>
+<p>This report normalizes each timed sample to nanoseconds per operation. Cells show the sample median and a deterministic bootstrap 95% confidence interval for that median. Randomized runs with block IDs use paired ratio intervals; older archives fall back to independent resampling. “Faster” or “slower” means that interval excludes 1.0.</p>
+<h2>Run configuration</h2><table><tbody>
+<tr><th>timestamp</th><td>2026-09-18T19:07:33Z</td></tr>
+<tr><th>host</th><td>Linux claude-code-basic 6.8.0-138-generic #138-Ubuntu SMP PREEMPT_DYNAMIC Fri Jul 31 22:41:49 UTC 2026 x86_64 x86_64 x86_64 GNU/Linux</td></tr>
+<tr><th>cpu_count</th><td>2</td></tr>
+<tr><th>rustc_stage1</th><td>rustc 1.100.0-dev;binary: rustc;commit-hash: unknown;commit-date: unknown;host: x86_64-unknown-linux-gnu;release: 1.100.0-dev;LLVM version: 23.1.1;</td></tr>
+<tr><th>rustc_checkout</th><td>97f51cf9de323c6a0f99699fb1b9fe5268c315c1</td></tr>
+<tr><th>rustc_status</th><td> D AGENTS.md; M JOINS-SUMMARY.md; M compiler/rustc_builtin_macros/src/joins.rs; M docs/joins-next-slice.md; M docs/joins-private-storage-handover.md; M docs/joins-project-report-20260918.html;?? docs/joins-forwarding-queuehint-20260918/;?? ph2;</td></tr>
+<tr><th>joins_library_revision</th><td>c09b6db1e578730b9aac07382107e7c7693079db</td></tr>
+<tr><th>joins_library_status</th><td> M joins-runtime/src/lib.rs;?? docs/motivating-examples.html;?? rustc-ice-2026-09-16T08_54_39-2250918.txt;?? rustc-ice-2026-09-16T09_14_57-2256836.txt;?? rustc-ice-2026-09-16T09_29_52-180.txt;?? rustc-ice-2026-09-16T10_03_38-180.txt;?? rustc-ice-2026-09-17T06_34_56-42.txt;?? rustc-ice-2026-09-17T07_27_28-43.txt;?? rustc-ice-2026-09-17T07_36_05-84.txt;?? rustc-ice-2026-09-17T13_00_18-43.txt;?? scripts/__pycache__/;</td></tr>
+<tr><th>iterations</th><td>5000</td></tr>
+<tr><th>samples</th><td>30</td></tr>
+<tr><th>warmups</th><td>5</td></tr>
+<tr><th>threads</th><td>4</td></tr>
+<tr><th>order_seed</th><td>20260918</td></tr>
+<tr><th>order_strategy</th><td>deterministic_xorshift_variant_shuffle_per_operation_block</td></tr>
+<tr><th>bootstrap_repetitions</th><td>10000</td></tr>
+<tr><th>protocol_matrix</th><td>PROTOCOL-MATRIX.md</td></tr>
+<tr><th>compiler_build_workaround</th><td>expand_then_clone_dynamic_endpoint_per_rule_in_temporary_artifact</td></tr>
+</tbody></table>
+<h2>Summary (nanoseconds per operation)</h2>
+<table><thead><tr><th>Operation</th><th>Handwritten baseline</th><th>Joins — CFA off</th><th>Joins — CFA analyze</th><th>Joins — CFA optimize</th></tr></thead><tbody>
+<tr><th>rendezvous</th>
+<td><strong>24.669 µs</strong><small>95% CI 19.902 µs–25.943 µs<br>n=30</small></td>
+<td><strong>623.8 ns</strong><small>95% CI 610.4 ns–636.0 ns<br>n=30<br><span class="faster">0.03× baseline; 95% paired ratio CI 0.02–0.03 (faster)</span></small></td>
+<td><strong>626.7 ns</strong><small>95% CI 604.3 ns–644.0 ns<br>n=30<br><span class="faster">0.03× baseline; 95% paired ratio CI 0.02–0.03 (faster)</span></small></td>
+<td><strong>608.5 ns</strong><small>95% CI 598.3 ns–626.4 ns<br>n=30<br><span class="faster">0.02× baseline; 95% paired ratio CI 0.02–0.03 (faster)</span></small></td>
+</tr>
+<tr><th>mpsc</th>
+<td><strong>87.9 ns</strong><small>95% CI 81.0 ns–92.5 ns<br>n=30</small></td>
+<td><strong>791.9 ns</strong><small>95% CI 683.7 ns–1.270 µs<br>n=30<br><span class="slower">9.01× baseline; 95% paired ratio CI 9.48–13.44 (slower)</span></small></td>
+<td><strong>782.2 ns</strong><small>95% CI 710.3 ns–1.298 µs<br>n=30<br><span class="slower">8.89× baseline; 95% paired ratio CI 8.84–12.91 (slower)</span></small></td>
+<td><strong>911.3 ns</strong><small>95% CI 745.3 ns–1.229 µs<br>n=30<br><span class="slower">10.36× baseline; 95% paired ratio CI 9.24–12.12 (slower)</span></small></td>
+</tr>
+<tr><th>mpmc</th>
+<td><strong>840.4 ns</strong><small>95% CI 766.5 ns–1.049 µs<br>n=30</small></td>
+<td><strong>934.2 ns</strong><small>95% CI 729.3 ns–1.507 µs<br>n=30<br><span class="unclear">1.11× baseline; 95% paired ratio CI 0.97–1.41 (unclear)</span></small></td>
+<td><strong>872.7 ns</strong><small>95% CI 721.3 ns–1.379 µs<br>n=30<br><span class="unclear">1.04× baseline; 95% paired ratio CI 0.99–1.24 (unclear)</span></small></td>
+<td><strong>906.0 ns</strong><small>95% CI 704.0 ns–1.481 µs<br>n=30<br><span class="slower">1.08× baseline; 95% paired ratio CI 1.03–1.23 (slower)</span></small></td>
+</tr>
+<tr><th>condvar</th>
+<td><strong>22.372 µs</strong><small>95% CI 18.992 µs–23.726 µs<br>n=30</small></td>
+<td><strong>11.772 µs</strong><small>95% CI 10.362 µs–13.064 µs<br>n=30<br><span class="faster">0.53× baseline; 95% paired ratio CI 0.52–0.57 (faster)</span></small></td>
+<td><strong>12.686 µs</strong><small>95% CI 10.234 µs–13.068 µs<br>n=30<br><span class="faster">0.57× baseline; 95% paired ratio CI 0.52–0.55 (faster)</span></small></td>
+<td><strong>12.271 µs</strong><small>95% CI 10.712 µs–12.863 µs<br>n=30<br><span class="faster">0.55× baseline; 95% paired ratio CI 0.52–0.56 (faster)</span></small></td>
+</tr>
+<tr><th>work-resource</th>
+<td><strong>1.184 µs</strong><small>95% CI 1.042 µs–1.329 µs<br>n=30</small></td>
+<td><strong>1.661 µs</strong><small>95% CI 1.380 µs–1.780 µs<br>n=30<br><span class="slower">1.40× baseline; 95% paired ratio CI 1.26–1.44 (slower)</span></small></td>
+<td><strong>1.590 µs</strong><small>95% CI 1.488 µs–1.694 µs<br>n=30<br><span class="slower">1.34× baseline; 95% paired ratio CI 1.22–1.48 (slower)</span></small></td>
+<td><strong>1.698 µs</strong><small>95% CI 1.523 µs–1.744 µs<br>n=30<br><span class="slower">1.43× baseline; 95% paired ratio CI 1.23–1.52 (slower)</span></small></td>
+</tr>
+<tr><th>completion</th>
+<td><strong>64.7 ns</strong><small>95% CI 59.0 ns–70.5 ns<br>n=30</small></td>
+<td><strong>2.226 µs</strong><small>95% CI 1.859 µs–2.592 µs<br>n=30<br><span class="slower">34.41× baseline; 95% paired ratio CI 31.81–38.51 (slower)</span></small></td>
+<td><strong>1.923 µs</strong><small>95% CI 1.828 µs–2.346 µs<br>n=30<br><span class="slower">29.72× baseline; 95% paired ratio CI 27.88–35.19 (slower)</span></small></td>
+<td><strong>1.933 µs</strong><small>95% CI 1.786 µs–2.547 µs<br>n=30<br><span class="slower">29.89× baseline; 95% paired ratio CI 29.76–36.91 (slower)</span></small></td>
+</tr>
+<tr><th>barrier</th>
+<td><strong>15.097 µs</strong><small>95% CI 14.460 µs–15.493 µs<br>n=30</small></td>
+<td><strong>15.408 µs</strong><small>95% CI 14.286 µs–18.203 µs<br>n=30<br><span class="unclear">1.02× baseline; 95% paired ratio CI 0.92–1.19 (unclear)</span></small></td>
+<td><strong>17.614 µs</strong><small>95% CI 14.612 µs–18.469 µs<br>n=30<br><span class="unclear">1.17× baseline; 95% paired ratio CI 0.96–1.30 (unclear)</span></small></td>
+<td><strong>17.133 µs</strong><small>95% CI 14.294 µs–18.166 µs<br>n=30<br><span class="unclear">1.13× baseline; 95% paired ratio CI 0.97–1.19 (unclear)</span></small></td>
+</tr>
+<tr><th>rwlock</th>
+<td><strong>46.9 ns</strong><small>95% CI 44.1 ns–53.1 ns<br>n=30</small></td>
+<td><strong>3.822 µs</strong><small>95% CI 2.988 µs–4.759 µs<br>n=30<br><span class="slower">81.48× baseline; 95% paired ratio CI 65.13–105.22 (slower)</span></small></td>
+<td><strong>3.766 µs</strong><small>95% CI 3.011 µs–5.042 µs<br>n=30<br><span class="slower">80.28× baseline; 95% paired ratio CI 58.12–107.79 (slower)</span></small></td>
+<td><strong>3.743 µs</strong><small>95% CI 3.148 µs–4.384 µs<br>n=30<br><span class="slower">79.79× baseline; 95% paired ratio CI 65.77–83.67 (slower)</span></small></td>
+</tr>
+<tr><th>mutex</th>
+<td><strong>31.6 ns</strong><small>95% CI 28.9 ns–36.2 ns<br>n=30</small></td>
+<td><strong>1.119 µs</strong><small>95% CI 1.035 µs–1.193 µs<br>n=30<br><span class="slower">35.45× baseline; 95% paired ratio CI 30.53–37.97 (slower)</span></small></td>
+<td><strong>1.099 µs</strong><small>95% CI 1.014 µs–1.186 µs<br>n=30<br><span class="slower">34.82× baseline; 95% paired ratio CI 31.63–36.58 (slower)</span></small></td>
+<td><strong>1.166 µs</strong><small>95% CI 986.7 ns–1.258 µs<br>n=30<br><span class="slower">36.92× baseline; 95% paired ratio CI 30.68–39.81 (slower)</span></small></td>
+</tr>
+<tr><th>thread-join</th>
+<td><strong>74.565 µs</strong><small>95% CI 67.175 µs–75.853 µs<br>n=30</small></td>
+<td><strong>72.464 µs</strong><small>95% CI 62.920 µs–73.727 µs<br>n=30<br><span class="faster">0.97× baseline; 95% paired ratio CI 0.94–0.99 (faster)</span></small></td>
+<td><strong>70.636 µs</strong><small>95% CI 61.951 µs–74.345 µs<br>n=30<br><span class="unclear">0.95× baseline; 95% paired ratio CI 0.93–1.00 (unclear)</span></small></td>
+<td><strong>72.830 µs</strong><small>95% CI 65.711 µs–74.213 µs<br>n=30<br><span class="unclear">0.98× baseline; 95% paired ratio CI 0.93–1.02 (unclear)</span></small></td>
+</tr>
+<tr><th>once</th>
+<td><strong>59.804 µs</strong><small>95% CI 52.669 µs–64.871 µs<br>n=30</small></td>
+<td><strong>63.216 µs</strong><small>95% CI 57.901 µs–65.419 µs<br>n=30<br><span class="unclear">1.06× baseline; 95% paired ratio CI 0.95–1.11 (unclear)</span></small></td>
+<td><strong>64.618 µs</strong><small>95% CI 56.755 µs–66.433 µs<br>n=30<br><span class="slower">1.08× baseline; 95% paired ratio CI 1.00–1.18 (slower)</span></small></td>
+<td><strong>67.021 µs</strong><small>95% CI 59.973 µs–73.531 µs<br>n=30<br><span class="slower">1.12× baseline; 95% paired ratio CI 1.00–1.29 (slower)</span></small></td>
+</tr>
+<tr><th>async-request</th>
+<td><strong>435.9 ns</strong><small>95% CI 421.3 ns–462.2 ns<br>n=30</small></td>
+<td><strong>53.2 ns</strong><small>95% CI 51.5 ns–55.2 ns<br>n=30<br><span class="faster">0.12× baseline; 95% paired ratio CI 0.12–0.13 (faster)</span></small></td>
+<td><strong>51.9 ns</strong><small>95% CI 51.0 ns–53.6 ns<br>n=30<br><span class="faster">0.12× baseline; 95% paired ratio CI 0.11–0.13 (faster)</span></small></td>
+<td><strong>54.6 ns</strong><small>95% CI 52.0 ns–56.7 ns<br>n=30<br><span class="faster">0.13× baseline; 95% paired ratio CI 0.12–0.13 (faster)</span></small></td>
+</tr>
+</tbody></table>
+<h2>Statistical detail</h2>
+<table><thead><tr><th>Operation</th><th>Variant</th><th>n</th><th>Median</th><th>Mean ± SD</th><th>95% median CI</th><th>5th–95th percentile</th><th>Operations/sample</th><th>Checksums</th></tr></thead><tbody>
+<tr><td>rendezvous</td><td>baseline</td><td>30</td><td>24.669 µs</td><td>23.391 µs ± 3.897 µs</td><td>19.902 µs–25.943 µs</td><td>17.663 µs–28.434 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>rendezvous</td><td>off</td><td>30</td><td>623.8 ns</td><td>631.0 ns ± 55.4 ns</td><td>610.4 ns–636.0 ns</td><td>566.9 ns–756.4 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>rendezvous</td><td>analyze</td><td>30</td><td>626.7 ns</td><td>632.1 ns ± 50.1 ns</td><td>604.3 ns–644.0 ns</td><td>578.5 ns–724.4 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>rendezvous</td><td>optimize</td><td>30</td><td>608.5 ns</td><td>620.2 ns ± 50.7 ns</td><td>598.3 ns–626.4 ns</td><td>555.0 ns–715.7 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>mpsc</td><td>baseline</td><td>30</td><td>87.9 ns</td><td>89.2 ns ± 22.7 ns</td><td>81.0 ns–92.5 ns</td><td>58.9 ns–135.8 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpsc</td><td>off</td><td>30</td><td>791.9 ns</td><td>1.014 µs ± 383.3 ns</td><td>683.7 ns–1.270 µs</td><td>627.2 ns–1.588 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpsc</td><td>analyze</td><td>30</td><td>782.2 ns</td><td>993.4 ns ± 361.3 ns</td><td>710.3 ns–1.298 µs</td><td>622.0 ns–1.532 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpsc</td><td>optimize</td><td>30</td><td>911.3 ns</td><td>992.2 ns ± 309.1 ns</td><td>745.3 ns–1.229 µs</td><td>605.6 ns–1.431 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpmc</td><td>baseline</td><td>30</td><td>840.4 ns</td><td>924.2 ns ± 253.5 ns</td><td>766.5 ns–1.049 µs</td><td>616.4 ns–1.345 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpmc</td><td>off</td><td>30</td><td>934.2 ns</td><td>1.150 µs ± 495.9 ns</td><td>729.3 ns–1.507 µs</td><td>607.4 ns–1.887 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpmc</td><td>analyze</td><td>30</td><td>872.7 ns</td><td>1.062 µs ± 428.5 ns</td><td>721.3 ns–1.379 µs</td><td>584.5 ns–1.697 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>mpmc</td><td>optimize</td><td>30</td><td>906.0 ns</td><td>1.103 µs ± 472.7 ns</td><td>704.0 ns–1.481 µs</td><td>569.0 ns–1.776 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>condvar</td><td>baseline</td><td>30</td><td>22.372 µs</td><td>21.894 µs ± 3.431 µs</td><td>18.992 µs–23.726 µs</td><td>17.694 µs–27.267 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>condvar</td><td>off</td><td>30</td><td>11.772 µs</td><td>11.715 µs ± 1.943 µs</td><td>10.362 µs–13.064 µs</td><td>9.095 µs–14.292 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>condvar</td><td>analyze</td><td>30</td><td>12.686 µs</td><td>11.803 µs ± 1.999 µs</td><td>10.234 µs–13.068 µs</td><td>8.981 µs–14.450 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>condvar</td><td>optimize</td><td>30</td><td>12.271 µs</td><td>11.848 µs ± 1.670 µs</td><td>10.712 µs–12.863 µs</td><td>9.520 µs–14.402 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>work-resource</td><td>baseline</td><td>30</td><td>1.184 µs</td><td>1.196 µs ± 223.7 ns</td><td>1.042 µs–1.329 µs</td><td>916.4 ns–1.491 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>work-resource</td><td>off</td><td>30</td><td>1.661 µs</td><td>1.598 µs ± 271.5 ns</td><td>1.380 µs–1.780 µs</td><td>1.226 µs–1.965 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>work-resource</td><td>analyze</td><td>30</td><td>1.590 µs</td><td>1.617 µs ± 259.4 ns</td><td>1.488 µs–1.694 µs</td><td>1.278 µs–2.075 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>work-resource</td><td>optimize</td><td>30</td><td>1.698 µs</td><td>1.661 µs ± 298.0 ns</td><td>1.523 µs–1.744 µs</td><td>1.192 µs–2.066 µs</td><td>5000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>completion</td><td>baseline</td><td>30</td><td>64.7 ns</td><td>64.6 ns ± 10.1 ns</td><td>59.0 ns–70.5 ns</td><td>49.2 ns–79.3 ns</td><td>5000 (iterations=5000, threads=4)</td><td>5000</td></tr>
+<tr><td>completion</td><td>off</td><td>30</td><td>2.226 µs</td><td>2.226 µs ± 476.5 ns</td><td>1.859 µs–2.592 µs</td><td>1.606 µs–2.903 µs</td><td>5000 (iterations=5000, threads=4)</td><td>5000</td></tr>
+<tr><td>completion</td><td>analyze</td><td>30</td><td>1.923 µs</td><td>2.080 µs ± 395.9 ns</td><td>1.828 µs–2.346 µs</td><td>1.619 µs–2.751 µs</td><td>5000 (iterations=5000, threads=4)</td><td>5000</td></tr>
+<tr><td>completion</td><td>optimize</td><td>30</td><td>1.933 µs</td><td>2.161 µs ± 504.6 ns</td><td>1.786 µs–2.547 µs</td><td>1.592 µs–2.893 µs</td><td>5000 (iterations=5000, threads=4)</td><td>5000</td></tr>
+<tr><td>barrier</td><td>baseline</td><td>30</td><td>15.097 µs</td><td>15.032 µs ± 1.220 µs</td><td>14.460 µs–15.493 µs</td><td>13.168 µs–16.566 µs</td><td>20000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>barrier</td><td>off</td><td>30</td><td>15.408 µs</td><td>16.015 µs ± 2.617 µs</td><td>14.286 µs–18.203 µs</td><td>12.631 µs–19.273 µs</td><td>20000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>barrier</td><td>analyze</td><td>30</td><td>17.614 µs</td><td>16.844 µs ± 2.761 µs</td><td>14.612 µs–18.469 µs</td><td>13.246 µs–20.726 µs</td><td>20000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>barrier</td><td>optimize</td><td>30</td><td>17.133 µs</td><td>16.236 µs ± 2.344 µs</td><td>14.294 µs–18.166 µs</td><td>12.987 µs–18.853 µs</td><td>20000 (iterations=5000, threads=4)</td><td>12497500</td></tr>
+<tr><td>rwlock</td><td>baseline</td><td>30</td><td>46.9 ns</td><td>48.7 ns ± 7.9 ns</td><td>44.1 ns–53.1 ns</td><td>39.6 ns–59.7 ns</td><td>20000 (iterations=5000, threads=4)</td><td>0, 10122135, 2003303, 23813637, 2509217, 36883271, 39105195, 48224407, 550313, 57367395, 5747719, 59196576, 63811815, 63836664, 64884223, 65571647, 65844854, 67006936, 67682746, 68510986, 68581697, 6907504, 69088823, 69308830, 70244727, 71132477, 71810400, 72492524</td></tr>
+<tr><td>rwlock</td><td>off</td><td>30</td><td>3.822 µs</td><td>4.126 µs ± 1.545 µs</td><td>2.988 µs–4.759 µs</td><td>2.296 µs–7.026 µs</td><td>20000 (iterations=5000, threads=4)</td><td>15000</td></tr>
+<tr><td>rwlock</td><td>analyze</td><td>30</td><td>3.766 µs</td><td>4.236 µs ± 1.660 µs</td><td>3.011 µs–5.042 µs</td><td>2.336 µs–7.321 µs</td><td>20000 (iterations=5000, threads=4)</td><td>15000</td></tr>
+<tr><td>rwlock</td><td>optimize</td><td>30</td><td>3.743 µs</td><td>4.079 µs ± 1.620 µs</td><td>3.148 µs–4.384 µs</td><td>2.372 µs–7.478 µs</td><td>20000 (iterations=5000, threads=4)</td><td>15000</td></tr>
+<tr><td>mutex</td><td>baseline</td><td>30</td><td>31.6 ns</td><td>33.3 ns ± 9.9 ns</td><td>28.9 ns–36.2 ns</td><td>20.4 ns–45.5 ns</td><td>20000 (iterations=5000, threads=4)</td><td>200010000</td></tr>
+<tr><td>mutex</td><td>off</td><td>30</td><td>1.119 µs</td><td>1.102 µs ± 245.1 ns</td><td>1.035 µs–1.193 µs</td><td>624.7 ns–1.432 µs</td><td>20000 (iterations=5000, threads=4)</td><td>200010000</td></tr>
+<tr><td>mutex</td><td>analyze</td><td>30</td><td>1.099 µs</td><td>1.091 µs ± 197.3 ns</td><td>1.014 µs–1.186 µs</td><td>798.1 ns–1.389 µs</td><td>20000 (iterations=5000, threads=4)</td><td>200010000</td></tr>
+<tr><td>mutex</td><td>optimize</td><td>30</td><td>1.166 µs</td><td>1.162 µs ± 249.8 ns</td><td>986.7 ns–1.258 µs</td><td>870.5 ns–1.564 µs</td><td>20000 (iterations=5000, threads=4)</td><td>200010000</td></tr>
+<tr><td>thread-join</td><td>baseline</td><td>30</td><td>74.565 µs</td><td>72.066 µs ± 8.359 µs</td><td>67.175 µs–75.853 µs</td><td>60.778 µs–81.438 µs</td><td>10000 (iterations=5000, threads=4)</td><td>25010000</td></tr>
+<tr><td>thread-join</td><td>off</td><td>30</td><td>72.464 µs</td><td>68.223 µs ± 8.509 µs</td><td>62.920 µs–73.727 µs</td><td>54.749 µs–77.999 µs</td><td>10000 (iterations=5000, threads=4)</td><td>25010000</td></tr>
+<tr><td>thread-join</td><td>analyze</td><td>30</td><td>70.636 µs</td><td>68.664 µs ± 8.974 µs</td><td>61.951 µs–74.345 µs</td><td>56.223 µs–80.753 µs</td><td>10000 (iterations=5000, threads=4)</td><td>25010000</td></tr>
+<tr><td>thread-join</td><td>optimize</td><td>30</td><td>72.830 µs</td><td>70.157 µs ± 9.187 µs</td><td>65.711 µs–74.213 µs</td><td>56.122 µs–82.221 µs</td><td>10000 (iterations=5000, threads=4)</td><td>25010000</td></tr>
+<tr><td>once</td><td>baseline</td><td>30</td><td>59.804 µs</td><td>67.465 µs ± 36.904 µs</td><td>52.669 µs–64.871 µs</td><td>43.757 µs–107.184 µs</td><td>4 (iterations=5000, threads=4)</td><td>168</td></tr>
+<tr><td>once</td><td>off</td><td>30</td><td>63.216 µs</td><td>64.040 µs ± 15.741 µs</td><td>57.901 µs–65.419 µs</td><td>48.162 µs–91.192 µs</td><td>4 (iterations=5000, threads=4)</td><td>168</td></tr>
+<tr><td>once</td><td>analyze</td><td>30</td><td>64.618 µs</td><td>66.717 µs ± 17.644 µs</td><td>56.755 µs–66.433 µs</td><td>49.558 µs–100.845 µs</td><td>4 (iterations=5000, threads=4)</td><td>168</td></tr>
+<tr><td>once</td><td>optimize</td><td>30</td><td>67.021 µs</td><td>68.968 µs ± 17.708 µs</td><td>59.973 µs–73.531 µs</td><td>48.161 µs–99.055 µs</td><td>4 (iterations=5000, threads=4)</td><td>168</td></tr>
+<tr><td>async-request</td><td>baseline</td><td>30</td><td>435.9 ns</td><td>443.7 ns ± 43.5 ns</td><td>421.3 ns–462.2 ns</td><td>385.0 ns–516.1 ns</td><td>5000 (iterations=5000, threads=—)</td><td>12502500</td></tr>
+<tr><td>async-request</td><td>off</td><td>30</td><td>53.2 ns</td><td>54.3 ns ± 4.2 ns</td><td>51.5 ns–55.2 ns</td><td>49.3 ns–62.0 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>async-request</td><td>analyze</td><td>30</td><td>51.9 ns</td><td>52.5 ns ± 3.9 ns</td><td>51.0 ns–53.6 ns</td><td>47.0 ns–57.2 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+<tr><td>async-request</td><td>optimize</td><td>30</td><td>54.6 ns</td><td>55.9 ns ± 9.1 ns</td><td>52.0 ns–56.7 ns</td><td>47.2 ns–64.2 ns</td><td>5000 (iterations=5000, threads=4)</td><td>12502500</td></tr>
+</tbody></table>
+<h2>CFA dump summary</h2>
+<table><thead><tr><th>Mode</th><th>Records</th><th>Reaction bodies</th><th>Direct candidates</th><th>Frontend direct unary</th><th>Exact queue 0 / 1</th><th>Closed</th><th>Complete</th><th>Rejections</th></tr></thead><tbody>
+<tr><th>off</th><td>156</td><td>57</td><td>0</td><td>4</td><td>4 / 0</td><td>4</td><td>156</td><td>Async: 2, NotReactionBody: 99, SharedPattern: 55</td></tr>
+<tr><th>analyze</th><td>156</td><td>57</td><td>0</td><td>4</td><td>4 / 0</td><td>4</td><td>156</td><td>Async: 2, NotReactionBody: 99, SharedPattern: 55</td></tr>
+<tr><th>optimize</th><td>156</td><td>57</td><td>0</td><td>4</td><td>4 / 0</td><td>4</td><td>156</td><td>Async: 2, NotReactionBody: 99, SharedPattern: 55</td></tr>
+</tbody></table>
+<h2>Interpretation and protocol notes</h2><ul>
+<li><a href="PROTOCOL-MATRIX.md">Protocol matrix</a> records the exact validation invariant and any intentional protocol mismatch for each row.</li>
+<li>Samples are independent timed runs after warmups; bootstrap intervals quantify run-to-run variation, not compiler-version uncertainty.</li>
+<li>Handwritten rows are the existing <code>std::sync</code> primitives, except <code>async-request</code>, which is the Tokio current-thread baseline.</li>
+<li>Join rows use the compiler extension and the same participant counts where the protocol permits. Shared multi-rule endpoints use the temporary expanded-artifact capture repair documented by the build script; the rustc checkout is unchanged by this benchmark run.</li>
+<li>Optimize mode can select the compiler’s direct isolated-unary lowering. Multi-input and competing-rule cases retain matcher/executor overhead until their CFA proofs are strong enough.</li>
+<li>Compare ratios only within an operation. A join and baseline row may normalize different useful work when a protocol has multiple replies; operation counts in the detail table make that explicit.</li>
+</ul>
+<h2>Reproducibility</h2>
+<p>Raw JSONL samples and CFA dumps are beside this file. Re-run <code>scripts/run-all-benchmarks.sh</code> with the manifest’s arguments, then invoke <code>scripts/render-report.py RESULT_DIR REPORT.html</code>.</p>
+</body></html>

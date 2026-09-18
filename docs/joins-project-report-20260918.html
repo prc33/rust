@@ -23,9 +23,9 @@
   <div class="status">
     <strong>Current result: the first allocation-free compiler fusion path is validated.</strong>
     A proven private unary result channel now lowers to an empty endpoint plus a
-    direct ready-reply adapter. The complete lifecycle benchmark measures
-    30.43 ns/op optimised versus 483.45 ns/op without CFA, with 0 versus 11
-    allocation calls per operation.
+    direct ready-reply adapter. The latest follow-up also skips the empty
+    synchronous-dispatch queue pump, measuring 21.89 ns/op optimised versus
+    533.90 ns/op without CFA, with 0 versus 13 allocation calls per operation.
   </div>
 
   <h2>Performance</h2>
@@ -37,10 +37,10 @@
   <table>
     <thead><tr><th>Case (ns/op)</th><th>CFA off</th><th>Analyze</th><th>Optimize</th></tr></thead>
     <tbody>
-      <tr><td>Direct function</td><td>1.51</td><td>1.44</td><td>1.50</td></tr>
-      <tr><td>Ordinary async</td><td>1.41</td><td>1.65</td><td>1.56</td></tr>
-      <tr><td>Isolated unary join</td><td>1.45</td><td>1.46</td><td>1.51</td></tr>
-      <tr><td>Private result forwarding</td><td>483.45</td><td>489.10</td><td>30.43</td></tr>
+      <tr><td>Direct function</td><td>1.47</td><td>1.42</td><td>1.41</td></tr>
+      <tr><td>Ordinary async</td><td>1.40</td><td>1.39</td><td>1.38</td></tr>
+      <tr><td>Isolated unary join</td><td>1.28</td><td>1.44</td><td>1.44</td></tr>
+      <tr><td>Private result forwarding</td><td>533.90</td><td>536.86</td><td>21.89</td></tr>
     </tbody>
   </table>
 
@@ -48,20 +48,58 @@
     <thead><tr><th>Allocation calls/op</th><th>CFA off</th><th>Analyze</th><th>Optimize</th></tr></thead>
     <tbody>
       <tr><td>Direct / async / unary</td><td>0</td><td>0</td><td>0</td></tr>
-      <tr><td>Private result forwarding</td><td>11</td><td>11</td><td>0</td></tr>
+      <tr><td>Private result forwarding</td><td>13</td><td>13</td><td>0</td></tr>
     </tbody>
   </table>
 
-  <p>The optimise/off median ratio is <strong>0.063</strong> (bootstrap 95%
-  interval [0.062, 0.064]), a 15.89× ratio-of-medians improvement. This is a
-  narrow result-channel optimisation, not evidence that shared joins or all
-  join patterns have async-level performance.</p>
+  <p>The latest optimise/off median ratio is <strong>0.041</strong> (bootstrap
+  95% interval [0.040, 0.042]). The prior 30.43 ns/op optimized checkpoint is
+  retained in the linked raw evidence. This is a narrow result-channel
+  optimisation, not evidence that shared joins or all join patterns have
+  async-level performance.</p>
 
   <p>Raw evidence: <a href="joins-forwarding-private-storage-20260918/summary.md">summary</a>,
   <a href="joins-forwarding-private-storage-20260918/report.html">generated report</a>,
   <a href="joins-forwarding-private-storage-20260918/samples.jsonl">samples</a>,
   <a href="joins-forwarding-private-storage-20260918/allocations.json">allocation probe</a>,
   and <a href="joins-forwarding-private-storage-20260918/manifest.json">provenance</a>.</p>
+  <p>Latest queue-pump follow-up: <a href="joins-forwarding-queuehint-20260918/summary.md">summary</a>,
+    <a href="joins-forwarding-queuehint-20260918/report.html">report</a>,
+    <a href="joins-forwarding-queuehint-20260918/samples.jsonl">samples</a>,
+    <a href="joins-forwarding-queuehint-20260918/allocations.json">allocations</a>,
+    and <a href="joins-forwarding-queuehint-20260918/manifest.json">provenance</a>.</p>
+
+  <h2>Expanded coordination matrix</h2>
+  <p>The focused forwarding witness has now been complemented by the complete
+    operation set: eleven synchronous rows plus the Tokio request/reply control,
+    5,000 iterations, five warmups and 30 randomized blocks. Every sample passed
+    its operation-count and checksum invariant. See the <a
+    href="joins-benchmark-expanded-20260918/README.md">matrix notes</a> and
+    <a href="joins-benchmark-expanded-20260918/benchmark-report.html">raw HTML
+    report</a> for confidence intervals, samples and provenance.</p>
+  <table>
+    <thead><tr><th>Operation (ns/op)</th><th>Handwritten</th><th>Joins off</th><th>Analyze</th><th>Optimize</th></tr></thead>
+    <tbody>
+      <tr><td>rendezvous</td><td>24,669</td><td>624</td><td>627</td><td>609</td></tr>
+      <tr><td>mpsc</td><td>88</td><td>792</td><td>782</td><td>911</td></tr>
+      <tr><td>mpmc</td><td>840</td><td>934</td><td>873</td><td>906</td></tr>
+      <tr><td>condvar</td><td>22,372</td><td>11,772</td><td>12,686</td><td>12,271</td></tr>
+      <tr><td>work-resource</td><td>1,184</td><td>1,661</td><td>1,590</td><td>1,698</td></tr>
+      <tr><td>completion</td><td>65</td><td>2,226</td><td>1,923</td><td>1,933</td></tr>
+      <tr><td>barrier</td><td>15,097</td><td>15,408</td><td>17,614</td><td>17,133</td></tr>
+      <tr><td>rwlock admission probe</td><td>47</td><td>3,822</td><td>3,766</td><td>3,743</td></tr>
+      <tr><td>mutex/counter</td><td>32</td><td>1,119</td><td>1,099</td><td>1,166</td></tr>
+      <tr><td>thread-join</td><td>74,565</td><td>72,464</td><td>70,636</td><td>72,830</td></tr>
+      <tr><td>once</td><td>59,804</td><td>63,216</td><td>64,618</td><td>67,021</td></tr>
+      <tr><td>async-request</td><td>436 (Tokio)</td><td>53</td><td>52</td><td>55</td></tr>
+    </tbody>
+  </table>
+  <p class="small">The direct async join is the isolated caller-driven future;
+    its Tokio control includes executor overhead. Rendezvous/condvar have
+    intentionally different wake protocols, and rwlock is an admission probe,
+    not a lock replacement. CFA dumps contain 156 records per mode, 57 reaction
+    bodies, four frontend direct-unary endpoints and four exact zero-bound facts;
+    no general shared matcher fusion is selected.</p>
 
   <h2>What is implemented</h2>
   <ul>
@@ -83,6 +121,12 @@
     <li>The fallback preserves the synchronous trampoline’s pending/queued
       behaviour. No runtime lock implementation was substituted for the
       protocol, and no custom LLVM pass was added.</li>
+    <li>The runtime fast path records whether nested synchronous work exists,
+      allowing the empty queue pump to be skipped while retaining the active
+      context branch and public fallback.</li>
+    <li>Dynamic one-way emissions use a no-reply admission operation, so a
+      temporary <code>Reply&lt;()&gt;</code> cannot withdraw a queued message before
+      its other pattern inputs arrive.</li>
     <li>Existing coroutine lowering, polling, pinning, drop elaboration and
       LLVM lowering continue to handle reaction bodies.</li>
   </ul>
@@ -134,8 +178,9 @@
 
   <h2>Next steps, in order</h2>
   <ol class="next">
-    <li>Use the committed profile as the baseline for the next lowering; keep
-      hot-path work separate from the cold nested-dispatch fallback.</li>
+    <li>Use the queue-pump follow-up and committed profile as the baseline for
+      the next lowering; prove execution context before changing the guarded
+      active-dispatch branch.</li>
     <li>Keep the new negative coverage for two same-type instances and repeated
       requests, plus the withdrawal and owned-output regressions. The result
       and reentrant positives now have isolated JSON rewrite-count assertions;
@@ -153,9 +198,10 @@
       async and join benchmarks with attribution and regression gates.</li>
   </ol>
 
-  <p class="small">Rust commit <code>c2cd01b7b2f</code> is pushed to
-  <code>prc33/rust:joins</code>. Library commit <code>bccabb9</code> is local;
-  that checkout has no configured remote. The working tree’s unrelated
+  <p class="small">Rust compiler base <code>97f51cf9de3</code> is pushed to
+  <code>prc33/rust:joins</code>. Library commit <code>c09b6db</code> is local;
+  the one-way admission fix is currently uncommitted in that checkout and it
+  has no configured remote. The working tree’s unrelated
   <code>AGENTS.md</code> deletion and <code>ph2</code> file are preserved.</p>
 
   <p><a href="JOINS-SUMMARY.md">Text checkpoint</a> ·
