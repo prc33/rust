@@ -21,7 +21,11 @@ The paired optimize/off ratio is 0.063 with bootstrap 95% interval [0.062,
 0.064]. This validates private storage for the narrow eligible domain; it does
 not validate shared joins, fixed queues or general JCAM fusion.
 
-Resume with LLVM hot-path attribution and the bounded negative coverage below.
+Static LLVM/assembly attribution is recorded in
+[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md).
+Hardware sampling remains unavailable under this container's
+`perf_event_paranoid=4` policy; do not call the static note a flamegraph.
+The bounded negative coverage below has also been extended.
 The complete HTML status report is
 [`joins-project-report-20260918.html`](joins-project-report-20260918.html).
 
@@ -141,8 +145,9 @@ not a second test harness. Use manual bounded polls rather than timeouts.
 
 Completion so far: all three native suites exit zero with `-Zvalidate-mir`; the
 owned-payload, destructor, reentrant, paired-MIR and zero-allocation gates pass.
-Still add repeated-request, same-type-instance and pending-abandonment negatives
-before widening eligibility.
+The two same-type-instance and repeated-request negatives now also pass in all
+three modes and retain the public path. Pending-abandonment and per-fixture JSON
+rewrite assertions remain before widening eligibility.
 
 ## Task 2 — attribute remaining cost, using current generated code (timing complete)
 
@@ -169,8 +174,10 @@ allocation. First improvement target is unnecessary hot-path work, not removal
 of a required scheduling branch.
 
 Completion so far: allocation evidence is committed and the optimized path is
-zero-allocation. LLVM/hot-path profiling remains before another lowering patch;
-no speculative optimization patch is needed for that profiling task.
+zero-allocation. Static LLVM/assembly inspection is committed in
+[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md).
+Privileged hardware profiling remains before another lowering patch; no
+speculative optimization patch is needed for that profiling task.
 
 ## Task 3 — small cleanup only, with preserved evidence (complete for this slice)
 

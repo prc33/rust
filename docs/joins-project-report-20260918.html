@@ -121,19 +121,20 @@
     <li><strong>DataFusion:</strong> no production operator coordination has yet
       been ported to first-class joins, and no DataFusion end-to-end comparison
       is established.</li>
-    <li><strong>Profiling:</strong> the benchmark includes timing and allocation
-      probes; flamegraph samples and detailed hot-path attribution are still
-      needed before further lowering changes.</li>
+    <li><strong>Profiling:</strong> static LLVM/assembly attribution is recorded
+      in <a href="joins-llvm-attribution-20260918.md">the attribution note</a>.
+      Hardware samples/flamegraphs remain blocked by this container's
+      <code>perf_event_paranoid=4</code> policy.</li>
   </ul>
 
   <h2>Next steps, in order</h2>
   <ol class="next">
-    <li>Inspect the new optimized LLVM IR/assembly and collect a profile of the
-      already-built benchmark binaries. Separate hot-path work from the cold
-      nested-dispatch fallback.</li>
-    <li>Add negative coverage for two same-type instances, repeated requests,
-      pending-future abandonment and owned output destruction. Keep eligibility
-      unchanged and require all three native modes.</li>
+    <li>Use a privileged sampler on the already-built binaries when available;
+      static attribution is complete for this host. Separate hot-path work from
+      the cold nested-dispatch fallback.</li>
+    <li>Keep the new negative coverage for two same-type instances and repeated
+      requests, then add pending-future abandonment and owned output
+      destruction. Require all three native modes.</li>
     <li>Replace count-only descriptors with complete typed rule/policy records;
       keep analysis separate from MIR mutation and invalidate certificates at
       every transforming pass.</li>
@@ -147,13 +148,14 @@
       async and join benchmarks with attribution and regression gates.</li>
   </ol>
 
-  <p class="small">Rust commit <code>3538e2df43d</code> is pushed to
-  <code>prc33/rust:joins</code>. Library commit <code>d69bf13</code> is local;
+  <p class="small">Rust commit <code>54c7377bf22</code> is pushed to
+  <code>prc33/rust:joins</code>. Library commit <code>a5e4f7a</code> is local;
   that checkout has no configured remote. The working tree’s unrelated
   <code>AGENTS.md</code> deletion and <code>ph2</code> file are preserved.</p>
 
   <p><a href="JOINS-SUMMARY.md">Text checkpoint</a> ·
   <a href="joins-private-storage-handover.md">Implementation handover</a> ·
-  <a href="joins-review-implementation-plan.md">Safety and IR plan</a></p>
+  <a href="joins-review-implementation-plan.md">Safety and IR plan</a> ·
+  <a href="joins-llvm-attribution-20260918.md">LLVM attribution</a></p>
 </body>
 </html>

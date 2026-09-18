@@ -26,6 +26,10 @@ Forwarding allocation calls are 11/11/0. The optimize/off median ratio is 0.063
 This is the narrow private unary result domain only; shared semantics, fixed
 queue selection and DataFusion remain open. See the [complete HTML report](docs/joins-project-report-20260918.html)
 and [raw run](docs/joins-forwarding-private-storage-20260918/summary.md).
+Static LLVM/assembly inspection for the same binaries is recorded in the
+[hot-path attribution note](docs/joins-llvm-attribution-20260918.md). Hardware
+sampling is unavailable in this container (`perf_event_paranoid=4`), so no
+flamegraph or CPU sample attribution is claimed.
 
 ### Reply ownership proof tightened — September 18
 
@@ -213,6 +217,12 @@ fresh off/analyze/optimize runs pass all of them. These checks deliberately
 narrow fusion until complete instance/policy proofs exist; they do not claim
 the broader JCAM certificate.
 
+The rejection fixture now also covers two same-type private endpoint instances
+and two requests on one endpoint. Both remain on the public construction and
+channel path in optimize, and the full native suite passes them in all three
+modes. Pending-future abandonment and per-fixture rewrite-count assertions are
+still open.
+
 ## Next execution gates
 
 Follow [the concrete next-slice specification](docs/joins-next-slice.md), steps
@@ -251,8 +261,9 @@ LLVM-facing boundary; effectful operations cannot be erased as no-ops.
 5. Prove per-instance queue bounds and select fixed storage without dynamic
    growth. Stack allocation additionally requires a lifetime/non-escape proof.
 6. Measure the generated path against equal-semantics controls, inspect LLVM
-   output and sampled profiles, then resume DataFusion coordination migration
-   and performance/complexity comparisons.
+   output and (when a privileged sampler is available) collect profiles. Then
+   resume DataFusion coordination migration and performance/complexity
+   comparisons.
 
 The longer research programme is in the companion library checkout at
 `JOINS-IMPLEMENTATION-HANDOVER.md`; the next-slice specification above controls

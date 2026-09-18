@@ -3,13 +3,16 @@
 The paired private-storage implementation is now validated in all three native
 modes and in a fresh 30-block lifecycle benchmark. Forwarding is 483.45/489.10/
 30.43 ns/op off/analyze/optimize, with 11/11/0 allocation calls. **Start at
-[the handover](joins-private-storage-handover.md)** for the remaining profiling
-and negative-coverage gates; do not widen the proof domain yet.
+[the handover](joins-private-storage-handover.md)** for the remaining
+privileged-profiling and negative-coverage gates; do not widen the proof domain
+yet.
 
 Latest immediate-await proof and all-mode native gates passed. The follow-up
 [lifecycle run](joins-forwarding-private-storage-20260918/summary.md) measures
-the validated private-storage path. Next is LLVM/hot-path attribution and
-negative coverage; do not widen eligibility before those gates.
+the validated private-storage path. Static LLVM/hot-path attribution is now in
+[the attribution note](joins-llvm-attribution-20260918.md); privileged sampling
+and the remaining negative gates are still pending. Do not widen eligibility
+before those gates.
 
 September 18 measured follow-up: the guarded private forwarding path is now
 472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and
