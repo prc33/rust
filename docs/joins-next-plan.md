@@ -37,6 +37,18 @@ closed/bounded representations are useful reference implementations; do not
 assume the checkout automatically infers every attribute it consumes. The
 standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
+### Progress on this plan (2026-09-18)
+
+- The typed-definition slice is implemented: HIR markers preserve ordered rule
+  inputs, reply mapping, asyncness and body ordinals; endpoint IR records the
+  selected shared policy. The crate CFA graph now dumps these facts.
+- MIR now records sorted per-channel body-local occupancy intervals in addition
+  to its aggregate interval. This is an evidence surface only; no fixed-slot
+  rewrite consumes it yet.
+- The native analyze fixture gate passes with the new records. The remaining
+  work is the cross-body state-token proof and proof-consuming storage/matcher
+  lowering described in sections 4–6.
+
 ## Constraints throughout
 
 - This is the owner's AI-written research branch. No upstream maintainers are

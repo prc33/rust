@@ -157,6 +157,28 @@ was introduced. See [scheduling evidence](docs/joins-reentrancy-evidence.md).
 
 ### Earlier checkpoints and compiler representation
 
+### Typed rule/policy and channel occupancy slice — September 18
+
+The compiler descriptor now preserves the source reaction contract before
+generated method lowering: each rule carries packed source channel order,
+result-channel mapping, asyncness, and a body ordinal; each endpoint carries
+typed admission, demand, execution-owner, cancellation, and lifetime policy.
+These are compiler facts recovered from generated HIR markers, not programmer
+performance annotations. The crate CFA graph dump now emits the definitions,
+policies, exact channel coordinates and reply mapping alongside dynamic
+allocation/use facts, so a proof consumer can reject an unrepresented rule
+instead of reconstructing it from helper names.
+
+MIR summaries also expose a per-channel occupancy stream in addition to the
+existing body-wide interval. It is deliberately body-local and excludes
+shared-rule matches whose channel mapping is not yet connected to the static
+rule descriptor; a complete bit does not authorize fixed storage. The native
+analyze fixture gate validates that these records survive expansion, MIR
+validation and runtime execution. The next slice must join these facts across
+constructor instances and rule transitions, prove the state-token counter's
+at-most-one channel under its seed/producer contract, and only then select an
+inline slot or stack storage.
+
 Restricted isolated unary lowering produces ordinary caller-owned futures.
 The direct endpoint is zero-sized and returns the declared `Future::Output`
 without a matcher, reply cell, `Send`/`'static` or `JoinError` requirement.

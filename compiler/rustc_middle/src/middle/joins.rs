@@ -416,6 +416,23 @@ pub struct JoinOccupancyFact {
     pub complete: bool,
 }
 
+/// Body-local occupancy facts for one source-declaration channel.
+///
+/// The existing `JoinOccupancyFact` deliberately summarizes all semantic
+/// register/match events in a body.  That aggregate is useful for detecting
+/// loops, but it cannot distinguish a state token from an unrelated reply
+/// queue.  Keep the channel coordinate beside the interval so an
+/// interprocedural proof can later join producer, matcher, and re-emission
+/// facts without reconstructing the pattern from generated method names.
+/// These are still body-local facts: a complete bit here never authorizes a
+/// fixed representation by itself.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinChannelOccupancyFact {
+    pub channel_index: u32,
+    pub occupancy: JoinOccupancyFact,
+}
+
 /// Closedness of the concrete join state represented by a body.
 ///
 /// `Closed` is intentionally reserved for the caller-owned direct unary
@@ -520,6 +537,9 @@ pub struct JoinCfaSummary {
     pub queue_bound: JoinQueueBound,
     pub lowering: JoinLoweringStrategy,
     pub occupancy: JoinOccupancyFact,
+    /// Per-channel body-local occupancy facts.  The list is sorted by source
+    /// channel index before it is installed in the summary and dump.
+    pub channel_occupancy: Vec<JoinChannelOccupancyFact>,
     pub instance_closedness: JoinInstanceClosedness,
     pub instance_closedness_reason: JoinInstanceClosednessReason,
     pub operations: Vec<JoinMirOperation>,

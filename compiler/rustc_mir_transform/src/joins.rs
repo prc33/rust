@@ -16,7 +16,8 @@ use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary, JoinFusionFact,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
-    JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinOccupancyFact,
+    JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinChannelOccupancyFact,
+    JoinOccupancyFact,
     JoinLoweringStrategy, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
     JoinValueState,
 };
@@ -359,6 +360,7 @@ impl JoinBodyFacts {
             solver_complete,
         );
         let occupancy = solve_body_occupancy(body, &self.operations);
+        let channel_occupancy = solve_channel_occupancy(body, &self.operations);
         let rejection = if role != JoinBodyRole::ReactionBody {
             Some(JoinCfaRejection::NotReactionBody)
         } else if arity != 1 {
@@ -398,6 +400,7 @@ impl JoinBodyFacts {
             queue_bound,
             lowering,
             occupancy,
+            channel_occupancy,
             instance_closedness,
             instance_closedness_reason,
             operations: self.operations,
@@ -1712,11 +1715,79 @@ fn dump_crate_summary(
         })
         .collect::<Vec<_>>()
         .join(",");
+    // Keep the compiler-owned static definition beside the dynamic instance
+    // graph.  The body records above intentionally contain only the facts
+    // observed at MIR call sites; this descriptor is where a consumer can
+    // recover the exact source channel order, reply mapping, and selected
+    // execution policy without inspecting generated names or source text.
+    let definitions = tcx
+        .join_definitions(())
+        .endpoints
+        .iter()
+        .map(|endpoint| {
+            let channels = endpoint
+                .channels
+                .iter()
+                .map(|channel| {
+                    format!(
+                        "{{\"index\":{},\"name\":{}}}",
+                        channel.index,
+                        format!("{:?}", channel.name.as_str()),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let rules = endpoint
+                .rules
+                .iter()
+                .enumerate()
+                .map(|(index, rule)| {
+                    let input_channels = rule
+                        .channel_indices
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    let reply_channels = rule
+                        .reply_channel_indices
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "{{\"index\":{},\"arity\":{},\"async\":{},\"channels\":[{}],\"replies\":[{}],\"body_index\":{},\"body\":{}}}",
+                        index,
+                        rule.arity,
+                        rule.is_async,
+                        input_channels,
+                        reply_channels,
+                        rule.body_index
+                            .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                        rule.body_def_id
+                            .map_or_else(|| "null".to_string(), |value| value.index().to_string()),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"impl\":{},\"endpoint\":{},\"policy\":\"{:?}\",\"channels\":[{}],\"rules\":[{}]}}",
+                endpoint.impl_def_id.index(),
+                endpoint
+                    .endpoint_def_id
+                    .map_or_else(|| "null".to_string(), |value| value.index().to_string()),
+                endpoint.policy,
+                channels,
+                rules,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
+        definitions,
         summary.solver_steps,
         summary.complete,
     );
@@ -1745,6 +1816,40 @@ fn solve_body_occupancy<'tcx>(
     body: &Body<'tcx>,
     operations: &[JoinMirOperation],
 ) -> JoinOccupancyFact {
+    solve_body_occupancy_for_channel(body, operations, None)
+}
+
+/// Compute the same conservative interval transfer for each channel that has
+/// a typed source-declaration coordinate.  Operations without a channel
+/// coordinate (notably a shared-rule `Match` before rule-pattern metadata is
+/// available) are intentionally excluded from a per-channel result rather
+/// than guessed onto the first endpoint channel.  Such facts remain useful
+/// diagnostics, but their `complete` bit is not an authorization to choose a
+/// fixed slot.
+fn solve_channel_occupancy<'tcx>(
+    body: &Body<'tcx>,
+    operations: &[JoinMirOperation],
+) -> Vec<JoinChannelOccupancyFact> {
+    let channels = operations
+        .iter()
+        .filter_map(|operation| operation.channel_index)
+        .collect::<BTreeSet<_>>();
+    let mut result = channels
+        .into_iter()
+        .map(|channel_index| JoinChannelOccupancyFact {
+            channel_index,
+            occupancy: solve_body_occupancy_for_channel(body, operations, Some(channel_index)),
+        })
+        .collect::<Vec<_>>();
+    result.sort_by_key(|fact| fact.channel_index);
+    result
+}
+
+fn solve_body_occupancy_for_channel<'tcx>(
+    body: &Body<'tcx>,
+    operations: &[JoinMirOperation],
+    channel_filter: Option<u32>,
+) -> JoinOccupancyFact {
     let block_count = body.basic_blocks.len();
     if block_count == 0 {
         return JoinOccupancyFact {
@@ -1758,6 +1863,9 @@ fn solve_body_occupancy<'tcx>(
     let mut operations_by_block = vec![Vec::<JoinMirOperation>::new(); block_count];
     let mut events = 0u32;
     for operation in operations {
+        if channel_filter.is_some() && operation.channel_index != channel_filter {
+            continue;
+        }
         if matches!(
             operation.kind,
             JoinOperationKind::Register
@@ -2381,8 +2489,27 @@ fn dump_summary(
         .map(|escape| format!("{{\"local\":{},\"kind\":\"{:?}\"}}", escape.local, escape.kind))
         .collect::<Vec<_>>()
         .join(",");
+    let channel_occupancy = summary
+        .channel_occupancy
+        .iter()
+        .map(|fact| {
+            format!(
+                "{{\"channel\":{},\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}}",
+                fact.channel_index,
+                fact.occupancy
+                    .proven_peak
+                    .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                fact.occupancy
+                    .proven_final
+                    .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                fact.occupancy.events,
+                fact.occupancy.complete,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"fusion_rejection\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"channel_occupancy\":[{}],\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"fusion_rejection\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -2400,6 +2527,7 @@ fn dump_summary(
             .map_or_else(|| "null".to_string(), |value| value.to_string()),
         summary.occupancy.events,
         summary.occupancy.complete,
+        channel_occupancy,
         summary.instance_closedness,
         summary.instance_closedness_reason,
         mode,
