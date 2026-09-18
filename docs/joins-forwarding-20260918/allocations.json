@@ -1,0 +1,86 @@
+[
+  {
+    "mode": "off",
+    "case": "direct",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "off",
+    "case": "async",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "off",
+    "case": "unary",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "off",
+    "case": "forwarding",
+    "operations": 10000,
+    "allocation_calls": 110000,
+    "checksum": 100010000
+  },
+  {
+    "mode": "analyze",
+    "case": "direct",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "analyze",
+    "case": "async",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "analyze",
+    "case": "unary",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "analyze",
+    "case": "forwarding",
+    "operations": 10000,
+    "allocation_calls": 110000,
+    "checksum": 100010000
+  },
+  {
+    "mode": "optimize",
+    "case": "direct",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "optimize",
+    "case": "async",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "optimize",
+    "case": "unary",
+    "operations": 10000,
+    "allocation_calls": 0,
+    "checksum": 100010000
+  },
+  {
+    "mode": "optimize",
+    "case": "forwarding",
+    "operations": 10000,
+    "allocation_calls": 20000,
+    "checksum": 100010000
+  }
+]

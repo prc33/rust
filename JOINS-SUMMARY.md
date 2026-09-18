@@ -7,6 +7,46 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
+### Current full-lifecycle forwarding evidence — September 18
+
+Compiler `2112e3e7052`, runtime `2626909`: the result adapter now preserves
+synchronous trampoline scheduling. A reproduced nested-poll miscompile is
+fixed by a guard that retains ordinary channel registration when dispatch is
+already active. Off/analyze/optimize native suites pass, including that
+regression and the positive MIR rewrite witness.
+
+The new [benchmark evidence](docs/joins-forwarding-20260918/summary.md) includes
+30 randomized blocks of one million operations, three warmups, optimized
+runtime libraries, source/compiler hashes, raw samples and separate allocation
+instrumentation. Construction, first poll and destruction are timed; these
+are standalone ready computations with no executor or thread handoff.
+
+| Case (ns/op) | CFA off | Analyze | Optimize |
+| --- | ---: | ---: | ---: |
+| Direct function | 1.47 | 1.41 | 1.52 |
+| Ordinary async | 1.48 | 1.68 | 1.50 |
+| Isolated unary join | 1.43 | 1.54 | 1.38 |
+| Private result forwarding | 472.30 | 476.74 | 89.85 |
+
+Forwarding is 5.26× faster by ratio of medians. The median paired optimize/off
+ratio is 0.185, with bootstrap 95% interval [0.180, 0.193]. A separate diagnostic
+build counts 11 allocation calls/op off/analyze and 2 optimize; the other three
+cases allocate zero. This isolates a real narrow compiler rewrite benefit.
+The remaining optimized forwarding cost is still about 60× ordinary async.
+The group constructor survives; allocation count alone does not attribute the
+entire remaining runtime cost. The benchmark asserts one rewritten forwarding
+call in optimize and zero in off/analyze before timing. Full shared fusion,
+scope policy and reply-consumer proofs remain open.
+
+Reproduce with `python3 ../joins-library/scripts/run_compiler_forwarding.py
+/tmp/NEW-OUTPUT --iterations 1000000 --samples 30` (use a fresh output path).
+The driver also saves LLVM IR and assembly in its output `build` directory.
+Its source is committed in library `bd0e116`; an exact benchmark source copy is
+archived with the evidence. No custom LLVM pass or library-lock substitution
+was introduced. See [scheduling evidence](docs/joins-reentrancy-evidence.md).
+
+### Earlier checkpoints and compiler representation
+
 Restricted isolated unary lowering produces ordinary caller-owned futures.
 The direct endpoint is zero-sized and returns the declared `Future::Output`
 without a matcher, reply cell, `Send`/`'static` or `JoinError` requirement.

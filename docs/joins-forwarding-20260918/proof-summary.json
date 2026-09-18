@@ -1,0 +1,19 @@
+{
+  "off": {"body_records": 14, "rewrites": 0},
+  "analyze": {"body_records": 14, "rewrites": 0},
+  "optimize": {
+    "body_records": 14,
+    "rewrites": 1,
+    "fusion": {
+      "constructor_block": 0,
+      "constructor_statement": 1,
+      "channel_block": 1,
+      "channel_statement": 6,
+      "channel_method": 27,
+      "direct_method": 29,
+      "rewritten": true
+    },
+    "rejection_counts": {"UnknownOrigin": 4}
+  },
+  "note": "Body-local indices refer to this benchmark compilation only. Counts are witnesses, not a workload-wide optimization success rate."
+}

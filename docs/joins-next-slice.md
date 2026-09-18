@@ -1,5 +1,27 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+September 18 measured follow-up: the guarded private forwarding path is now
+472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and
+drop (30 randomized blocks). Allocation probes count 11/11/2 calls per op.
+See [the committed raw evidence](joins-forwarding-20260918/summary.md) and
+[the reproduced/fixed scheduling regression](joins-reentrancy-evidence.md).
+Prioritize the following bounded slice before expanding the eligible domain:
+
+1. Finish the explicit reply-consumer proof and its negative witnesses; an
+   initial local move alone must not certify an eventual await.
+2. Preserve the scheduling guard in any constructor elimination. The existing
+   adapter needs a real endpoint on its nested-dispatch fallback. Hoisting or
+   sinking construction requires a proof that admission, drop and panic
+   effects remain equivalent on both paths. Do not merely delete `new`.
+3. Represent the complete group/policy and allocation instance at that
+   decision, then eliminate private matcher setup on the proven inline path.
+   Leave unproved/shared cases on the existing implementation.
+4. Require the same native gates, one explicit rewrite record, zero allocation
+   calls on the proposed direct path, and a fresh randomized lifecycle
+   comparison. Preserve the two-allocation result as the pre-change control.
+   Compare LLVM/assembly for surviving allocation, reference counting and
+   dispatch before proposing another pass.
+
 Implementation order update, 2026-09-17: follow the correctness gates in
 [the review implementation plan](joins-review-implementation-plan.md) before
 extending fusion or shared matcher specialisation. It identifies gaps in adapter
