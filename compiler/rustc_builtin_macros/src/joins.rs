@@ -438,6 +438,12 @@ fn generate_restricted_endpoint(
         u32::MAX
     };
     let endpoint_attribute = join_endpoint_attribute(definition, direct_shape, queue_bound);
+    let rule_metadata = join_rule_metadata(
+        0,
+        &resolved,
+        &replies,
+        rule.is_async,
+    );
 
     if channels.len() == 1 {
         return generate_unary_endpoint(
@@ -522,6 +528,8 @@ impl {impl_generics}{impl_name} {{
 
     {right_method}
 
+    {rule_metadata}
+
     fn __join_dispatch_once(&self) -> bool
 {scope_bounds}{{
         let __join_endpoint = self.clone();
@@ -542,6 +550,7 @@ impl {impl_generics}{impl_name} {{
         scope_bounds = scope_bounds,
         left_method = left_method,
         right_method = right_method,
+        rule_metadata = rule_metadata,
         dispatch = dispatch,
         endpoint_attribute = endpoint_attribute,
     ))
@@ -557,6 +566,8 @@ fn generate_unary_endpoint(
     endpoint_attribute: &str,
     direct_unary: bool,
 ) -> Result<String, String> {
+    let resolved = resolve_rule(definition, rule, 0)?;
+    let rule_metadata = join_rule_metadata(0, &resolved, replies, rule.is_async);
     let expression = reply_expression(replies, channel)?;
     let input_type = channel_input_type(channel);
     let output_type = channel.reply.as_deref().unwrap_or("()");
@@ -700,6 +711,8 @@ impl {impl_generics}{impl_name} {{
 
 {method}
 
+{rule_metadata}
+
 {dispatch_method}
 }}
 "#,
@@ -712,6 +725,7 @@ impl {impl_generics}{impl_name} {{
         impl_name = impl_name(definition),
         scoped_constructor = scoped_constructor,
         method = method,
+        rule_metadata = rule_metadata,
         dispatch_method = dispatch_method,
         endpoint_attribute = endpoint_attribute,
     ))
@@ -758,6 +772,7 @@ fn reaction_value_body(aliases: &str, prefix: &str, value: &str, is_async: bool)
 fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> {
     let dispatch_bounds = endpoint_dispatch_bounds(definition);
     let mut rule_definitions = Vec::with_capacity(definition.rules.len());
+    let mut rule_metadata = Vec::with_capacity(definition.rules.len());
     let mut direct_method_definitions = Vec::new();
     let mut private_constructor = String::new();
     for (rule_index, rule) in definition.rules.iter().enumerate() {
@@ -777,6 +792,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
             format!("join rule {rule_index} must contain `return {{ channel: expression, ... }}`")
         })?;
         validate_replies(definition, &resolved, &replies, rule_index)?;
+        rule_metadata.push(join_rule_metadata(rule_index, &resolved, &replies, rule.is_async));
         let prefix = rewrite_early_return_maps(
             definition,
             &resolved,
@@ -882,6 +898,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let scoped_matcher = format!("::joins_runtime::DynamicMatcher::new_in_scope(scope, {})", definition.channels.len());
     let wrap = |expression: String| if private_storage { format!("Some({expression})") } else { expression };
     let direct_methods = direct_method_definitions.join("\n\n");
+    let rule_metadata = rule_metadata.join("\n\n");
     let rules = rule_definitions.join("\n        ");
     let endpoint_attribute = join_endpoint_attribute(definition, false, u32::MAX);
     Ok(format!(
@@ -912,6 +929,8 @@ impl {impl_generics}{impl_name} {{
 
 {direct_methods}
 
+{rule_metadata}
+
     fn __join_dispatch_once(&self) -> bool
 {dispatch_bounds}{{
         let __join_endpoint = self.clone();
@@ -932,6 +951,7 @@ impl {impl_generics}{impl_name} {{
         private_constructor = private_constructor,
         methods = methods,
         direct_methods = direct_methods,
+        rule_metadata = rule_metadata,
         rules = rules,
         dispatch_bounds = dispatch_bounds,
         endpoint_attribute = endpoint_attribute,
@@ -952,6 +972,43 @@ fn join_endpoint_attribute(definition: &Definition, direct_unary: bool, queue_bo
         u32::from(async_rule),
         u32::from(direct_unary),
         queue_bound,
+    )
+}
+
+/// Emit one compiler-owned marker per source rule. The builtin parser has the
+/// exact pattern and reply mapping available before it lowers the rule into a
+/// set of generated closures. Keeping this compact descriptor on a generated
+/// method makes that information recoverable from HIR without scanning source
+/// strings or guessing from closure names.
+fn join_rule_metadata(
+    rule_index: usize,
+    resolved: &[(usize, &Channel, &Pattern)],
+    replies: &[(String, String)],
+    is_async: bool,
+) -> String {
+    // Five bits per channel index leaves room for six ordered pattern inputs
+    // in the u32 marker. Larger patterns remain representable in the source
+    // language, but carry an explicit sentinel so CFA must reject any rule
+    // specialization that requires exact order.
+    let channel_order = if resolved.len() > 6 || resolved.iter().any(|(index, _, _)| *index > 31) {
+        u32::MAX
+    } else {
+        resolved.iter().enumerate().fold(0u32, |packed, (position, (index, _, _))| {
+            packed | ((*index as u32) << (position * 5))
+        })
+    };
+    let reply_mask = replies.iter().fold(0u32, |mask, (target, _)| {
+        let Some((index, _, _)) = resolved.iter().find(|(_, channel, _)| {
+            channel.name.name.as_str() == target
+        }) else {
+            return mask;
+        };
+        if *index > 31 { u32::MAX } else { mask | (1u32 << *index) }
+    });
+    format!(
+        "    #[join_rule(index = {rule_index}, channel_order = {channel_order}, channel_count = {}, reply_mask = {reply_mask}, body_index = {rule_index}, async_rule = {})]\n    fn __join_rule_metadata_{rule_index}() {{}}",
+        resolved.len(),
+        u32::from(is_async),
     )
 }
 

@@ -56,6 +56,66 @@ pub struct JoinDefinition<'tcx> {
     /// Generated dispatch method(s). The first compiler slice emits one
     /// dispatch body for the restricted unary/pair forms.
     pub rules: Vec<JoinRule<'tcx>>,
+    /// Compiler-selected semantic contract for this generated endpoint. The
+    /// values are facts about the lowering, not optimization hints supplied
+    /// by the programmer; later CFA may only consume a representation whose
+    /// requirements are implied by these policies.
+    pub policy: JoinPolicy,
+}
+
+/// Semantic policy selected by the builtin lowering and retained in typed
+/// compiler IR. Keeping these dimensions separate prevents a proof of one
+/// property (for example caller-driven execution) from being mistaken for a
+/// proof of another (for example bounded storage).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinPolicy {
+    pub admission: JoinAdmissionPolicy,
+    pub demand: JoinDemandPolicy,
+    pub execution: JoinExecutionPolicy,
+    pub cancellation: JoinCancellationPolicy,
+    pub lifetime: JoinLifetimePolicy,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinAdmissionPolicy {
+    Immediate,
+    Fallible,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinDemandPolicy {
+    DemandGated,
+    EagerCompatibility,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinExecutionPolicy {
+    CallerDriven,
+    GroupDriven,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCancellationPolicy {
+    OwnedFuture,
+    IndependentReplies,
+    ScopeBound,
+    Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinLifetimePolicy {
+    CallerOwned,
+    OwnedShared,
+    Unknown,
 }
 
 /// A channel endpoint represented by its resolved associated function.
@@ -88,6 +148,18 @@ pub struct JoinRule<'tcx> {
     /// post-order. Keeping these identities lets pre-coroutine MIR analysis
     /// find the actual reaction closures without matching source strings.
     pub body_def_ids: &'tcx crate::ty::List<LocalDefId>,
+    /// Exact source-declaration channel order for this reaction. This is
+    /// recovered from the per-rule compiler marker, not from generated names.
+    pub channel_indices: Vec<u32>,
+    /// Source channels whose result expressions are completed by this rule.
+    pub reply_channel_indices: Vec<u32>,
+    /// Defining body owner for this generated reaction. A dynamic endpoint
+    /// keeps all rule closures under one dispatch owner, so `body_index` is
+    /// the source-rule coordinate within that owner rather than an assumed
+    /// ordinal in the nested-body list (async rules can contain nested
+    /// coroutines of their own).
+    pub body_def_id: Option<LocalDefId>,
+    pub body_index: Option<u32>,
     pub span: Span,
 }
 

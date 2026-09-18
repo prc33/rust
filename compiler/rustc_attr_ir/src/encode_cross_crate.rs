@@ -156,6 +156,7 @@ impl AttributeKind {
             RustcIntrinsic => Yes,
             RustcIntrinsicConstStableIndirect => No,
             RustcJoinDirectAdapter { .. } => Yes,
+            RustcJoinRule { .. } => Yes,
             RustcJoinEndpoint { .. } => Yes,
             RustcLegacyConstGenerics { .. } => Yes,
             RustcLintOptDenyFieldAccess { .. } => Yes,

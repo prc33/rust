@@ -292,6 +292,104 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
     }
 }
 
+/// Parses the compiler-owned per-reaction marker emitted by the experimental
+/// `join impl` builtin. Unlike the endpoint shape marker, this is repeated for
+/// every source rule and preserves the actual channel order/reply mapping that
+/// later CFA must not reconstruct from generated method names.
+pub(crate) struct RustcJoinRuleParser;
+
+impl SingleAttributeParser for RustcJoinRuleParser {
+    const PATH: &[Symbol] = &[sym::join_rule];
+    const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[
+        Allow(Target::Method(MethodKind::Inherent)),
+    ]);
+    const TEMPLATE: AttributeTemplate = template!(
+        List: &[
+            "index = N, channel_order = N, channel_count = N, reply_mask = N, body_index = N, async_rule = 0|1"
+        ]
+    );
+    const STABILITY: AttributeStability = unstable!(joins);
+
+    fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
+        let list = cx.expect_list(args, cx.attr_span)?;
+        let mut index = None;
+        let mut channel_order = None;
+        let mut channel_count = None;
+        let mut reply_mask = None;
+        let mut body_index = None;
+        let mut async_rule = None;
+        let mut errored = false;
+
+        for item in list.mixed() {
+            let Some((ident, value)) = cx.expect_name_value(item, item.span(), None) else {
+                errored = true;
+                continue;
+            };
+            let slot = match ident.name {
+                sym::index => &mut index,
+                sym::channel_order => &mut channel_order,
+                sym::channel_count => &mut channel_count,
+                sym::reply_mask => &mut reply_mask,
+                sym::body_index => &mut body_index,
+                sym::async_rule => &mut async_rule,
+                _ => {
+                    cx.adcx().expected_specific_argument(
+                        ident.span,
+                        &[
+                            sym::index,
+                            sym::channel_order,
+                            sym::channel_count,
+                            sym::reply_mask,
+                            sym::body_index,
+                            sym::async_rule,
+                        ],
+                    );
+                    errored = true;
+                    continue;
+                }
+            };
+            *slot = parse_join_endpoint_u32(cx, value);
+        }
+
+        if errored {
+            return None;
+        }
+        let Some((index, channel_order, channel_count, reply_mask, body_index, async_rule)) = index
+            .zip(channel_order)
+            .zip(channel_count)
+            .zip(reply_mask)
+            .zip(body_index)
+            .zip(async_rule)
+            .map(|(((((index, channel_order), channel_count), reply_mask), body_index), async_rule)| {
+                (index, channel_order, channel_count, reply_mask, body_index, async_rule != 0)
+            })
+        else {
+            let attr_span = cx.attr_span;
+            cx.adcx().expected_specific_argument(
+                attr_span,
+                &[
+                    sym::index,
+                    sym::channel_order,
+                    sym::channel_count,
+                    sym::reply_mask,
+                    sym::body_index,
+                    sym::async_rule,
+                ],
+            );
+            return None;
+        };
+
+        Some(AttributeKind::RustcJoinRule {
+            index,
+            channel_order,
+            channel_count,
+            reply_mask,
+            body_index,
+            async_rule,
+        })
+    }
+}
+
 fn parse_join_endpoint_u32(cx: &mut AcceptContext<'_, '_>, value: &NameValueParser) -> Option<u32> {
     let literal = value.value_as_lit();
     let MetaItemLit { kind: LitKind::Int(number, _), .. } = literal else {

@@ -1302,6 +1302,22 @@ pub enum AttributeKind {
     /// with the first adapter found in an impl.
     RustcJoinDirectAdapter { channel: u32, rule: u32, constructor: bool },
 
+    /// Compiler-generated metadata for one source join reaction. The marker
+    /// is attached to a private method so repeated rules remain independently
+    /// discoverable after the builtin expansion has been lowered to HIR.
+    /// `channel_order` packs the source pattern order in five-bit channel
+    /// indices; `channel_count` keeps an order sentinel distinguishable from
+    /// an empty pattern, and `reply_mask` identifies the result-bearing
+    /// channels returned by the rule.
+    RustcJoinRule {
+        index: u32,
+        channel_order: u32,
+        channel_count: u32,
+        reply_mask: u32,
+        body_index: u32,
+        async_rule: bool,
+    },
+
     /// Represents the compiler-generated join endpoint contract.
     ///
     /// This marker is emitted by the `join impl` builtin expansion and is

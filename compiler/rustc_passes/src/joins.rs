@@ -2,7 +2,10 @@
 
 use rustc_hir as hir;
 use rustc_hir::{ImplItemKind, ItemKind, find_attr};
-use rustc_middle::middle::joins::{JoinChannel, JoinDefinition, JoinDefinitions, JoinRule};
+use rustc_middle::middle::joins::{
+    JoinAdmissionPolicy, JoinCancellationPolicy, JoinChannel, JoinDefinition, JoinDefinitions,
+    JoinDemandPolicy, JoinExecutionPolicy, JoinLifetimePolicy, JoinPolicy, JoinRule,
+};
 use rustc_middle::query::Providers;
 use rustc_middle::ty::TyCtxt;
 use tracing::info;
@@ -43,10 +46,26 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
         let mut constructor_def_id = None;
         let mut scoped_constructor_def_id = None;
         let mut dispatch_method = None;
+        let mut rule_markers = Vec::new();
         for item_id in impl_.items {
             let item = tcx.hir_impl_item(*item_id);
             let ImplItemKind::Fn(_, _) = item.kind else { continue };
             let method_def_id = item.owner_id.def_id;
+            if let Some(marker) = find_attr!(
+                tcx,
+                method_def_id,
+                RustcJoinRule {
+                    index,
+                    channel_order,
+                    channel_count,
+                    reply_mask,
+                    body_index,
+                    async_rule,
+                } => (*index, *channel_order, *channel_count, *reply_mask, *body_index, *async_rule)
+            ) {
+                rule_markers.push(marker);
+                continue;
+            }
             if item.ident.name.as_str() == "__join_dispatch_once" {
                 dispatch_method = Some(method_def_id);
             } else if item.ident.name.as_str() == "new" {
@@ -57,6 +76,9 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                 channel_items.push((method_def_id, item.ident.name));
             }
         }
+
+        let body_owner = dispatch_method
+            .or_else(|| channel_items.first().map(|(method, _)| *method));
 
         let span = item.span;
         let channels = channel_items
@@ -132,16 +154,79 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                 }
             })
             .collect();
-        let rules = dispatch_method
-            .into_iter()
-            .map(|method_def_id| JoinRule {
+        rule_markers.sort_by_key(|(index, ..)| *index);
+        let body_def_ids = body_owner
+            .map(|method_def_id| tcx.nested_bodies_within(method_def_id))
+            .unwrap_or_else(|| tcx.mk_local_def_ids(&[]));
+        let method_def_id = body_owner.unwrap_or(impl_def_id);
+        let rules = if rule_markers.is_empty() {
+            // A malformed or older expansion must not manufacture an
+            // optimistic pattern. Keep a conservative descriptor so dumps
+            // and diagnostics remain useful while CFA sees empty inputs and
+            // refuses pattern-specific rewrites.
+            vec![JoinRule {
                 method_def_id,
                 arity: declared_arity,
                 is_async: declared_async_rule,
-                body_def_ids: tcx.nested_bodies_within(method_def_id),
+                body_def_ids,
+                channel_indices: Vec::new(),
+                reply_channel_indices: Vec::new(),
+                body_def_id: None,
+                body_index: None,
                 span,
-            })
-            .collect();
+            }]
+        } else {
+            rule_markers
+                .into_iter()
+                .map(|(_, channel_order, channel_count, reply_mask, body_index, is_async)| {
+                    let channel_indices = decode_channel_order(channel_order, channel_count);
+                    let reply_channel_indices = if channel_order == u32::MAX
+                        || reply_mask == u32::MAX
+                    {
+                        Vec::new()
+                    } else {
+                        channel_indices
+                            .iter()
+                            .copied()
+                            .filter(|channel| reply_mask & (1u32 << channel) != 0)
+                            .collect()
+                    };
+                    let body_def_id = (channel_order != u32::MAX).then_some(method_def_id);
+                    JoinRule {
+                        method_def_id,
+                        arity: channel_count,
+                        is_async,
+                        body_def_ids,
+                        channel_indices,
+                        reply_channel_indices,
+                        body_def_id,
+                        body_index: (channel_order != u32::MAX).then_some(body_index),
+                        span,
+                    }
+                })
+                .collect()
+        };
+
+        let policy = if direct_unary {
+            JoinPolicy {
+                admission: JoinAdmissionPolicy::Immediate,
+                demand: JoinDemandPolicy::DemandGated,
+                execution: JoinExecutionPolicy::CallerDriven,
+                cancellation: JoinCancellationPolicy::OwnedFuture,
+                lifetime: JoinLifetimePolicy::CallerOwned,
+            }
+        } else {
+            JoinPolicy {
+                admission: JoinAdmissionPolicy::Immediate,
+                // The compatibility matcher may claim and execute a shared
+                // reaction from the submitting caller. This is deliberately
+                // not recorded as the ordinary unary demand-gated contract.
+                demand: JoinDemandPolicy::EagerCompatibility,
+                execution: JoinExecutionPolicy::CallerDriven,
+                cancellation: JoinCancellationPolicy::IndependentReplies,
+                lifetime: JoinLifetimePolicy::OwnedShared,
+            }
+        };
 
         endpoints.push(JoinDefinition {
             impl_def_id,
@@ -157,11 +242,19 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             constructor_def_id,
             scoped_constructor_def_id,
             rules,
+            policy,
         });
         info!(target: "rustc_join", endpoint = ?impl_def_id, "join endpoint descriptor collected");
     }
 
     JoinDefinitions { endpoints }
+}
+
+fn decode_channel_order(order: u32, count: u32) -> Vec<u32> {
+    if order == u32::MAX || count > 6 {
+        return Vec::new();
+    }
+    (0..count).map(|position| (order >> (position * 5)) & 0x1f).collect()
 }
 
 pub(crate) fn provide(providers: &mut Providers) {
