@@ -1,0 +1,25 @@
+<!doctype html><meta charset='utf-8'><title>Compiler forwarding</title><style>body{font:16px system-ui;margin:2rem}pre{white-space:pre-wrap}</style><pre># Compiler forwarding benchmark
+
+standalone ready futures; construction, polling, and destruction included; no executor/thread handoff
+
+30 randomized blocks, 1000000 operations/sample, three warmups. Values are median ns/op.
+
+| Case | Off | Analyze | Optimize |
+| --- | ---: | ---: | ---: |
+| direct | 1.51 | 1.44 | 1.50 |
+| async | 1.41 | 1.65 | 1.56 |
+| unary | 1.45 | 1.46 | 1.51 |
+| forwarding | 483.45 | 489.10 | 30.43 |
+
+Forwarding optimize/off: median paired ratio 0.063; 95% bootstrap CI [0.062, 0.064].
+
+This measures the supported private result adapter, including remaining group setup. It does not measure shared joins or establish general JCAM fusion.
+
+Allocation calls/op (separate instrumented binaries; includes realloc):
+
+| Case | Off | Analyze | Optimize |
+| --- | ---: | ---: | ---: |
+| direct | 0.00 | 0.00 | 0.00 |
+| async | 0.00 | 0.00 | 0.00 |
+| unary | 0.00 | 0.00 | 0.00 |
+| forwarding | 11.00 | 11.00 | 0.00 |</pre>

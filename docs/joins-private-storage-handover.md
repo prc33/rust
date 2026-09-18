@@ -4,31 +4,26 @@ Date: 2026-09-18. This is the next-agent entry point. It supersedes the
 constructor-elimination instructions in `joins-next-slice.md`, but not the
 review's remaining correctness gates or the accepted async semantics.
 
-## Resume here — unfinished verification at credit-limited handover
+## Validation completed — 2026-09-18
 
-The structural code is implemented but **NOT yet native-tested or benchmarked**.
-The initial multi-crate `./x check` passed before the final
-`PrivateInstancePlan` refactor. The full compiler/library build is still running
-in tool session `38422` (`./x build compiler --stage 1 -j2 && ./x build library
---stage 1 -j2`). A subsequent MIR check is waiting for the build lock in session
-`28482`, with output in `/tmp/join-private-plan-check.log`. Initial successful
-check log: `/tmp/join-private-check.log`. Shell/Python syntax checks and both
-worktree diff checks passed. Do not delete the build lock or start another
-compiler build while these processes are active.
+The full compiler/library rebuild, targeted MIR check and native suites completed
+successfully. `run_native.sh` passed in `off`, `analyze` and `optimize` with
+`-Zvalidate-mir`; expected compile-error and panic-transport fixtures behaved as
+designed. Optimized MIR contains the paired
+`Inner::__join_private_new()`/`Inner::__join_direct_step()` calls, while the
+other modes retain public construction and registration.
 
-**First task is verification of this patch, not Task 1's extra coverage.**
-Poll the existing sessions if available. Otherwise check build status and let
-the existing build finish before issuing a cached build/check. Run the native
-suites in all three modes with fresh `/tmp/join-private-storage-MODE` paths,
-then the benchmark with `/tmp/join-private-storage-bench-20260918`. Fix failures
-without weakening gates. Newly added `joins_private_owned.rs`, the destructor
-negative, saved reentrant future, paired MIR assertions and zero-allocation
-driver assertions have not run against the rebuilt compiler yet.
+The fresh lifecycle run is archived at
+`docs/joins-forwarding-private-storage-20260918/`: 30 randomized blocks of one
+million operations, three warmups, construction/poll/drop included. Forwarding
+is 483.45/489.10/30.43 ns/op off/analyze/optimize; allocation calls are 11/11/0.
+The paired optimize/off ratio is 0.063 with bootstrap 95% interval [0.062,
+0.064]. This validates private storage for the narrow eligible domain; it does
+not validate shared joins, fixed queues or general JCAM fusion.
 
-The most recent validated checkpoint is rust `cf50cfc835b`, library `61ae5cd`:
-forwarding 541.99/550.21/97.01 ns/op off/analyze/optimize, allocations 11/11/2.
-Do not report zero allocations or a speedup for the new patch until measured.
-Only after those gates pass should the bounded follow-on tasks below begin.
+Resume with LLVM hot-path attribution and the bounded negative coverage below.
+The complete HTML status report is
+[`joins-project-report-20260918.html`](joins-project-report-20260918.html).
 
 This branch is the owner's AI-written research project. No upstream maintainer
 is being asked to review it; any eventual upstream proposal will be rewritten
@@ -124,7 +119,7 @@ must continue using ordinary caller-owned futures in every CFA mode.
 This is not full JCAM fusion, full typed HIR patterns, shared demand semantics,
 or fixed-queue analysis. Do not mark any of those complete from this result.
 
-## Task 1 — extend tests without changing eligibility
+## Task 1 — extend tests without changing eligibility (partly complete)
 
 Work in `../joins-library/compiler-tests/`. Add cases to existing fixtures,
 not a second test harness. Use manual bounded polls rather than timeouts.
@@ -144,11 +139,12 @@ not a second test harness. Use manual bounded polls rather than timeouts.
    exactly one paired rewrite in optimize, zero in off/analyze. Do not accept
    another fixture's rewrite record as their evidence.
 
-Completion: all three native suites exit zero with `-Zvalidate-mir`; every
-positive has its own matching record and every negative retains public calls.
-No compiler rebuild is needed for test-only changes.
+Completion so far: all three native suites exit zero with `-Zvalidate-mir`; the
+owned-payload, destructor, reentrant, paired-MIR and zero-allocation gates pass.
+Still add repeated-request, same-type-instance and pending-abandonment negatives
+before widening eligibility.
 
-## Task 2 — attribute remaining cost, using current generated code
+## Task 2 — attribute remaining cost, using current generated code (timing complete)
 
 Run `scripts/run_compiler_forwarding.py` from the library with a new output
 directory, `--iterations 1000000 --samples 30`. It compiles actual join source,
@@ -172,15 +168,17 @@ Do not label a whole-binary symbol search a flamegraph or proof of hot-path
 allocation. First improvement target is unnecessary hot-path work, not removal
 of a required scheduling branch.
 
-Completion: committed evidence answers what remains after zero allocation;
-no speculative optimization patch is needed for this task.
+Completion so far: allocation evidence is committed and the optimized path is
+zero-allocation. LLVM/hot-path profiling remains before another lowering patch;
+no speculative optimization patch is needed for that profiling task.
 
-## Task 3 — small cleanup only, with preserved evidence
+## Task 3 — small cleanup only, with preserved evidence (complete for this slice)
 
-Update `JOINS-SUMMARY.md` with the current run, exact scope and limitations.
-Keep the preceding 11-to-2-allocation run as the control. Link this handover
-from older plans and mark constructor elimination complete only for this
-domain. Remove obsolete statements that all forwarding retains construction.
+`JOINS-SUMMARY.md` now records the current run, exact scope and limitations.
+The preceding 11-to-2-allocation run remains the control. Constructor
+elimination is marked complete only for this narrow domain; older measurements
+retain their historical wording. Remove obsolete statements that all
+*current* forwarding retains construction.
 Do not delete the compatibility matcher, dispatch guard, source lowering or
 library code still reached by negatives/fallbacks. Do not delete historical
 evidence. Remove helpers only after `rg` and successful native/workspace tests

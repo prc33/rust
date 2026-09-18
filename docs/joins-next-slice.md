@@ -1,14 +1,15 @@
 # Execution specification: authoritative join MIR and first result fusion
 
-Credit-limited handover: the paired private-storage implementation is now in
-the working branch, but its rebuild/native/benchmark gates remain unfinished.
-**Start at [the handover resume block](joins-private-storage-handover.md)**;
-do not repeat design work or claim constructor elimination verified yet.
+The paired private-storage implementation is now validated in all three native
+modes and in a fresh 30-block lifecycle benchmark. Forwarding is 483.45/489.10/
+30.43 ns/op off/analyze/optimize, with 11/11/0 allocation calls. **Start at
+[the handover](joins-private-storage-handover.md)** for the remaining profiling
+and negative-coverage gates; do not widen the proof domain yet.
 
 Latest immediate-await proof and all-mode native gates passed. The follow-up
-[lifecycle run](joins-forwarding-reply-proof-20260918/summary.md) retains the
-benefit (541.99/550.21/97.01 ns/op off/analyze/optimize, 11/11/2 allocations).
-Next is item 2 below: safe constructor elimination, not widening eligibility.
+[lifecycle run](joins-forwarding-private-storage-20260918/summary.md) measures
+the validated private-storage path. Next is LLVM/hot-path attribution and
+negative coverage; do not widen eligibility before those gates.
 
 September 18 measured follow-up: the guarded private forwarding path is now
 472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and

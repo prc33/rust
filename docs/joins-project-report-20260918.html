@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rust joins research status — 2026-09-18</title>
+  <style>
+    :root { color-scheme: light dark; --bg:#fff; --fg:#202124; --muted:#5f6368; --line:#d9dce1; --good:#137333; --warn:#9a6700; }
+    @media (prefers-color-scheme:dark) { :root { --bg:#202124; --fg:#f1f3f4; --muted:#bdc1c6; --line:#5f6368; --good:#81c995; --warn:#fdd663; } }
+    body { background:var(--bg); color:var(--fg); font:16px/1.45 system-ui,sans-serif; margin:0 auto; max-width:980px; padding:28px 22px 56px; }
+    h1 { margin:0 0 4px; font-size:2rem; } h2 { margin-top:30px; font-size:1.35rem; }
+    .date,.muted { color:var(--muted); } .status { border-left:4px solid var(--good); padding:10px 14px; margin:20px 0; }
+    .status strong { color:var(--good); } table { border-collapse:collapse; width:100%; margin:12px 0 18px; }
+    th,td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:right; } th:first-child,td:first-child { text-align:left; }
+    th { font-weight:650; } code { font-size:.92em; } a { color:inherit; }
+    ul { margin-top:8px; } .next li { margin:7px 0; } .small { font-size:.9em; color:var(--muted); }
+  </style>
+</head>
+<body>
+  <h1>Rust joins research status</h1>
+  <div class="date">18 September 2026 · research fork, Rust branch <code>joins</code></div>
+
+  <div class="status">
+    <strong>Current result: the first allocation-free compiler fusion path is validated.</strong>
+    A proven private unary result channel now lowers to an empty endpoint plus a
+    direct ready-reply adapter. The complete lifecycle benchmark measures
+    30.43 ns/op optimised versus 483.45 ns/op without CFA, with 0 versus 11
+    allocation calls per operation.
+  </div>
+
+  <h2>Performance</h2>
+  <p>Fresh run: 30 randomized blocks, one million operations per block, three
+    warmups, optimized libraries, and construction, first poll, and destruction
+    included. These are standalone ready computations: no executor or thread
+    handoff. Checksums and rewrite counts were asserted before timing.</p>
+
+  <table>
+    <thead><tr><th>Case (ns/op)</th><th>CFA off</th><th>Analyze</th><th>Optimize</th></tr></thead>
+    <tbody>
+      <tr><td>Direct function</td><td>1.51</td><td>1.44</td><td>1.50</td></tr>
+      <tr><td>Ordinary async</td><td>1.41</td><td>1.65</td><td>1.56</td></tr>
+      <tr><td>Isolated unary join</td><td>1.45</td><td>1.46</td><td>1.51</td></tr>
+      <tr><td>Private result forwarding</td><td>483.45</td><td>489.10</td><td>30.43</td></tr>
+    </tbody>
+  </table>
+
+  <table>
+    <thead><tr><th>Allocation calls/op</th><th>CFA off</th><th>Analyze</th><th>Optimize</th></tr></thead>
+    <tbody>
+      <tr><td>Direct / async / unary</td><td>0</td><td>0</td><td>0</td></tr>
+      <tr><td>Private result forwarding</td><td>11</td><td>11</td><td>0</td></tr>
+    </tbody>
+  </table>
+
+  <p>The optimise/off median ratio is <strong>0.063</strong> (bootstrap 95%
+  interval [0.062, 0.064]), a 15.89× ratio-of-medians improvement. This is a
+  narrow result-channel optimisation, not evidence that shared joins or all
+  join patterns have async-level performance.</p>
+
+  <p>Raw evidence: <a href="joins-forwarding-private-storage-20260918/summary.md">summary</a>,
+  <a href="joins-forwarding-private-storage-20260918/report.html">generated report</a>,
+  <a href="joins-forwarding-private-storage-20260918/samples.jsonl">samples</a>,
+  <a href="joins-forwarding-private-storage-20260918/allocations.json">allocation probe</a>,
+  and <a href="joins-forwarding-private-storage-20260918/manifest.json">provenance</a>.</p>
+
+  <h2>What is implemented</h2>
+  <ul>
+    <li>Join syntax still expands through the builtin frontend, while rustc
+      collects typed endpoint/channel/rule descriptors from resolved HIR.</li>
+    <li>MIR calls carry typed <code>JoinCall</code> metadata on the real call
+      terminator; executable operands remain ordinary Rust operands. Legacy
+      marker statements are diagnostic-only and are erased before codegen.</li>
+    <li>Intrabody CFA tracks constructor origins, aliases, escapes, call edges,
+      occupancy facts, closedness and deterministic MIR fingerprints.</li>
+    <li>Result fusion requires a compiler-generated <code>.await</code> ownership
+      path. Helpers, borrows, aggregates, drops, returns, branches, explicit
+      <code>into_future</code>, scopes, competition, cycles and unknown origins
+      are rejected.</li>
+    <li>The paired MIR rewrite validates and changes both constructor and
+      channel call through an exclusive <code>PrivateInstancePlan</code>. The
+      selected endpoint uses <code>Option&lt;DynamicMatcher&gt;</code>; ordinary
+      construction remains available for the guarded nested-dispatch fallback.</li>
+    <li>The fallback preserves the synchronous trampoline’s pending/queued
+      behaviour. No runtime lock implementation was substituted for the
+      protocol, and no custom LLVM pass was added.</li>
+    <li>Existing coroutine lowering, polling, pinning, drop elaboration and
+      LLVM lowering continue to handle reaction bodies.</li>
+  </ul>
+
+  <h2>Verification completed</h2>
+  <ul>
+    <li>Stage-1 compiler and library rebuilt; targeted compiler checks passed.</li>
+    <li><code>compiler-tests/run_native.sh</code> passed in CFA
+      <code>off</code>, <code>analyze</code> and <code>optimize</code>, with
+      <code>-Zvalidate-mir</code>.</li>
+    <li>Optimised MIR contains both
+      <code>Inner::__join_private_new()</code> and
+      <code>Inner::__join_direct_step()</code>. Off/analyse retain the public
+      constructor/channel calls.</li>
+    <li>Positive owned-payload and reentrant scheduling fixtures pass. Negative
+      fixtures retain the public path; expected compile-error and panic-transport
+      fixtures behave as designed.</li>
+    <li>The benchmark driver asserts exactly one optimise fusion, none in
+      off/analyse, zero optimise forwarding allocations, and matching checksums.</li>
+  </ul>
+
+  <h2>What remains</h2>
+  <ul>
+    <li><strong>Shared semantics:</strong> demand-gated multi-input matching,
+      atomic claim, multiple independent replies, admission failure,
+      cancellation and execution-owner policy are not compiler-native yet.</li>
+    <li><strong>CFA completeness:</strong> analysis is conservative and mostly
+      local. Cross-crate identities, loops, indirect calls, full source rule
+      patterns, generic substitutions, borrowed lifetimes and pass-wide proof
+      invalidation remain open.</li>
+    <li><strong>IR:</strong> join operations are typed metadata over ordinary
+      MIR, not yet first-class executable HIR/MIR operations with a complete
+      <code>LowerJoins</code> boundary.</li>
+    <li><strong>Storage:</strong> fixed 0/1 queue bounds, stack allocation and
+      atomic/CAS representations have not been proved or selected generally.</li>
+    <li><strong>DataFusion:</strong> no production operator coordination has yet
+      been ported to first-class joins, and no DataFusion end-to-end comparison
+      is established.</li>
+    <li><strong>Profiling:</strong> the benchmark includes timing and allocation
+      probes; flamegraph samples and detailed hot-path attribution are still
+      needed before further lowering changes.</li>
+  </ul>
+
+  <h2>Next steps, in order</h2>
+  <ol class="next">
+    <li>Inspect the new optimized LLVM IR/assembly and collect a profile of the
+      already-built benchmark binaries. Separate hot-path work from the cold
+      nested-dispatch fallback.</li>
+    <li>Add negative coverage for two same-type instances, repeated requests,
+      pending-future abandonment and owned output destruction. Keep eligibility
+      unchanged and require all three native modes.</li>
+    <li>Replace count-only descriptors with complete typed rule/policy records;
+      keep analysis separate from MIR mutation and invalidate certificates at
+      every transforming pass.</li>
+    <li>Implement conservative CFA for fixed occupancy (especially 0/1), then
+      select inline slots or stack storage only where ownership and lifetime
+      proofs are explicit. Do not pattern-match locks.</li>
+    <li>Define and lower the shared join protocol, reusing Rust coroutine
+      machinery for reaction bodies and applying thread/lifetime requirements
+      only at actual cross-thread boundaries.</li>
+    <li>Port a bounded DataFusion coordination path, then run matched native,
+      async and join benchmarks with attribution and regression gates.</li>
+  </ol>
+
+  <p class="small">Rust commit <code>3538e2df43d</code> is pushed to
+  <code>prc33/rust:joins</code>. Library commit <code>d69bf13</code> is local;
+  that checkout has no configured remote. The working tree’s unrelated
+  <code>AGENTS.md</code> deletion and <code>ph2</code> file are preserved.</p>
+
+  <p><a href="JOINS-SUMMARY.md">Text checkpoint</a> ·
+  <a href="joins-private-storage-handover.md">Implementation handover</a> ·
+  <a href="joins-review-implementation-plan.md">Safety and IR plan</a></p>
+</body>
+</html>
