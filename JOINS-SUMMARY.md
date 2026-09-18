@@ -96,8 +96,7 @@ legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
-At the Rust safety checkpoint (with the follow-up local-use refinement staged),
-the supervisor safety slice is exercised by
+At Rust commit `4829810a8d5`, the supervisor safety slice is exercised by
 compiler-owned checks. Direct
 adapters carry explicit source channel/rule coordinates, are accepted only for
 the one-rule unary group shape, and must have the exact resolved channel ABI.

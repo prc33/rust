@@ -6,7 +6,7 @@ extending fusion or shared matcher specialisation. It identifies gaps in adapter
 association, scope preservation, instance privacy, and the snapshot fingerprint
 described below. Earlier completion claims here do not establish those gates.
 
-Updated 2026-09-18 at the Rust safety checkpoint after `c53d044d913`. Steps 1 and 2's call carrier, the mode-independent unary
+Updated 2026-09-18 at Rust commit `4829810a8d5`, after `c53d044d913`. Steps 1 and 2's call carrier, the mode-independent unary
 contract, and the first result-channel forwarding rewrite are implemented on
 the working branch. The review safety gates for adapter identity, scoped
 construction, candidate-instance aggregate escapes, concrete operand checks,

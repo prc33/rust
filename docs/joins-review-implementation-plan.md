@@ -30,8 +30,8 @@ for the backend boundary.
 
 ## What is already present
 
-Checkpoint update, 2026-09-18: Gates 1A/1B/1C and 3 have a first conservative
-vertical slice in the working tree. Generated direct adapters carry explicit
+Checkpoint update, 2026-09-18 at Rust commit `4829810a8d5`: Gates 1A/1B/1C
+and 3 have a first conservative vertical slice. Generated direct adapters carry explicit
 channel/rule coordinates and the descriptor query checks the one-rule unary
 shape plus exact resolved ABI. Optimize-only fusion rejects scoped constructor
 identity, candidate aliases passed to unsupported calls, projections/casts,
