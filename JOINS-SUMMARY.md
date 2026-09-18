@@ -27,9 +27,16 @@ This is the narrow private unary result domain only; shared semantics, fixed
 queue selection and DataFusion remain open. See the [complete HTML report](docs/joins-project-report-20260918.html)
 and [raw run](docs/joins-forwarding-private-storage-20260918/summary.md).
 Static LLVM/assembly inspection for the same binaries is recorded in the
-[hot-path attribution note](docs/joins-llvm-attribution-20260918.md). Hardware
-sampling is unavailable in this container (`perf_event_paranoid=4`), so no
-flamegraph or CPU sample attribution is claimed.
+[hot-path attribution note](docs/joins-llvm-attribution-20260918.md). After the
+owner authorized lowering `perf_event_paranoid` from 4 to 1, sequential
+call-graph profiles were collected with zero lost samples; see the
+[profile report](docs/joins-perf-profile-20260918/README.md).
+The profile reaches disassembly/basic-block granularity, not exact per-
+instruction latency. It identifies the remaining optimized-path state-copy,
+dispatch-pump and drop work, while the off path spends its time in dynamic
+allocation, matcher/queue growth, source-location copying and reply cleanup;
+the profile report records the sampled addresses and the limits of that
+attribution.
 
 ### Reply ownership proof tightened — September 18
 
@@ -220,8 +227,10 @@ the broader JCAM certificate.
 The rejection fixture now also covers two same-type private endpoint instances
 and two requests on one endpoint. Both remain on the public construction and
 channel path in optimize, and the full native suite passes them in all three
-modes. Pending-future abandonment and per-fixture rewrite-count assertions are
-still open.
+modes. The owned-result fixture checks output destruction and panic transport;
+the runtime now withdraws dropped unmatched requests atomically and tests that
+behavior in the unit and native suites. Per-fixture rewrite-count assertions
+remain open.
 
 ## Next execution gates
 
@@ -261,8 +270,8 @@ LLVM-facing boundary; effectful operations cannot be erased as no-ops.
 5. Prove per-instance queue bounds and select fixed storage without dynamic
    growth. Stack allocation additionally requires a lifetime/non-escape proof.
 6. Measure the generated path against equal-semantics controls, inspect LLVM
-   output and (when a privileged sampler is available) collect profiles. Then
-   resume DataFusion coordination migration and performance/complexity
+   output and repeat the committed profiling protocol for any new lowering.
+   Then resume DataFusion coordination migration and performance/complexity
    comparisons.
 
 The longer research programme is in the companion library checkout at

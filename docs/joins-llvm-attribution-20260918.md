@@ -6,19 +6,21 @@ into evidence that a symbol ran on the timed path.
 
 ## Sampling status
 
-The already-built optimized binary was checked with `perf`, separately from
-the benchmark matrix. Sampling is unavailable in this container:
+The first attempt to check the already-built optimized binary with `perf`,
+separately from the benchmark matrix, was blocked by the container policy:
 
 ```text
 /proc/sys/kernel/perf_event_paranoid = 4
 perf stat: Access to performance monitoring and observability operations is limited
 ```
 
-The process has none of the capabilities (`CAP_PERFMON`, `CAP_SYS_PTRACE` or
-`CAP_SYS_ADMIN`) required to override that policy. No CPU sample counts or
-flamegraph have therefore been claimed. A privileged host, or an external
-profiler that can attach to this process, is still required for cycle-level
-attribution.
+With the owner's authorization, `kernel.perf_event_paranoid` was lowered to
+`1`; the container then allowed user-space counters and call-graph sampling.
+The resulting reports are committed in
+[`joins-perf-profile-20260918/README.md`](joins-perf-profile-20260918/README.md). They contain
+330 optimized-forwarding samples and 4,761 off-forwarding samples, with zero
+lost samples. The initial failure remains recorded here because ordinary
+unprivileged runs on this host will still hit the original policy.
 
 ## Static evidence
 
@@ -64,14 +66,19 @@ checksums and exactly one optimize rewrite. This demonstrates removal of the
 measured allocation path, not removal of every runtime branch or synchronization
 instruction.
 
-## Next profiling gate
+## Profiling gate result
 
-Run the three already-built binaries one at a time under a permitted sampler,
-using the same case selection and iteration count. Record sample counts for the
-forwarding closure, the private adapter, fallback dispatch, allocator, reply
-cell, tracing and synchronization. Compare against ordinary async. Keep the
-off/analyze/optimize artifacts and profiler settings together; do not run
-profiling jobs concurrently with one another or with the benchmark matrix.
+The three already-built forwarding/control binaries were run one at a time
+under `perf stat`; optimized and off forwarding were also sampled with DWARF
+call graphs. The optimized profile is dominated by the generated forwarding
+closure, synchronous queue pumping and endpoint cleanup. The off profile is
+dominated by dynamic reaction completion, allocation/free, matcher creation,
+queue growth and reply cleanup. See the committed profile README for exact
+percentages and commands.
+
+Do not run profiling jobs concurrently with one another or with the benchmark
+matrix. A future privileged run should compare any new lowering against these
+same case selections and preserve the binary hashes and sample counts.
 
 Do not add a work-stealing scheduler or a lock-specific compiler rewrite based
 on this static evidence. The current scheduler is a compatibility runtime, and

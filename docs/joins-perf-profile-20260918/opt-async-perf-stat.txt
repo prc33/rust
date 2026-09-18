@@ -1,0 +1,10 @@
+
+ Performance counter stats for '/tmp/join-private-storage-bench-20260918/build/optimize async 1000000' (3 runs):
+
+           6159962      cycles                                                                  ( +-  4.46% )
+          12416620      instructions                     #    2.02  insn per cycle              ( +-  0.05% )
+           1292619      branches                                                                ( +-  0.08% )
+             35109      branch-misses                    #    2.72% of all branches             ( +-  0.74% )
+
+          0.004042 +- 0.000223 seconds time elapsed  ( +-  5.51% )
+

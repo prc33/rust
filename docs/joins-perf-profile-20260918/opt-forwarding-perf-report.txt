@@ -1,0 +1,238 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 330  of event 'cycles:P'
+# Event count (approx.): 831065048
+#
+# Children      Self  Command   Shared Object         Symbol                                                                                                                
+# ........  ........  ........  ....................  ......................................................................................................................
+#
+    99.53%     0.00%  optimize  optimize              [.] _start
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  libc.so.6             [.] __libc_start_main_impl (inlined)
+            |
+            ---__libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  libc.so.6             [.] __libc_start_call_main
+            |
+            ---__libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  optimize              [.] main
+            |
+            ---main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  optimize              [.] _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+            |
+            ---_RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  optimize              [.] _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     0.00%  optimize  optimize              [.] _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+                --94.77%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                          |          
+                          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                          |          
+                          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                          |          
+                           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.53%     4.76%  optimize  optimize              [.] _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+            |          
+            |--94.77%--_RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+            |          _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+            |          |          
+            |          |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+            |          |          
+            |          |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |          |          
+            |          |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+            |          |          
+            |           --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+            |          
+             --4.76%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+
+    94.77%    69.48%  optimize  optimize              [.] _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+            |          
+            |--69.48%--_start
+            |          __libc_start_main_impl (inlined)
+            |          __libc_start_call_main
+            |          main
+            |          _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+            |          _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+            |          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+            |          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+            |          _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+            |          
+             --25.29%--_RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+                       |          
+                       |--13.16%--_RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+                       |          
+                       |--8.16%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                       |          
+                       |--2.73%--_RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+                       |          
+                        --0.94%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    13.16%    13.16%  optimize  optimize              [.] _RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+               _RNvCsga9xRFLl56N_13joins_runtime23run_one_queued_sync_job
+
+     8.16%     8.16%  optimize  optimize              [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+
+     2.73%     2.73%  optimize  optimize              [.] _RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+               _RNvXNvCsga9xRFLl56N_13joins_runtime18___join_sync_inlineNtB2_5ResetNtNtNtCsj1oupHUQTQJ_4core3ops4drop4Drop4drop
+
+     0.94%     0.94%  optimize  optimize              [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB7_7Forward3run0B7_
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

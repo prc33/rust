@@ -1,0 +1,10 @@
+
+ Performance counter stats for '/tmp/join-private-storage-bench-20260918/build/optimize forwarding 1000000' (3 runs):
+
+          81692342      cycles                                                                  ( +-  0.54% )
+         153664700      instructions                     #    1.88  insn per cycle              ( +-  0.01% )
+          29342050      branches                                                                ( +-  0.01% )
+             43523      branch-misses                    #    0.15% of all branches             ( +-  2.72% )
+
+          0.032057 +- 0.000481 seconds time elapsed  ( +-  1.50% )
+

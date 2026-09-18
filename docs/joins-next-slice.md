@@ -10,9 +10,10 @@ yet.
 Latest immediate-await proof and all-mode native gates passed. The follow-up
 [lifecycle run](joins-forwarding-private-storage-20260918/summary.md) measures
 the validated private-storage path. Static LLVM/hot-path attribution is now in
-[the attribution note](joins-llvm-attribution-20260918.md); privileged sampling
-and the remaining negative gates are still pending. Do not widen eligibility
-before those gates.
+[the attribution note](joins-llvm-attribution-20260918.md), with sequential
+call-graph reports in [the profile archive](joins-perf-profile-20260918/README.md).
+The remaining gate before widening is per-fixture proof accounting; do not
+widen eligibility before it.
 
 September 18 measured follow-up: the guarded private forwarding path is now
 472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and

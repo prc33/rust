@@ -1,0 +1,1724 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 4K of event 'cycles:P'
+# Event count (approx.): 12469646271
+#
+# Children      Self  Command  Shared Object         Symbol                                                                                                                                                                                                                                              
+# ........  ........  .......  ....................  ....................................................................................................................................................................................................................................................
+#
+    99.96%     0.00%  off      off                   [.] _start
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               |          
+                --99.94%--_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                          |          
+                          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                          |          |          
+                          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                          |          |          |          
+                          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                          |          |          |          |          
+                          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                      --2.23%--__GI___libc_free (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --1.76%--_int_free
+                          |          |          |          
+                          |          |          |--5.57%--__GI___libc_free (inlined)
+                          |          |          |          |          
+                          |          |          |           --3.70%--_int_free
+                          |          |          |                     |          
+                          |          |          |                      --1.10%--tcache_put (inlined)
+                          |          |          |          
+                          |          |          |--1.77%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.78%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          |          |          
+                          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                          |          |          |          |          
+                          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                          |          |          |          |          |          
+                          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --0.78%--_int_free
+                          |          |          |          |          |          
+                          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+                          |          |          |          |          
+                          |          |          |           --2.60%--__GI___libc_free (inlined)
+                          |          |          |                     |          
+                          |          |          |                      --1.56%--_int_free
+                          |          |          |          
+                          |          |           --1.31%--__GI___libc_free (inlined)
+                          |          |                     |          
+                          |          |                      --0.91%--_int_free
+                          |          |          
+                          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+                          |          |          |          
+                          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+                          |          |          |          
+                          |          |          |--2.36%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.94%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+                          |          |          
+                          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                          |          |          |          
+                          |          |          |--2.96%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.69%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          |          
+                          |          |--4.82%--__GI___libc_free (inlined)
+                          |          |          |          
+                          |          |           --2.14%--_int_free
+                          |          |          
+                          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                     |          
+                          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                                |          
+                          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+                          |          |                                           |          
+                          |          |                                            --0.57%--tcache_get (inlined)
+                          |          |                                                      tcache_get_n (inlined)
+                          |          |          
+                          |          |--3.77%--__GI___libc_malloc (inlined)
+                          |          |          |          
+                          |          |          |--0.97%--tcache_get (inlined)
+                          |          |          |          tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.83%--checked_request2size (inlined)
+                          |          |          
+                          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          
+                           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.96%     0.00%  off      libc.so.6             [.] __libc_start_main_impl (inlined)
+            |
+            ---__libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               |          
+                --99.94%--_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                          |          
+                          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                          |          |          
+                          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                          |          |          |          
+                          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                          |          |          |          |          
+                          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                      --2.23%--__GI___libc_free (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --1.76%--_int_free
+                          |          |          |          
+                          |          |          |--5.57%--__GI___libc_free (inlined)
+                          |          |          |          |          
+                          |          |          |           --3.70%--_int_free
+                          |          |          |                     |          
+                          |          |          |                      --1.10%--tcache_put (inlined)
+                          |          |          |          
+                          |          |          |--1.77%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.78%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          |          |          
+                          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                          |          |          |          |          
+                          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                          |          |          |          |          |          
+                          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --0.78%--_int_free
+                          |          |          |          |          |          
+                          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+                          |          |          |          |          
+                          |          |          |           --2.60%--__GI___libc_free (inlined)
+                          |          |          |                     |          
+                          |          |          |                      --1.56%--_int_free
+                          |          |          |          
+                          |          |           --1.31%--__GI___libc_free (inlined)
+                          |          |                     |          
+                          |          |                      --0.91%--_int_free
+                          |          |          
+                          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+                          |          |          |          
+                          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+                          |          |          |          
+                          |          |          |--2.36%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.94%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+                          |          |          
+                          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                          |          |          |          
+                          |          |          |--2.96%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.69%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          |          
+                          |          |--4.82%--__GI___libc_free (inlined)
+                          |          |          |          
+                          |          |           --2.14%--_int_free
+                          |          |          
+                          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                     |          
+                          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                                |          
+                          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+                          |          |                                           |          
+                          |          |                                            --0.57%--tcache_get (inlined)
+                          |          |                                                      tcache_get_n (inlined)
+                          |          |          
+                          |          |--3.77%--__GI___libc_malloc (inlined)
+                          |          |          |          
+                          |          |          |--0.97%--tcache_get (inlined)
+                          |          |          |          tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.83%--checked_request2size (inlined)
+                          |          |          
+                          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          
+                           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.96%     0.00%  off      libc.so.6             [.] __libc_start_call_main
+            |
+            ---__libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               |          
+                --99.94%--_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                          |          
+                          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                          |          |          
+                          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                          |          |          |          
+                          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                          |          |          |          |          
+                          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                      --2.23%--__GI___libc_free (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --1.76%--_int_free
+                          |          |          |          
+                          |          |          |--5.57%--__GI___libc_free (inlined)
+                          |          |          |          |          
+                          |          |          |           --3.70%--_int_free
+                          |          |          |                     |          
+                          |          |          |                      --1.10%--tcache_put (inlined)
+                          |          |          |          
+                          |          |          |--1.77%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.78%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          |          |          
+                          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                          |          |          |          |          
+                          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                          |          |          |          |          |          
+                          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --0.78%--_int_free
+                          |          |          |          |          |          
+                          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+                          |          |          |          |          
+                          |          |          |           --2.60%--__GI___libc_free (inlined)
+                          |          |          |                     |          
+                          |          |          |                      --1.56%--_int_free
+                          |          |          |          
+                          |          |           --1.31%--__GI___libc_free (inlined)
+                          |          |                     |          
+                          |          |                      --0.91%--_int_free
+                          |          |          
+                          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+                          |          |          |          
+                          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+                          |          |          |          
+                          |          |          |--2.36%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.94%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+                          |          |          
+                          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                          |          |          |          
+                          |          |          |--2.96%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.69%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          |          
+                          |          |--4.82%--__GI___libc_free (inlined)
+                          |          |          |          
+                          |          |           --2.14%--_int_free
+                          |          |          
+                          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                     |          
+                          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                                |          
+                          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+                          |          |                                           |          
+                          |          |                                            --0.57%--tcache_get (inlined)
+                          |          |                                                      tcache_get_n (inlined)
+                          |          |          
+                          |          |--3.77%--__GI___libc_malloc (inlined)
+                          |          |          |          
+                          |          |          |--0.97%--tcache_get (inlined)
+                          |          |          |          tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.83%--checked_request2size (inlined)
+                          |          |          
+                          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          
+                           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.96%     0.00%  off      off                   [.] main
+            |
+            ---main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               |          
+                --99.94%--_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                          |          
+                          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                          |          |          
+                          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                          |          |          |          
+                          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                          |          |          |          |          
+                          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                      --2.23%--__GI___libc_free (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --1.76%--_int_free
+                          |          |          |          
+                          |          |          |--5.57%--__GI___libc_free (inlined)
+                          |          |          |          |          
+                          |          |          |           --3.70%--_int_free
+                          |          |          |                     |          
+                          |          |          |                      --1.10%--tcache_put (inlined)
+                          |          |          |          
+                          |          |          |--1.77%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.78%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          |          |          
+                          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                          |          |          |          |          
+                          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                          |          |          |          |          |          
+                          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --0.78%--_int_free
+                          |          |          |          |          |          
+                          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+                          |          |          |          |          
+                          |          |          |           --2.60%--__GI___libc_free (inlined)
+                          |          |          |                     |          
+                          |          |          |                      --1.56%--_int_free
+                          |          |          |          
+                          |          |           --1.31%--__GI___libc_free (inlined)
+                          |          |                     |          
+                          |          |                      --0.91%--_int_free
+                          |          |          
+                          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+                          |          |          |          
+                          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+                          |          |          |          
+                          |          |          |--2.36%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.94%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+                          |          |          
+                          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                          |          |          |          
+                          |          |          |--2.96%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.69%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          |          
+                          |          |--4.82%--__GI___libc_free (inlined)
+                          |          |          |          
+                          |          |           --2.14%--_int_free
+                          |          |          
+                          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                     |          
+                          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                                |          
+                          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+                          |          |                                           |          
+                          |          |                                            --0.57%--tcache_get (inlined)
+                          |          |                                                      tcache_get_n (inlined)
+                          |          |          
+                          |          |--3.77%--__GI___libc_malloc (inlined)
+                          |          |          |          
+                          |          |          |--0.97%--tcache_get (inlined)
+                          |          |          |          tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.83%--checked_request2size (inlined)
+                          |          |          
+                          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          
+                           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.96%     0.00%  off      off                   [.] _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+            |
+            ---_RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               |          
+                --99.94%--_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                          _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                          |          
+                          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                          |          |          
+                          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                          |          |          |          
+                          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                          |          |          |          |          
+                          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |                     |          
+                          |          |          |                      --2.23%--__GI___libc_free (inlined)
+                          |          |          |                                |          
+                          |          |          |                                 --1.76%--_int_free
+                          |          |          |          
+                          |          |          |--5.57%--__GI___libc_free (inlined)
+                          |          |          |          |          
+                          |          |          |           --3.70%--_int_free
+                          |          |          |                     |          
+                          |          |          |                      --1.10%--tcache_put (inlined)
+                          |          |          |          
+                          |          |          |--1.77%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.78%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          |          |          
+                          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                          |          |          |          |          
+                          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                          |          |          |          |          |          
+                          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+                          |          |          |          |          |          |          
+                          |          |          |          |          |           --0.78%--_int_free
+                          |          |          |          |          |          
+                          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+                          |          |          |          |          
+                          |          |          |           --2.60%--__GI___libc_free (inlined)
+                          |          |          |                     |          
+                          |          |          |                      --1.56%--_int_free
+                          |          |          |          
+                          |          |           --1.31%--__GI___libc_free (inlined)
+                          |          |                     |          
+                          |          |                      --0.91%--_int_free
+                          |          |          
+                          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+                          |          |          |          
+                          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+                          |          |          |          
+                          |          |          |--2.36%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.94%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+                          |          |          
+                          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                          |          |          |          
+                          |          |          |--2.96%--__GI___libc_malloc (inlined)
+                          |          |          |          |          
+                          |          |          |           --0.69%--tcache_get (inlined)
+                          |          |          |                     tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          |          
+                          |          |--4.82%--__GI___libc_free (inlined)
+                          |          |          |          
+                          |          |           --2.14%--_int_free
+                          |          |          
+                          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          |          
+                          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                     |          
+                          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |                                |          
+                          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+                          |          |                                           |          
+                          |          |                                            --0.57%--tcache_get (inlined)
+                          |          |                                                      tcache_get_n (inlined)
+                          |          |          
+                          |          |--3.77%--__GI___libc_malloc (inlined)
+                          |          |          |          
+                          |          |          |--0.97%--tcache_get (inlined)
+                          |          |          |          tcache_get_n (inlined)
+                          |          |          |          
+                          |          |           --0.83%--checked_request2size (inlined)
+                          |          |          
+                          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+                          |          |          
+                          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                          |          
+                           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.94%     0.00%  off      off                   [.] _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+               |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               |          |          
+               |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               |          |          |          
+               |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+               |          |          |          |          
+               |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |                     |          
+               |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |                     |          
+               |          |          |                      --2.23%--__GI___libc_free (inlined)
+               |          |          |                                |          
+               |          |          |                                 --1.76%--_int_free
+               |          |          |          
+               |          |          |--5.57%--__GI___libc_free (inlined)
+               |          |          |          |          
+               |          |          |           --3.70%--_int_free
+               |          |          |                     |          
+               |          |          |                      --1.10%--tcache_put (inlined)
+               |          |          |          
+               |          |          |--1.77%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.78%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          
+               |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+               |          |          |          
+               |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+               |          |          |          |          
+               |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+               |          |          |          |          |          
+               |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+               |          |          |          |          |          |          
+               |          |          |          |          |           --0.78%--_int_free
+               |          |          |          |          |          
+               |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+               |          |          |          |          
+               |          |          |           --2.60%--__GI___libc_free (inlined)
+               |          |          |                     |          
+               |          |          |                      --1.56%--_int_free
+               |          |          |          
+               |          |           --1.31%--__GI___libc_free (inlined)
+               |          |                     |          
+               |          |                      --0.91%--_int_free
+               |          |          
+               |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+               |          |          |          
+               |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+               |          |          |          
+               |          |          |--2.36%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.94%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+               |          |          
+               |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+               |          |          |          
+               |          |          |--2.96%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.69%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+               |          |          
+               |          |--4.82%--__GI___libc_free (inlined)
+               |          |          |          
+               |          |           --2.14%--_int_free
+               |          |          
+               |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+               |          |                     |          
+               |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+               |          |                                |          
+               |          |                                 --1.71%--__GI___libc_malloc (inlined)
+               |          |                                           |          
+               |          |                                            --0.57%--tcache_get (inlined)
+               |          |                                                      tcache_get_n (inlined)
+               |          |          
+               |          |--3.77%--__GI___libc_malloc (inlined)
+               |          |          |          
+               |          |          |--0.97%--tcache_get (inlined)
+               |          |          |          tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.83%--checked_request2size (inlined)
+               |          |          
+               |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          
+               |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+               |          
+                --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.94%     0.00%  off      off                   [.] _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               |          
+               |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               |          |          
+               |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               |          |          |          
+               |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+               |          |          |          |          
+               |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |                     |          
+               |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |                     |          
+               |          |          |                      --2.23%--__GI___libc_free (inlined)
+               |          |          |                                |          
+               |          |          |                                 --1.76%--_int_free
+               |          |          |          
+               |          |          |--5.57%--__GI___libc_free (inlined)
+               |          |          |          |          
+               |          |          |           --3.70%--_int_free
+               |          |          |                     |          
+               |          |          |                      --1.10%--tcache_put (inlined)
+               |          |          |          
+               |          |          |--1.77%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.78%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          
+               |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+               |          |          |          
+               |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+               |          |          |          |          
+               |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+               |          |          |          |          |          
+               |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+               |          |          |          |          |          |          
+               |          |          |          |          |           --0.78%--_int_free
+               |          |          |          |          |          
+               |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+               |          |          |          |          
+               |          |          |           --2.60%--__GI___libc_free (inlined)
+               |          |          |                     |          
+               |          |          |                      --1.56%--_int_free
+               |          |          |          
+               |          |           --1.31%--__GI___libc_free (inlined)
+               |          |                     |          
+               |          |                      --0.91%--_int_free
+               |          |          
+               |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+               |          |          |          
+               |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+               |          |          |          
+               |          |          |--2.36%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.94%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+               |          |          
+               |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+               |          |          |          
+               |          |          |--2.96%--__GI___libc_malloc (inlined)
+               |          |          |          |          
+               |          |          |           --0.69%--tcache_get (inlined)
+               |          |          |                     tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+               |          |          
+               |          |--4.82%--__GI___libc_free (inlined)
+               |          |          |          
+               |          |           --2.14%--_int_free
+               |          |          
+               |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          |          
+               |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+               |          |                     |          
+               |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+               |          |                                |          
+               |          |                                 --1.71%--__GI___libc_malloc (inlined)
+               |          |                                           |          
+               |          |                                            --0.57%--tcache_get (inlined)
+               |          |                                                      tcache_get_n (inlined)
+               |          |          
+               |          |--3.77%--__GI___libc_malloc (inlined)
+               |          |          |          
+               |          |          |--0.97%--tcache_get (inlined)
+               |          |          |          tcache_get_n (inlined)
+               |          |          |          
+               |          |           --0.83%--checked_request2size (inlined)
+               |          |          
+               |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+               |          |          
+               |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+               |          
+                --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+    99.94%     0.55%  off      off                   [.] _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+            |          
+            |--99.39%--_RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+            |          |          
+            |          |--98.62%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+            |          |          |          
+            |          |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+            |          |          |          |          
+            |          |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+            |          |          |          |          |          
+            |          |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |                     |          
+            |          |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |                     |          
+            |          |          |          |                      --2.23%--__GI___libc_free (inlined)
+            |          |          |          |                                |          
+            |          |          |          |                                 --1.76%--_int_free
+            |          |          |          |          
+            |          |          |          |--5.57%--__GI___libc_free (inlined)
+            |          |          |          |          |          
+            |          |          |          |           --3.70%--_int_free
+            |          |          |          |                     |          
+            |          |          |          |                      --1.10%--tcache_put (inlined)
+            |          |          |          |          
+            |          |          |          |--1.77%--__GI___libc_malloc (inlined)
+            |          |          |          |          |          
+            |          |          |          |           --0.78%--tcache_get (inlined)
+            |          |          |          |                     tcache_get_n (inlined)
+            |          |          |          |          
+            |          |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |          
+            |          |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |          
+            |          |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |          
+            |          |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |          |          |          |          
+            |          |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+            |          |          |          |          |          
+            |          |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          |          |          |          |          |          
+            |          |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+            |          |          |          |          |          |          |          
+            |          |          |          |          |          |           --0.78%--_int_free
+            |          |          |          |          |          |          
+            |          |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          |          |          |          |          
+            |          |          |          |           --2.60%--__GI___libc_free (inlined)
+            |          |          |          |                     |          
+            |          |          |          |                      --1.56%--_int_free
+            |          |          |          |          
+            |          |          |           --1.31%--__GI___libc_free (inlined)
+            |          |          |                     |          
+            |          |          |                      --0.91%--_int_free
+            |          |          |          
+            |          |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+            |          |          |          |          
+            |          |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+            |          |          |          |          
+            |          |          |          |--2.36%--__GI___libc_malloc (inlined)
+            |          |          |          |          |          
+            |          |          |          |           --0.94%--tcache_get (inlined)
+            |          |          |          |                     tcache_get_n (inlined)
+            |          |          |          |          
+            |          |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+            |          |          |          
+            |          |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+            |          |          |          |          
+            |          |          |          |--2.96%--__GI___libc_malloc (inlined)
+            |          |          |          |          |          
+            |          |          |          |           --0.69%--tcache_get (inlined)
+            |          |          |          |                     tcache_get_n (inlined)
+            |          |          |          |          
+            |          |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          |          |          
+            |          |          |--4.82%--__GI___libc_free (inlined)
+            |          |          |          |          
+            |          |          |           --2.14%--_int_free
+            |          |          |          
+            |          |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          |          
+            |          |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |                     |          
+            |          |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |                                |          
+            |          |          |                                 --1.71%--__GI___libc_malloc (inlined)
+            |          |          |                                           |          
+            |          |          |                                            --0.57%--tcache_get (inlined)
+            |          |          |                                                      tcache_get_n (inlined)
+            |          |          |          
+            |          |          |--3.77%--__GI___libc_malloc (inlined)
+            |          |          |          |          
+            |          |          |          |--0.97%--tcache_get (inlined)
+            |          |          |          |          tcache_get_n (inlined)
+            |          |          |          |          
+            |          |          |           --0.83%--checked_request2size (inlined)
+            |          |          |          
+            |          |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          |          
+            |           --0.75%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+            |          
+             --0.55%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+
+    98.62%    22.52%  off      off                   [.] _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+            |          
+            |--76.10%--_RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+            |          |          
+            |          |--29.67%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+            |          |          |          
+            |          |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+            |          |          |          |          
+            |          |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |                     |          
+            |          |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |                     |          
+            |          |          |                      --2.23%--__GI___libc_free (inlined)
+            |          |          |                                |          
+            |          |          |                                 --1.76%--_int_free
+            |          |          |          
+            |          |          |--5.57%--__GI___libc_free (inlined)
+            |          |          |          |          
+            |          |          |           --3.70%--_int_free
+            |          |          |                     |          
+            |          |          |                      --1.10%--tcache_put (inlined)
+            |          |          |          
+            |          |          |--1.77%--__GI___libc_malloc (inlined)
+            |          |          |          |          
+            |          |          |           --0.78%--tcache_get (inlined)
+            |          |          |                     tcache_get_n (inlined)
+            |          |          |          
+            |          |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |          |--12.35%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |          |          |          
+            |          |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+            |          |          |          |          
+            |          |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          |          |          |          |          
+            |          |          |          |          |--1.72%--__GI___libc_free (inlined)
+            |          |          |          |          |          |          
+            |          |          |          |          |           --0.78%--_int_free
+            |          |          |          |          |          
+            |          |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          |          |          |          
+            |          |          |           --2.60%--__GI___libc_free (inlined)
+            |          |          |                     |          
+            |          |          |                      --1.56%--_int_free
+            |          |          |          
+            |          |           --1.31%--__GI___libc_free (inlined)
+            |          |                     |          
+            |          |                      --0.91%--_int_free
+            |          |          
+            |          |--10.63%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+            |          |          |          
+            |          |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+            |          |          |          
+            |          |          |--2.36%--__GI___libc_malloc (inlined)
+            |          |          |          |          
+            |          |          |           --0.94%--tcache_get (inlined)
+            |          |          |                     tcache_get_n (inlined)
+            |          |          |          
+            |          |           --0.65%--__memcpy_avx_unaligned (inlined)
+            |          |          
+            |          |--6.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+            |          |          |          
+            |          |          |--2.96%--__GI___libc_malloc (inlined)
+            |          |          |          |          
+            |          |          |           --0.69%--tcache_get (inlined)
+            |          |          |                     tcache_get_n (inlined)
+            |          |          |          
+            |          |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          |          
+            |          |--4.82%--__GI___libc_free (inlined)
+            |          |          |          
+            |          |           --2.14%--_int_free
+            |          |          
+            |          |--4.00%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          |          
+            |          |           --3.78%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+            |          |                     |          
+            |          |                      --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+            |          |                                |          
+            |          |                                 --1.71%--__GI___libc_malloc (inlined)
+            |          |                                           |          
+            |          |                                            --0.57%--tcache_get (inlined)
+            |          |                                                      tcache_get_n (inlined)
+            |          |          
+            |          |--3.77%--__GI___libc_malloc (inlined)
+            |          |          |          
+            |          |          |--0.97%--tcache_get (inlined)
+            |          |          |          tcache_get_n (inlined)
+            |          |          |          
+            |          |           --0.83%--checked_request2size (inlined)
+            |          |          
+            |          |--1.89%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |           --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          
+             --22.52%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+
+    29.67%     5.64%  off      off                   [.] _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+            |          
+            |--24.03%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+            |          |          
+            |          |--12.30%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+            |          |          |          
+            |          |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |          |                     |          
+            |          |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |          |                     |          
+            |          |                      --2.23%--__GI___libc_free (inlined)
+            |          |                                |          
+            |          |                                 --1.76%--_int_free
+            |          |          
+            |          |--5.57%--__GI___libc_free (inlined)
+            |          |          |          
+            |          |           --3.70%--_int_free
+            |          |                     |          
+            |          |                      --1.10%--tcache_put (inlined)
+            |          |          
+            |          |--1.77%--__GI___libc_malloc (inlined)
+            |          |          |          
+            |          |           --0.78%--tcache_get (inlined)
+            |          |                     tcache_get_n (inlined)
+            |          |          
+            |          |--1.08%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |          |--0.86%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |          |--0.70%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |           --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+             --5.64%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+
+    18.28%     0.00%  off      libc.so.6             [.] __GI___libc_free (inlined)
+            |
+            ---__GI___libc_free (inlined)
+               |          
+                --10.88%--_int_free
+                          |          
+                           --2.46%--tcache_put (inlined)
+
+    12.57%     0.00%  off      libc.so.6             [.] __GI___libc_malloc (inlined)
+            |
+            ---__GI___libc_malloc (inlined)
+               |          
+               |--3.96%--tcache_get (inlined)
+               |          tcache_get_n (inlined)
+               |          
+                --1.41%--checked_request2size (inlined)
+
+    12.44%    12.44%  off      libc.so.6             [.] malloc
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               |          
+               |--3.77%--__GI___libc_malloc (inlined)
+               |          |          
+               |          |--0.97%--tcache_get (inlined)
+               |          |          tcache_get_n (inlined)
+               |          |          
+               |           --0.83%--checked_request2size (inlined)
+               |          
+               |--2.90%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+               |          __GI___libc_malloc (inlined)
+               |          |          
+               |           --0.69%--tcache_get (inlined)
+               |                     tcache_get_n (inlined)
+               |          
+               |--2.36%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+               |          __GI___libc_malloc (inlined)
+               |          |          
+               |           --0.94%--tcache_get (inlined)
+               |                     tcache_get_n (inlined)
+               |          
+               |--1.73%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               |          __GI___libc_malloc (inlined)
+               |          |          
+               |           --0.76%--tcache_get (inlined)
+               |                     tcache_get_n (inlined)
+               |          
+                --1.69%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                          _RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                          __GI___libc_malloc (inlined)
+                          |          
+                           --0.55%--tcache_get (inlined)
+                                     tcache_get_n (inlined)
+
+    12.35%     3.68%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |          
+            |--8.68%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+            |          |          
+            |          |--7.28%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+            |          |          |          
+            |          |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          |          |          |          
+            |          |          |          |--1.72%--__GI___libc_free (inlined)
+            |          |          |          |          |          
+            |          |          |          |           --0.78%--_int_free
+            |          |          |          |          
+            |          |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          |          |          
+            |          |           --2.60%--__GI___libc_free (inlined)
+            |          |                     |          
+            |          |                      --1.56%--_int_free
+            |          |          
+            |           --1.31%--__GI___libc_free (inlined)
+            |                     |          
+            |                      --0.91%--_int_free
+            |          
+             --3.68%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+
+    12.30%     2.47%  off      off                   [.] _RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+            |          
+            |--9.83%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+            |          |          
+            |           --9.52%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |                     |          
+            |                     |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |                     |          
+            |                      --2.23%--__GI___libc_free (inlined)
+            |                                |          
+            |                                 --1.76%--_int_free
+            |          
+             --2.47%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                       _RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+
+    10.88%    10.79%  off      libc.so.6             [.] _int_free
+            |          
+             --10.77%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       |          
+                       |--5.40%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                       |          |          
+                       |          |--3.63%--__GI___libc_free (inlined)
+                       |          |          _int_free
+                       |          |          |          
+                       |          |           --1.08%--tcache_put (inlined)
+                       |          |          
+                       |           --1.76%--_RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                       |                     _RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                       |                     __GI___libc_free (inlined)
+                       |                     _int_free
+                       |          
+                       |--3.23%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                       |          |          
+                       |          |--2.32%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                       |          |          |          
+                       |          |          |--1.56%--__GI___libc_free (inlined)
+                       |          |          |          _int_free
+                       |          |          |          
+                       |          |           --0.76%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                       |          |                     __GI___libc_free (inlined)
+                       |          |                     _int_free
+                       |          |          
+                       |           --0.91%--__GI___libc_free (inlined)
+                       |                     _int_free
+                       |          
+                        --2.14%--__GI___libc_free (inlined)
+                                  _int_free
+
+    10.63%     2.17%  off      off                   [.] _RNvCsga9xRFLl56N_13joins_runtime15source_location
+            |          
+            |--8.45%--_RNvCsga9xRFLl56N_13joins_runtime15source_location
+            |          |          
+            |          |--4.73%--__memcpy_avx_unaligned_erms (inlined)
+            |          |          
+            |          |--2.36%--__GI___libc_malloc (inlined)
+            |          |          |          
+            |          |           --0.94%--tcache_get (inlined)
+            |          |                     tcache_get_n (inlined)
+            |          |          
+            |           --0.65%--__memcpy_avx_unaligned (inlined)
+            |          
+             --2.17%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RNvCsga9xRFLl56N_13joins_runtime15source_location
+
+     9.52%     1.05%  off      off                   [.] _RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+            |--8.47%--_RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |          |--5.61%--_RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |           --2.23%--__GI___libc_free (inlined)
+            |                     |          
+            |                      --1.76%--_int_free
+            |          
+             --1.05%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                       _RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                       _RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+
+     7.34%     7.34%  off      libc.so.6             [.] cfree@GLIBC_2.2.5
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               |          
+               |--2.68%--__GI___libc_free (inlined)
+               |          
+               |--2.34%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               |          |          
+               |           --1.88%--__GI___libc_free (inlined)
+               |          
+                --2.32%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                          |          
+                           --1.94%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                                     |          
+                                     |--1.00%--__GI___libc_free (inlined)
+                                     |          
+                                      --0.95%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                                                __GI___libc_free (inlined)
+
+     7.28%     0.93%  off      off                   [.] _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+            |          
+            |--6.36%--_RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+            |          |          
+            |          |--3.74%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          |          |          
+            |          |          |--1.72%--__GI___libc_free (inlined)
+            |          |          |          |          
+            |          |          |           --0.78%--_int_free
+            |          |          |          
+            |          |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          |          
+            |           --2.60%--__GI___libc_free (inlined)
+            |                     |          
+            |                      --1.56%--_int_free
+            |          
+             --0.93%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                       _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+
+     6.90%     2.83%  off      off                   [.] _RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+            |          
+            |--4.08%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+            |          |          
+            |          |--2.96%--__GI___libc_malloc (inlined)
+            |          |          |          
+            |          |           --0.69%--tcache_get (inlined)
+            |          |                     tcache_get_n (inlined)
+            |          |          
+            |           --0.59%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          
+             --2.83%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+
+     5.61%     5.59%  off      off                   [.] _RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+             --5.59%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+                       _RNvMsp_Csga9xRFLl56N_13joins_runtimeNtB5_17DynamicInvocation8complete
+                       _RNvXss_Csga9xRFLl56N_13joins_runtimeINtB5_21TypedDynamicCompleteryENtB5_16DynamicCompleter8completeCs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvMsh_Csga9xRFLl56N_13joins_runtimeINtB5_9CompleteryE20complete_with_parentCs3tFCgZjBxVO_21forwarding_microbench
+
+     4.73%     0.00%  off      libc.so.6             [.] __memcpy_avx_unaligned_erms (inlined)
+            |
+            ---__memcpy_avx_unaligned_erms (inlined)
+
+     4.61%     4.61%  off      libc.so.6             [.] __memmove_avx_unaligned_erms
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RNvCsga9xRFLl56N_13joins_runtime15source_location
+               __memcpy_avx_unaligned_erms (inlined)
+
+     4.00%     0.21%  off      off                   [.] _RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+             --3.78%--_RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                       |          
+                        --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+                                  |          
+                                   --1.71%--__GI___libc_malloc (inlined)
+                                             |          
+                                              --0.57%--tcache_get (inlined)
+                                                        tcache_get_n (inlined)
+
+     3.96%     0.00%  off      libc.so.6             [.] tcache_get (inlined)
+            |
+            ---tcache_get (inlined)
+               tcache_get_n (inlined)
+
+     3.96%     0.00%  off      libc.so.6             [.] tcache_get_n (inlined)
+            |
+            ---tcache_get_n (inlined)
+
+     3.78%     0.76%  off      off                   [.] _RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+            |--3.03%--_RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |           --3.01%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+            |                     |          
+            |                      --1.71%--__GI___libc_malloc (inlined)
+            |                                |          
+            |                                 --0.57%--tcache_get (inlined)
+            |                                           tcache_get_n (inlined)
+            |          
+             --0.76%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+
+     3.74%     0.54%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          
+            |--3.19%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+            |          |          
+            |          |--1.72%--__GI___libc_free (inlined)
+            |          |          |          
+            |          |           --0.78%--_int_free
+            |          |          
+            |           --1.47%--_RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          
+             --0.54%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                       _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+
+     3.01%     0.92%  off      off                   [.] _RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+            |--2.09%--_RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+            |          |          
+            |           --1.71%--__GI___libc_malloc (inlined)
+            |                     |          
+            |                      --0.57%--tcache_get (inlined)
+            |                                tcache_get_n (inlined)
+            |          
+             --0.92%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RNvMs4_NtNtCskRXz2nZZeVR_5alloc11collections9vec_dequeINtB5_8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE4growCs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvMs4_NtCskRXz2nZZeVR_5alloc7raw_vecINtB5_6RawVecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationE8grow_oneCs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvMs5_NtCskRXz2nZZeVR_5alloc7raw_vecNtB5_11RawVecInner11finish_growCs3tFCgZjBxVO_21forwarding_microbench
+
+     2.46%     0.00%  off      libc.so.6             [.] tcache_put (inlined)
+            |
+            ---tcache_put (inlined)
+
+     2.03%     2.01%  off      off                   [.] _RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+            |          
+             --2.01%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       |          
+                       |--0.59%--_RNvMsw_Csga9xRFLl56N_13joins_runtimeNtB5_14DynamicMatcher3new
+                       |          _RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+                       |          
+                        --0.54%--_RNvCskyTikYIWQSP_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+
+     1.89%     1.79%  off      off                   [.] _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+            |          
+             --1.79%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtCsga9xRFLl56N_13joins_runtime9ReplyCellyEE9drop_slowCs3tFCgZjBxVO_21forwarding_microbench
+
+     1.47%     1.38%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+            |          
+             --1.38%--_start
+                       __libc_start_main_impl (inlined)
+                       __libc_start_call_main
+                       main
+                       _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+                       _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+                       _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+                       _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+                       _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNtCs3tFCgZjBxVO_21forwarding_microbench5InnerEBD_
+                       _RNvMsn_NtCskRXz2nZZeVR_5alloc4syncINtB5_3ArcINtNtNtNtCsbhf9lUqo219_3std4sync6poison5mutex5MutexNtCsga9xRFLl56N_13joins_runtime12DynamicStateEE9drop_slowB1x_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecINtNtNtBG_11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEEB1Q_
+                       _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc11collections9vec_deque8VecDequeNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEEB1A_
+
+     1.41%     0.00%  off      libc.so.6             [.] checked_request2size (inlined)
+            |
+            ---checked_request2size (inlined)
+
+     1.18%     1.18%  off      off                   [.] _RNvCskyTikYIWQSP_7___rustc12___rust_alloc
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+
+     1.08%     1.08%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainINtNtB4_6result6ResultINtNtBI_5boxed3BoxDNtNtB4_3any3AnyNtNtB4_6marker4SendEL_ENtCs3Pim12vK8AT_10joins_core9JoinErrorEEECs3tFCgZjBxVO_21forwarding_microbench
+
+     0.99%     0.99%  off      off                   [.] _RNvCskyTikYIWQSP_7___rustc14___rust_dealloc
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               |          
+                --0.59%--_RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+
+     0.98%     0.00%  off      [kernel.kallsyms]     [k] asm_sysvec_apic_timer_interrupt
+            |
+            ---asm_sysvec_apic_timer_interrupt
+               |          
+                --0.96%--sysvec_apic_timer_interrupt
+                          |          
+                           --0.94%--__sysvec_apic_timer_interrupt
+                                     hrtimer_interrupt
+                                     |          
+                                      --0.79%--__hrtimer_run_queues
+                                                |          
+                                                 --0.71%--tick_nohz_highres_handler
+                                                           |          
+                                                            --0.63%--tick_sched_handle
+                                                                      |          
+                                                                       --0.61%--update_process_times
+
+     0.96%     0.00%  off      [kernel.kallsyms]     [k] sysvec_apic_timer_interrupt
+            |
+            ---sysvec_apic_timer_interrupt
+               |          
+                --0.94%--__sysvec_apic_timer_interrupt
+                          hrtimer_interrupt
+                          |          
+                           --0.79%--__hrtimer_run_queues
+                                     |          
+                                      --0.71%--tick_nohz_highres_handler
+                                                |          
+                                                 --0.63%--tick_sched_handle
+                                                           |          
+                                                            --0.61%--update_process_times
+
+     0.94%     0.00%  off      [kernel.kallsyms]     [k] __sysvec_apic_timer_interrupt
+            |
+            ---__sysvec_apic_timer_interrupt
+               hrtimer_interrupt
+               |          
+                --0.79%--__hrtimer_run_queues
+                          |          
+                           --0.71%--tick_nohz_highres_handler
+                                     |          
+                                      --0.63%--tick_sched_handle
+                                                |          
+                                                 --0.61%--update_process_times
+
+     0.94%     0.00%  off      [kernel.kallsyms]     [k] hrtimer_interrupt
+            |
+            ---hrtimer_interrupt
+               |          
+                --0.79%--__hrtimer_run_queues
+                          |          
+                           --0.71%--tick_nohz_highres_handler
+                                     |          
+                                      --0.63%--tick_sched_handle
+                                                |          
+                                                 --0.61%--update_process_times
+
+     0.87%     0.87%  off      off                   [.] _RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               |          
+                --0.60%--_RNvXNtCsj1oupHUQTQJ_4core3anyyNtB2_3Any7type_idCs3tFCgZjBxVO_21forwarding_microbench
+
+     0.86%     0.86%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtCskRXz2nZZeVR_5alloc3vec3VecNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+
+     0.81%     0.81%  off      off                   [.] _RNvCskyTikYIWQSP_7___rustc11___rdl_alloc
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+
+     0.79%     0.02%  off      [kernel.kallsyms]     [k] __hrtimer_run_queues
+            |          
+             --0.77%--__hrtimer_run_queues
+                       |          
+                        --0.71%--tick_nohz_highres_handler
+                                  |          
+                                   --0.63%--tick_sched_handle
+                                             |          
+                                              --0.61%--update_process_times
+
+     0.75%     0.75%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtBL_7Forward3run00EBL_
+
+     0.71%     0.02%  off      [kernel.kallsyms]     [k] tick_nohz_highres_handler
+            |          
+             --0.69%--tick_nohz_highres_handler
+                       |          
+                        --0.63%--tick_sched_handle
+                                  |          
+                                   --0.61%--update_process_times
+
+     0.70%     0.70%  off      off                   [.] _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RINvCsga9xRFLl56N_13joins_runtime20run_dynamic_reactionNCNvMs_Cs3tFCgZjBxVO_21forwarding_microbenchNtBY_5Inner20___join_dispatch_once0EBY_
+               _RINvNtCsj1oupHUQTQJ_4core3ptr9drop_glueINtNtNtCskRXz2nZZeVR_5alloc3vec5drain5DrainNtCsga9xRFLl56N_13joins_runtime17DynamicInvocationEECs3tFCgZjBxVO_21forwarding_microbench
+
+     0.65%     0.65%  off      libc.so.6             [.] __memmove_avx_unaligned
+            |
+            ---_start
+               __libc_start_main_impl (inlined)
+               __libc_start_call_main
+               main
+               _RNvNtCsbhf9lUqo219_3std2rt19lang_start_internal
+               _RNCINvNtCsbhf9lUqo219_3std2rt10lang_startuE0Cs3tFCgZjBxVO_21forwarding_microbench
+               _RINvNtNtCsbhf9lUqo219_3std3sys9backtrace28___rust_begin_short_backtraceFEuuECs3tFCgZjBxVO_21forwarding_microbench
+               _RNvCs3tFCgZjBxVO_21forwarding_microbench4main
+               _RNCNCNvMs1_Cs3tFCgZjBxVO_21forwarding_microbenchNtB9_7Forward3run00B9_
+               _RNvCsga9xRFLl56N_13joins_runtime15source_location
+               __memcpy_avx_unaligned (inlined)
+
+     0.65%     0.00%  off      libc.so.6             [.] __memcpy_avx_unaligned (inlined)
+            |
+            ---__memcpy_avx_unaligned (inlined)
+
+     0.63%     0.02%  off      [kernel.kallsyms]     [k] update_process_times
+            |          
+             --0.61%--update_process_times
+
+     0.63%     0.00%  off      [kernel.kallsyms]     [k] tick_sched_handle
+            |
+            ---tick_sched_handle
+               |          
+                --0.61%--update_process_times
+
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

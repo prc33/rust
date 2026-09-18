@@ -97,9 +97,11 @@
       <code>Inner::__join_private_new()</code> and
       <code>Inner::__join_direct_step()</code>. Off/analyse retain the public
       constructor/channel calls.</li>
-    <li>Positive owned-payload and reentrant scheduling fixtures pass. Negative
-      fixtures retain the public path; expected compile-error and panic-transport
-      fixtures behave as designed.</li>
+    <li>Positive owned-payload, owned-output and reentrant scheduling fixtures
+      pass. The multi-input withdrawal fixture and runtime unit tests verify
+      dropped unmatched requests, FIFO removal and independent matched replies.
+      Negative fusion fixtures retain the public path; expected compile-error
+      and panic-transport fixtures behave as designed.</li>
     <li>The benchmark driver asserts exactly one optimise fusion, none in
       off/analyse, zero optimise forwarding allocations, and matching checksums.</li>
   </ul>
@@ -121,20 +123,22 @@
     <li><strong>DataFusion:</strong> no production operator coordination has yet
       been ported to first-class joins, and no DataFusion end-to-end comparison
       is established.</li>
-    <li><strong>Profiling:</strong> static LLVM/assembly attribution is recorded
-      in <a href="joins-llvm-attribution-20260918.md">the attribution note</a>.
-      Hardware samples/flamegraphs remain blocked by this container's
-      <code>perf_event_paranoid=4</code> policy.</li>
+    <li><strong>Profiling:</strong> static attribution and the first privileged
+      call-graph samples are recorded in the
+      <a href="joins-llvm-attribution-20260918.md">attribution note</a> and
+      <a href="joins-perf-profile-20260918/README.md">raw profile report</a>. The
+      original <code>perf_event_paranoid=4</code> restriction was lowered to
+      <code>1</code> with authorization; samples were collected sequentially
+      with zero lost samples.</li>
   </ul>
 
   <h2>Next steps, in order</h2>
   <ol class="next">
-    <li>Use a privileged sampler on the already-built binaries when available;
-      static attribution is complete for this host. Separate hot-path work from
-      the cold nested-dispatch fallback.</li>
+    <li>Use the committed profile as the baseline for the next lowering; keep
+      hot-path work separate from the cold nested-dispatch fallback.</li>
     <li>Keep the new negative coverage for two same-type instances and repeated
-      requests, then add pending-future abandonment and owned output
-      destruction. Require all three native modes.</li>
+      requests, plus the withdrawal and owned-output regressions. Add the
+      per-fixture JSON rewrite-count assertions before widening eligibility.</li>
     <li>Replace count-only descriptors with complete typed rule/policy records;
       keep analysis separate from MIR mutation and invalidate certificates at
       every transforming pass.</li>
@@ -149,7 +153,7 @@
   </ol>
 
   <p class="small">Rust commit <code>54c7377bf22</code> is pushed to
-  <code>prc33/rust:joins</code>. Library commit <code>a5e4f7a</code> is local;
+  <code>prc33/rust:joins</code>. Library commit <code>bccabb9</code> is local;
   that checkout has no configured remote. The working tree’s unrelated
   <code>AGENTS.md</code> deletion and <code>ph2</code> file are preserved.</p>
 

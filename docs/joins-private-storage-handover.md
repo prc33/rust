@@ -22,10 +22,10 @@ The paired optimize/off ratio is 0.063 with bootstrap 95% interval [0.062,
 not validate shared joins, fixed queues or general JCAM fusion.
 
 Static LLVM/assembly attribution is recorded in
-[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md).
-Hardware sampling remains unavailable under this container's
-`perf_event_paranoid=4` policy; do not call the static note a flamegraph.
-The bounded negative coverage below has also been extended.
+[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md), and
+the owner-authorized `perf` call-graph run is archived in
+[`joins-perf-profile-20260918/README.md`](joins-perf-profile-20260918/README.md). The bounded
+negative coverage below has also been extended.
 The complete HTML status report is
 [`joins-project-report-20260918.html`](joins-project-report-20260918.html).
 
@@ -111,6 +111,12 @@ rewrite, not an independent reusable certificate. Stored summary fingerprints
 are incomplete freshness guards. Do not carry this proof through arbitrary
 MIR changes or treat `Body::join_info` as authoritative after transformation.
 
+The runtime compatibility matcher now installs a weak, per-invocation
+withdrawal hook on shared replies. Dropping an unmatched reply removes only
+that queue entry under the existing matcher mutex; a claim that wins the race
+is unaffected, and dropping one matched reply does not cancel sibling replies.
+This is a runtime semantic repair, not a lock-specific compiler optimization.
+
 ## Fixed eligibility: do not widen it during the following tasks
 
 Keep monomorphic, local, unscoped, uniquely constructed instances with one
@@ -144,10 +150,12 @@ not a second test harness. Use manual bounded polls rather than timeouts.
    another fixture's rewrite record as their evidence.
 
 Completion so far: all three native suites exit zero with `-Zvalidate-mir`; the
-owned-payload, destructor, reentrant, paired-MIR and zero-allocation gates pass.
-The two same-type-instance and repeated-request negatives now also pass in all
-three modes and retain the public path. Pending-abandonment and per-fixture JSON
-rewrite assertions remain before widening eligibility.
+owned-payload, owned-output, destructor, reentrant, paired-MIR and
+zero-allocation gates pass. The two same-type-instance and repeated-request
+negatives now also pass in all three modes and retain the public path. Runtime
+withdrawal tests cover a dropped unmatched request, FIFO removal and dropping
+one matched reply. Per-fixture JSON rewrite assertions remain before widening
+eligibility.
 
 ## Task 2 — attribute remaining cost, using current generated code (timing complete)
 
@@ -174,10 +182,12 @@ allocation. First improvement target is unnecessary hot-path work, not removal
 of a required scheduling branch.
 
 Completion so far: allocation evidence is committed and the optimized path is
-zero-allocation. Static LLVM/assembly inspection is committed in
-[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md).
-Privileged hardware profiling remains before another lowering patch; no
-speculative optimization patch is needed for that profiling task.
+zero-allocation. Static LLVM/assembly inspection and sequential privileged
+`perf` call graphs are committed in
+[`joins-llvm-attribution-20260918.md`](joins-llvm-attribution-20260918.md) and
+[`joins-perf-profile-20260918/README.md`](joins-perf-profile-20260918/README.md). No speculative
+optimization patch is needed until the generated control-flow and cleanup cost
+is addressed with an explicit proof.
 
 ## Task 3 — small cleanup only, with preserved evidence (complete for this slice)
 
