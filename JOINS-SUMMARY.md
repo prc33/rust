@@ -1,4 +1,4 @@
-# Joins research checkpoint — 2026-09-17
+# Joins research checkpoint — 2026-09-18
 
 This is the owner's AI-authored research fork, with no intended upstream review
 of this branch. The goal is a sound Rust extension that combines ordinary async
@@ -96,7 +96,8 @@ legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
-The supervisor safety slice is now exercised by compiler-owned checks. Direct
+At Rust commit `c53d044d913`, the supervisor safety slice is exercised by
+compiler-owned checks. Direct
 adapters carry explicit source channel/rule coordinates, are accepted only for
 the one-rule unary group shape, and must have the exact resolved channel ABI.
 The MIR consumer rejects scoped constructors, competing/unknown calls, and
