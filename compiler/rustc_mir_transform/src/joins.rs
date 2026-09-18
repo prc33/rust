@@ -621,6 +621,7 @@ struct CandidateEndpointUseFacts<'tcx> {
     unsupported: bool,
     allow_alias_flow: bool,
     constructor_location: (u32, u32),
+    reaction_body_def_id: u32,
 }
 
 impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
@@ -648,7 +649,13 @@ impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
         let coroutine_capture = aggregate_capture
             && destination
                 .and_then(|destination| self.local_types.get(destination as usize))
-                .is_some_and(|ty| ty.is_coroutine());
+                .is_some_and(|ty| {
+                    matches!(
+                        ty.kind(),
+                        ty::Coroutine(def_id, _)
+                            if def_id.index.index() as u32 == self.reaction_body_def_id
+                    )
+                });
         if aggregate_capture && !coroutine_capture {
             self.captured = true;
         }
@@ -888,6 +895,7 @@ fn try_fuse_private_result<'tcx>(
             unsupported: false,
             allow_alias_flow: false,
             constructor_location: (constructor.block, constructor.statement),
+            reaction_body_def_id: summary.body_def_id,
         };
         endpoint_uses.visit_body(&*body);
         endpoint_uses.captured || endpoint_uses.unsupported
