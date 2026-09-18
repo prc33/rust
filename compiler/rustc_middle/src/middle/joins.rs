@@ -469,6 +469,11 @@ pub struct JoinCfaSummary {
     /// result-forwarding edge in this body.  A missing value is not a proof of
     /// rejection; it means that no eligible forwarding edge was discovered.
     pub fusion: Option<JoinFusionFact>,
+    /// The explicit reason a proof-consuming fusion attempt was declined.
+    /// `None` means the pass was not applicable (for example in off/analyze
+    /// mode) or the rewrite succeeded. This is separate from `rejection`,
+    /// which classifies the reaction body itself.
+    pub fusion_rejection: Option<JoinCfaRejection>,
     pub direct_candidate: bool,
     pub rejection: Option<JoinCfaRejection>,
 }
@@ -543,4 +548,28 @@ pub enum JoinCfaRejection {
     Escapes,
     SolverBudget,
     NotClosed,
+    /// No unique constructor origin could be connected to the request.
+    UnknownOrigin,
+    /// More than one live constructor origin reaches the candidate use.
+    MultipleInstances,
+    /// A handle, reply or body value escapes the private proof boundary.
+    Escape,
+    /// Another rule or join operation can observe the same protocol.
+    CompetingRule,
+    /// An explicit shared executor/scope policy is outside caller-owned fusion.
+    SharedPolicy,
+    /// Admission is fallible or otherwise observable by the caller.
+    AdmissionEffect,
+    /// Group creation/destruction or tracing effects would be removed.
+    ObservableGroupEffect,
+    /// The use shape cannot be represented by the current rewrite.
+    UnsupportedUse,
+    /// A cycle or recursive helper would require path-sensitive reasoning.
+    RecursiveOrCyclic,
+    /// A callee or compiler-owned adapter could not be resolved.
+    UnknownCallee,
+    /// The configured CFA budget did not cover a required dependency.
+    Budget,
+    /// The body changed after the proof snapshot was produced.
+    StaleProof,
 }

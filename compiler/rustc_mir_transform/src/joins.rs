@@ -413,6 +413,7 @@ impl JoinBodyFacts {
             escapes: self.escapes.into_iter().collect(),
             endpoint_escapes,
             fusion: None,
+            fusion_rejection: None,
             direct_candidate: rejection.is_none(),
             rejection,
         }
@@ -608,6 +609,48 @@ impl<'tcx> Visitor<'tcx> for AggregateUseFacts {
     }
 }
 
+/// Track whether a proven candidate endpoint is moved into an aggregate that
+/// can outlive the current reaction. The coroutine aggregate created by the
+/// reaction itself is owned state and is therefore allowed; ordinary closure,
+/// tuple, struct and collection aggregates remain an escape until a later
+/// interprocedural ownership proof can account for them.
+struct CandidateEndpointUseFacts<'tcx> {
+    local_types: Vec<Ty<'tcx>>,
+    aliases: FxHashSet<u32>,
+    captured: bool,
+}
+
+impl<'tcx> Visitor<'tcx> for CandidateEndpointUseFacts<'tcx> {
+    fn visit_assign(&mut self, place: &Place<'tcx>, rvalue: &Rvalue<'tcx>, location: Location) {
+        if let Rvalue::Aggregate(_, operands) = rvalue {
+            let captures_endpoint = operands.iter().any(|operand| {
+                operand
+                    .place()
+                    .is_some_and(|source| self.aliases.contains(&(source.local.index() as u32)))
+            });
+            if captures_endpoint
+                && place
+                    .as_local()
+                    .and_then(|local| self.local_types.get(local.index()))
+                    .is_none_or(|ty| !ty.is_coroutine())
+            {
+                self.captured = true;
+            }
+        }
+        self.super_assign(place, rvalue, location);
+    }
+}
+
+fn is_unscoped_constructor<'tcx>(tcx: TyCtxt<'tcx>, edge: &JoinCallEdge) -> bool {
+    let (Some(endpoint_def_id), Some(callee)) = (edge.endpoint_def_id, edge.callee) else {
+        return false;
+    };
+    tcx.join_definitions(()).endpoints.iter().any(|endpoint| {
+        endpoint.endpoint_def_id.map(|id| id.index() as u32) == Some(endpoint_def_id)
+            && endpoint.constructor_def_id.map(|id| id.index() as u32) == Some(callee)
+    })
+}
+
 /// Proof-gated result forwarding for a private, synchronous unary channel.
 ///
 /// The generated adapter has the same `&self`/payload/`Reply<T>` ABI as the
@@ -621,12 +664,14 @@ fn try_fuse_private_result<'tcx>(
     tcx: TyCtxt<'tcx>,
     body: &mut Body<'tcx>,
     summary: &JoinCfaSummary,
-) -> Option<JoinFusionFact> {
+) -> (Option<JoinFusionFact>, Option<JoinCfaRejection>) {
     if tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Optimize
         || summary.role != JoinBodyRole::ReactionBody
-        || !summary.endpoint_escapes.is_empty()
     {
-        return None;
+        return (None, None);
+    }
+    if !summary.endpoint_escapes.is_empty() {
+        return (None, Some(JoinCfaRejection::Escape));
     }
     if summary.mir_fingerprint
         != join_mir_fingerprint(body, &summary.operations, &summary.value_flows, &summary.call_edges)
@@ -635,7 +680,7 @@ fn try_fuse_private_result<'tcx>(
         // locations and ownership facts were extracted. Any intervening MIR
         // rewrite must force a fresh analysis instead of consuming stale
         // coordinates.
-        return None;
+        return (None, Some(JoinCfaRejection::StaleProof));
     }
 
     let targets = join_call_target_map(tcx);
@@ -652,27 +697,91 @@ fn try_fuse_private_result<'tcx>(
             JoinCallTargetKind::Unknown | JoinCallTargetKind::OrdinaryLocal => {}
         }
     }
-    if constructors.len() != 1 || channels.len() != 1 || known_join_edges != 0 {
-        return None;
+    if constructors.len() != 1 {
+        return (
+            None,
+            Some(if constructors.is_empty() {
+                JoinCfaRejection::UnknownOrigin
+            } else {
+                JoinCfaRejection::MultipleInstances
+            }),
+        );
+    }
+    if channels.len() != 1 {
+        return (
+            None,
+            Some(if channels.is_empty() {
+                JoinCfaRejection::UnknownOrigin
+            } else {
+                JoinCfaRejection::UnsupportedUse
+            }),
+        );
+    }
+    if known_join_edges != 0 {
+        return (None, Some(JoinCfaRejection::CompetingRule));
     }
     let constructor = constructors[0];
     let channel = channels[0];
     if constructor.endpoint_def_id != channel.endpoint_def_id {
-        return None;
+        return (None, Some(JoinCfaRejection::UnknownOrigin));
+    }
+    if !is_unscoped_constructor(tcx, constructor) {
+        // `new_in_scope` has observable executor admission, cancellation and
+        // tracing semantics. A ready-reply adapter cannot bypass those
+        // effects, so scoped construction remains on the compatibility path.
+        return (None, Some(JoinCfaRejection::SharedPolicy));
     }
     let (Some(constructor_destination), Some(channel_receiver), Some(channel_callee)) = (
         constructor.destination_local,
         channel.receiver_local,
         channel.callee,
     ) else {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
     };
     if !unique_alias_reaches(
         &summary.value_flows,
         constructor_destination,
         channel_receiver,
     ) {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
+    }
+    let candidate_aliases = alias_closure(&summary.value_flows, constructor_destination);
+    for edge in &summary.call_edges {
+        for (argument_index, local) in edge.argument_locals.iter().enumerate() {
+            let Some(local) = local else { continue };
+            if !candidate_aliases.contains(local) {
+                continue;
+            }
+            let is_candidate_channel_receiver = edge.block == channel.block
+                && edge.statement == channel.statement
+                && edge.target == JoinCallTargetKind::Channel
+                && argument_index == 0;
+            if is_candidate_channel_receiver {
+                continue;
+            }
+            let reason = match edge.target {
+                JoinCallTargetKind::Dispatch | JoinCallTargetKind::ReactionBody => {
+                    JoinCfaRejection::CompetingRule
+                }
+                JoinCallTargetKind::Unknown => JoinCfaRejection::UnknownCallee,
+                JoinCallTargetKind::Constructor => JoinCfaRejection::MultipleInstances,
+                JoinCallTargetKind::Channel
+                | JoinCallTargetKind::OrdinaryLocal => JoinCfaRejection::Escape,
+            };
+            return (None, Some(reason));
+        }
+    }
+    let endpoint_captured = {
+        let mut endpoint_uses = CandidateEndpointUseFacts {
+            local_types: body.local_decls.iter().map(|decl| decl.ty).collect(),
+            aliases: candidate_aliases,
+            captured: false,
+        };
+        endpoint_uses.visit_body(&*body);
+        endpoint_uses.captured
+    };
+    if endpoint_captured {
+        return (None, Some(JoinCfaRejection::Escape));
     }
     let constructor_block = mir::BasicBlock::from_usize(constructor.block as usize);
     let channel_block = mir::BasicBlock::from_usize(channel.block as usize);
@@ -685,21 +794,23 @@ fn try_fuse_private_result<'tcx>(
         // A constructor that does not dominate its use, or any reachable
         // back-edge in the body, needs path-sensitive/loop reasoning that the
         // first certificate does not provide.
-        return None;
+        return (None, Some(JoinCfaRejection::RecursiveOrCyclic));
     }
 
     // The reply itself must have one consuming move into the same concrete
     // `Reply<T>` type.  This is the first-use approximation of an explicit
     // `.await`: copies, borrows, aggregate storage and direct calls all reject
     // the rewrite rather than risking a changed observation or drop order.
-    let reply_local = channel.destination_local?;
+    let Some(reply_local) = channel.destination_local else {
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
+    };
     let reply_flows = summary
         .value_flows
         .iter()
         .filter(|flow| flow.source == Some(reply_local))
         .collect::<Vec<_>>();
     if reply_flows.len() != 1 || reply_flows[0].kind != JoinValueFlowKind::Move {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
     let mut aggregate_uses = AggregateUseFacts {
         aliases: alias_closure(&summary.value_flows, reply_local),
@@ -707,7 +818,7 @@ fn try_fuse_private_result<'tcx>(
     };
     aggregate_uses.visit_body(body);
     if aggregate_uses.captured {
-        return None;
+        return (None, Some(JoinCfaRejection::Escape));
     }
     let reply_destination = mir::Local::from_usize(reply_flows[0].destination as usize);
     let reply_source = mir::Local::from_usize(reply_local as usize);
@@ -717,17 +828,21 @@ fn try_fuse_private_result<'tcx>(
         .zip(body.local_decls.get(reply_source))
         .is_none_or(|(destination, source)| destination.ty != source.ty)
     {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
     if summary.call_edges.iter().any(|edge| {
         (edge.block != channel.block || edge.statement != channel.statement)
             && edge.argument_locals.iter().any(|local| *local == Some(reply_local))
     }) {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
 
-    let target = targets.get(&channel_callee)?;
-    let direct_method = target.direct_method_def_id?;
+    let Some(target) = targets.get(&channel_callee) else {
+        return (None, Some(JoinCfaRejection::UnknownCallee));
+    };
+    let Some(direct_method) = target.direct_method_def_id else {
+        return (None, Some(JoinCfaRejection::UnknownCallee));
+    };
     // Generic adapters need substitutions from the endpoint instance.  Keep
     // this first transform monomorphic until the typed generic argument map
     // is carried in JoinCall; rejecting them is safe and observable in CFA.
@@ -735,28 +850,51 @@ fn try_fuse_private_result<'tcx>(
         direct_method as usize,
     ));
     if tcx.generics_of(direct_def_id).count() != 0 {
-        return None;
+        return (None, Some(JoinCfaRejection::UnsupportedUse));
     }
     let block = mir::BasicBlock::from_usize(channel.block as usize);
     let statement = channel.statement as usize;
-    let block_data = body.basic_blocks_mut().get_mut(block)?;
+    let Some(block_data) = body.basic_blocks_mut().get_mut(block) else {
+        return (None, Some(JoinCfaRejection::StaleProof));
+    };
     if statement != block_data.statements.len() {
-        return None;
+        return (None, Some(JoinCfaRejection::StaleProof));
     }
     let terminator = block_data.terminator_mut();
-    let TerminatorKind::Call { func, .. } = &mut terminator.kind else {
-        return None;
+    let TerminatorKind::Call { func, args, destination, .. } = &mut terminator.kind else {
+        return (None, Some(JoinCfaRejection::StaleProof));
     };
+    // Check the concrete executable operands again at the consumption point.
+    // The structural fingerprint deliberately remains cheap; it is not a
+    // substitute for validating the callee, argument positions and result
+    // destination that the proof actually reasoned about.
+    let current_callee = func
+        .const_fn_def()
+        .and_then(|(def_id, _)| def_id.as_local())
+        .map(|def_id| def_id.index() as u32);
+    let current_destination = destination.as_local().map(|local| local.index() as u32);
+    let current_arguments = args
+        .iter()
+        .map(|arg| arg.node.place().map(|place| place.local.index() as u32));
+    if current_callee != Some(channel_callee)
+        || current_destination != channel.destination_local
+        || current_arguments.ne(channel.argument_locals.iter().copied())
+    {
+        return (None, Some(JoinCfaRejection::StaleProof));
+    }
     *func = Operand::function_handle(tcx, direct_def_id, &[], terminator.source_info.span);
-    Some(JoinFusionFact {
-        constructor_block: constructor.block,
-        constructor_statement: constructor.statement,
-        channel_block: channel.block,
-        channel_statement: channel.statement,
-        channel_method_def_id: channel_callee,
-        direct_method_def_id: direct_method,
-        rewritten: true,
-    })
+    (
+        Some(JoinFusionFact {
+            constructor_block: constructor.block,
+            constructor_statement: constructor.statement,
+            channel_block: channel.block,
+            channel_statement: channel.statement,
+            channel_method_def_id: channel_callee,
+            direct_method_def_id: direct_method,
+            rewritten: true,
+        }),
+        None,
+    )
 }
 
 fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
@@ -2030,6 +2168,10 @@ fn dump_summary(
             )
         },
     );
+    let fusion_rejection = summary.fusion_rejection.map_or_else(
+        || "null".to_string(),
+        |reason| format!("\"{reason:?}\""),
+    );
     let endpoint_escapes = summary
         .endpoint_escapes
         .iter()
@@ -2037,7 +2179,7 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"fusion_rejection\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -2072,6 +2214,7 @@ fn dump_summary(
         operation_kinds,
         summary.direct_candidate,
         fusion,
+        fusion_rejection,
         rejection,
     );
     // Local indices repeat in every compilation unit. Include the stable
@@ -2415,9 +2558,10 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             body.local_decls.len(),
             tcx.sess.opts.unstable_opts.join_cfa_budget,
         );
-        let fusion = try_fuse_private_result(tcx, body, &summary);
+        let (fusion, fusion_rejection) = try_fuse_private_result(tcx, body, &summary);
         let mut summary = summary;
         summary.fusion = fusion;
+        summary.fusion_rejection = fusion_rejection;
         let rejection = summary.rejection;
         let direct_candidate = summary.direct_candidate;
         let operations = summary.operations.len();

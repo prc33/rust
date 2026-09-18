@@ -329,7 +329,7 @@ attribute_parsers!(
         Single<WithoutArgs<RustcInsignificantDtorParser>>,
         Single<WithoutArgs<RustcIntrinsicConstStableIndirectParser>>,
         Single<WithoutArgs<RustcIntrinsicParser>>,
-        Single<WithoutArgs<RustcJoinDirectAdapterParser>>,
+        Single<RustcJoinDirectAdapterParser>,
         Single<WithoutArgs<RustcLintOptTyParser>>,
         Single<WithoutArgs<RustcLintQueryInstabilityParser>>,
         Single<WithoutArgs<RustcLintUntrackedQueryInformationParser>>,

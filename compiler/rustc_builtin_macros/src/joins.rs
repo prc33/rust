@@ -771,7 +771,15 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let mut direct_method_definitions = Vec::new();
     for (rule_index, rule) in definition.rules.iter().enumerate() {
         let resolved = resolve_rule(definition, rule, rule_index)?;
-        let (body, aliases) = rewrite_body(definition, &rule.body, rule.is_async);
+        // Each rule owns a distinct endpoint clone below. Generate aliases
+        // against that per-rule capture so re-emission cannot move the shared
+        // outer endpoint into the first closure.
+        let (body, aliases) = rewrite_body_with_endpoint(
+            definition,
+            &rule.body,
+            rule.is_async,
+            "__join_rule_endpoint",
+        );
         let expected_replies =
             resolved.iter().filter(|(_, channel, _)| channel.reply.is_some()).count();
         let (prefix, replies) = split_reaction_body(&body, expected_replies).ok_or_else(|| {
@@ -808,8 +816,10 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
             let expression = reply_expression(&replies, channel)?;
             let reaction = reaction_result_body("", &prefix, expression, output_type, false);
             direct_method_definitions.push(format!(
-                "    #[doc(hidden)]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        let {binding}: {input_type} = {value};\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n    }}",
+                "    #[doc(hidden)]\n    #[join_direct_adapter(channel = {channel_index}, rule = {rule_index})]\n    fn __join_direct_{name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{scope_bounds}{{\n        let {binding}: {input_type} = {value};\n        let __join_direct_result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {{\n            {unpack}\n            {reaction}\n        }}))\n            .unwrap_or_else(|_| Err(::joins_runtime::JoinError::Panic));\n        ::joins_runtime::Reply::ready(__join_direct_result)\n    }}",
                 name = channel.name.name,
+                channel_index = resolved[0].0,
+                rule_index = rule_index,
                 argument = channel_method_argument(channel),
                 output_type = output_type,
                 scope_bounds = dispatch_bounds,
@@ -820,20 +830,18 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
                 reaction = reaction,
             ));
         }
-        for method in &mut direct_method_definitions {
-            *method = method.replacen(
-                "    #[doc(hidden)]\n",
-                "    #[doc(hidden)]\n    #[join_direct_adapter]\n",
-                1,
-            );
-        }
+        // Each rule is a separate `move` closure. Clone the endpoint for that
+        // closure instead of moving one shared capture into the first rule;
+        // this is required when a reaction re-emits state (for example a
+        // reusable lock or once-cell protocol) and multiple rules share the
+        // same dynamic matcher.
         let dispatch = if rule.is_async {
             format!(
-                "self.matcher.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}})"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; self.matcher.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
             )
         } else {
             format!(
-                "self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}})"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; self.matcher.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
             )
         };
         rule_definitions.push(format!("if {dispatch} {{ return true; }}"));
@@ -1314,6 +1322,15 @@ fn pattern_unpack(pattern: &Pattern, value: &str) -> String {
 /// spelling (`fib(input - 1)`) while leaving ordinary Rust calls and explicit
 /// receivers (`self.fib(...)`) untouched.
 fn rewrite_body(definition: &Definition, body: &str, is_async: bool) -> (String, String) {
+    rewrite_body_with_endpoint(definition, body, is_async, "__join_endpoint")
+}
+
+fn rewrite_body_with_endpoint(
+    definition: &Definition,
+    body: &str,
+    is_async: bool,
+    endpoint_binding: &str,
+) -> (String, String) {
     let (rewritten, used_channels) = rewrite_channel_calls(definition, body);
     let demand_bindings = collect_demand_bindings(&rewritten);
     let aliases = used_channels
@@ -1321,7 +1338,7 @@ fn rewrite_body(definition: &Definition, body: &str, is_async: bool) -> (String,
         .map(|&index| channel_alias_name(&definition.channels[index]))
         .collect::<Vec<_>>();
     let rewritten = rewrite_demands(&rewritten, &demand_bindings, &aliases, is_async);
-    (rewritten, channel_aliases(definition, &used_channels))
+    (rewritten, channel_aliases(definition, &used_channels, endpoint_binding))
 }
 
 fn rewrite_channel_calls(definition: &Definition, body: &str) -> (String, Vec<usize>) {
@@ -1585,7 +1602,11 @@ fn find_let_assignment(body: &str, start: usize) -> Option<usize> {
     None
 }
 
-fn channel_aliases(definition: &Definition, used_channels: &[usize]) -> String {
+fn channel_aliases(
+    definition: &Definition,
+    used_channels: &[usize],
+    endpoint_binding: &str,
+) -> String {
     let mut aliases = String::new();
     for &index in used_channels {
         let channel = &definition.channels[index];
@@ -1602,7 +1623,7 @@ fn channel_aliases(definition: &Definition, used_channels: &[usize]) -> String {
             .collect::<Vec<_>>()
             .join(", ");
         aliases.push_str(&format!(
-            "let {} = |{}| __join_endpoint.{}({});\n",
+            "let {} = |{}| {endpoint_binding}.{}({});\n",
             channel_alias_name(channel),
             parameters,
             channel.name.name,

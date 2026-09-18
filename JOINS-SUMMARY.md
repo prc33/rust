@@ -35,10 +35,13 @@ propagation are still pending. A narrow optimize-only MIR consumer now proves a
 single monomorphic constructor/channel path and retargets its result call to a
 private inline-ready adapter (`Reply::ready`); off/analyze retain the public
 matcher call. The body JSON records the constructor/channel locations and
-`fusion.rewritten=true`. This is result-forwarding only: native shared
-admission/match/reply MIR, full certificate invalidation and general shared-join
-fusion remain incomplete. The marker is metadata beside the compatibility
-runtime call, not a claim that the runtime helper is itself the semantic IR.
+`fusion.rewritten=true`. Failed optimize attempts now carry an explicit
+`fusion_rejection` code in the same body record, separating a declined proof
+from a pass that was not applicable. This is result-forwarding only: native
+shared admission/match/reply MIR, full certificate invalidation and general
+shared-join fusion remain incomplete. The marker is metadata beside the
+compatibility runtime call, not a claim that the runtime helper is itself the
+semantic IR.
 
 Every per-body CFA record now includes a deterministic structural
 `mir_fingerprint` covering the executable CFG shape and extracted operation,
@@ -93,6 +96,19 @@ legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
+The supervisor safety slice is now exercised by compiler-owned checks. Direct
+adapters carry explicit source channel/rule coordinates, are accepted only for
+the one-rule unary group shape, and must have the exact resolved channel ABI.
+The MIR consumer rejects scoped constructors, competing/unknown calls, and
+candidate endpoint aliases captured by ordinary aggregates; it rechecks the
+concrete callee, arguments and destination at the rewrite point. Optimize-mode
+summaries record the refusal (`SharedPolicy`, `Escape`, `UnknownOrigin`, etc.)
+instead of silently presenting a missing fusion as success. The native suite
+now includes same-signature channel association, dynamic per-rule re-emission,
+aggregate capture, and cancelled-scope witnesses; fresh off/analyze/optimize
+runs pass all of them. These checks deliberately narrow fusion until complete
+instance/policy proofs exist; they do not claim the broader JCAM certificate.
+
 ## Next execution gates
 
 Follow [the concrete next-slice specification](docs/joins-next-slice.md), steps
@@ -101,11 +117,14 @@ unjustified storage labels, then authoritative call operations, equal unary
 semantics, bounded instance CFA and one result-channel rewrite. It includes
 exact witnesses, rejection reasons, pass boundaries and verification commands.
 The duplicate-visitor and body-local-storage portions of gate 1 are complete;
-the call-carrier portion of gate 2 is partial. Mode-independent unary semantics
-and a narrow result-adapter rewrite are complete; typed group/channel
-remapping, full proof/rejection accounting, shared result fusion and fixed
-storage remain pending. Surviving join descriptors stay through runtime MIR to
-the LLVM-facing boundary; effectful operations cannot be erased as no-ops.
+the adapter identity, unscoped-policy, candidate-alias, and dynamic-capture
+regressions are now covered. The call-carrier portion of gate 2 is partial:
+freshness is a local structural guard plus concrete operand validation, not a
+pass-wide revision protocol. Mode-independent unary semantics and a narrow
+result-adapter rewrite are complete; typed group/channel remapping, full
+proof/rejection accounting, shared result fusion and fixed storage remain
+pending. Surviving join descriptors stay through runtime MIR to the
+LLVM-facing boundary; effectful operations cannot be erased as no-ops.
 
 1. Validate the accepted unary/shared async semantics and equivalent benchmark
    protocols, including demand, cancellation, ownership and declared outputs.

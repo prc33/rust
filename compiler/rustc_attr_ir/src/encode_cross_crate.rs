@@ -155,7 +155,7 @@ impl AttributeKind {
             RustcInsignificantDtor => Yes,
             RustcIntrinsic => Yes,
             RustcIntrinsicConstStableIndirect => No,
-            RustcJoinDirectAdapter => Yes,
+            RustcJoinDirectAdapter { .. } => Yes,
             RustcJoinEndpoint { .. } => Yes,
             RustcLegacyConstGenerics { .. } => Yes,
             RustcLintOptDenyFieldAccess { .. } => Yes,

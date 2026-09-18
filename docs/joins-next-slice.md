@@ -1,8 +1,17 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+Implementation order update, 2026-09-17: follow the correctness gates in
+[the review implementation plan](joins-review-implementation-plan.md) before
+extending fusion or shared matcher specialisation. It identifies gaps in adapter
+association, scope preservation, instance privacy, and the snapshot fingerprint
+described below. Earlier completion claims here do not establish those gates.
+
 Updated 2026-09-17. Steps 1 and 2's call carrier, the mode-independent unary
 contract, and the first result-channel forwarding rewrite are implemented on
-the working branch. The remaining steps below are deliberately narrower:
+the working branch. The review safety gates for adapter identity, scoped
+construction, candidate-instance aggregate escapes, concrete operand checks,
+and dynamic rule captures are also implemented and covered by fresh native
+runs. The remaining steps below are deliberately narrower:
 typed cross-crate identities, a complete certificate/rejection domain, and
 shared/fixed-storage optimisation.
 This document is the immediate implementation order, superseding conflicting
@@ -45,7 +54,10 @@ general compiler-driven fusion. Remaining limitations are:
 - A narrow optimize-only consumer now retargets one proven monomorphic result
   call to a compiler-private inline-ready adapter. It requires one constructor,
   one channel, unique local alias flow, one consuming reply move and no known
-  competing join edge. It does not yet remove the explicit `Reply` await or
+  competing join edge. It also requires the unscoped constructor identity,
+  rejects endpoint aliases passed to unsupported calls or aggregates, validates
+  the concrete call operands, and records an explicit `fusion_rejection` when
+  the proof is declined. It does not yet remove the explicit `Reply` await or
   prove all JCAM cancellation/admission conditions.
 
 This is the owner's explicitly authorized AI-written research fork. No upstream
@@ -322,8 +334,10 @@ summary records `fusion.rewritten=true`, and the native MIR gate checks the
   rejected without mutating the call. The native MIR gate checks the off/analyze
   versus optimize call targets.  This is a real proof-gated result forwarding
   step, but not yet the full certificate described below: it does not remove
-  the inner constructor or reply state, or emit refusal codes for every matrix
-  entry.
+  the inner constructor or reply state. Failed optimize attempts now record a
+  machine-readable `fusion_rejection` in the body summary, using the same
+  refusal vocabulary as the later matrix; coverage of every negative witness
+  and pass-wide invalidation is still pending.
 
 For the first witness, replace construction/request/wrapper protocol with the
 ordinary reaction future construction and the existing await of that future.

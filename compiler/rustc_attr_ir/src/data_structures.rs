@@ -1297,7 +1297,10 @@ pub enum AttributeKind {
     RustcIntrinsicConstStableIndirect,
 
     /// Represents a compiler-generated direct unary join adapter method.
-    RustcJoinDirectAdapter,
+    /// The source channel/rule coordinates are part of the marker so a
+    /// descriptor query cannot accidentally associate two same-typed channels
+    /// with the first adapter found in an impl.
+    RustcJoinDirectAdapter { channel: u32, rule: u32 },
 
     /// Represents the compiler-generated join endpoint contract.
     ///

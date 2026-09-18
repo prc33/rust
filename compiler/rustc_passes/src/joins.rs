@@ -63,20 +63,47 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             .into_iter()
             .take(declared_channels as usize)
             .enumerate()
-            .map(|(index, (method_def_id, name))| {
-                let direct_method_def_id = impl_.items.iter().find_map(|item_id| {
+            .map(|(index, (channel_method_def_id, name))| {
+                // An impl may contain several private adapters with identical
+                // ABI. Match the compiler-owned source coordinates encoded in
+                // each marker and reject ambiguity instead of taking the first
+                // marker found in declaration order.
+                let mut adapters = impl_.items.iter().filter_map(|item_id| {
                     let item = tcx.hir_impl_item(*item_id);
                     let method_def_id = item.owner_id.def_id;
-                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter)
-                        .then_some(method_def_id)
+                    find_attr!(tcx, method_def_id, RustcJoinDirectAdapter { channel, rule } =>
+                        (*channel, *rule))
+                        .filter(|(channel, _)| *channel == index as u32)
+                        .map(|(_, rule)| (method_def_id, rule))
                 });
+                let direct_method_def_id = match (adapters.next(), adapters.next()) {
+                    (Some((adapter_def_id, rule)), None)
+                        if declared_rules == 1
+                            && declared_arity == 1
+                            && rule == 0
+                            && tcx.erase_and_anonymize_regions(
+                                tcx.fn_sig(adapter_def_id.to_def_id()).instantiate_identity(),
+                            ) == tcx.erase_and_anonymize_regions(
+                                tcx.fn_sig(channel_method_def_id.to_def_id()).instantiate_identity(),
+                            ) =>
+                    {
+                        // The marker identifies the source coordinate, while
+                        // the group-shape and signature checks keep the
+                        // generated adapter's ABI tied to the channel method.
+                        // Missing, ambiguous, or incompatible adapters remain
+                        // unavailable to MIR rewriting even before full
+                        // pattern identities are available in HIR.
+                        Some(adapter_def_id)
+                    }
+                    _ => None,
+                };
                 JoinChannel {
-                    method_def_id,
+                    method_def_id: channel_method_def_id,
                     direct_method_def_id,
                     index: index as u32,
                     name,
                     signature: tcx
-                        .fn_sig(method_def_id.to_def_id())
+                        .fn_sig(channel_method_def_id.to_def_id())
                         .instantiate_identity()
                         .skip_normalization(),
                 }

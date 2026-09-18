@@ -135,19 +135,55 @@ impl NoArgsAttributeParser for RustcNoImplicitAutorefsParser {
 }
 
 /// Parses the compiler-only marker attached to a generated direct unary join
-/// adapter. Unlike the endpoint shape marker, this attribute carries no
-/// source-level data: its presence identifies the exact method which the
-/// join descriptor query may use after proving a result-forwarding rewrite.
+/// adapter. The source channel/rule coordinates are encoded in the marker so
+/// descriptor collection can associate an adapter with exactly one source
+/// declaration, even when several channels have identical signatures.
 pub(crate) struct RustcJoinDirectAdapterParser;
 
-impl NoArgsAttributeParser for RustcJoinDirectAdapterParser {
+impl SingleAttributeParser for RustcJoinDirectAdapterParser {
     const PATH: &[Symbol] = &[sym::join_direct_adapter];
     const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[
         Allow(Target::Method(MethodKind::Inherent)),
     ]);
     const STABILITY: AttributeStability = unstable!(joins);
+    const TEMPLATE: AttributeTemplate = template!(List: &["channel = N, rule = N"]);
 
-    const CREATE: fn(Span) -> AttributeKind = |_| AttributeKind::RustcJoinDirectAdapter;
+    fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
+        let list = cx.expect_list(args, cx.attr_span)?;
+        let mut channel = None;
+        let mut rule = None;
+        let mut errored = false;
+
+        for item in list.mixed() {
+            let Some((ident, value)) = cx.expect_name_value(item, item.span(), None) else {
+                errored = true;
+                continue;
+            };
+            let slot = match ident.name {
+                sym::channel => &mut channel,
+                sym::rule => &mut rule,
+                _ => {
+                    cx.adcx().expected_specific_argument(
+                        ident.span,
+                        &[sym::channel, sym::rule],
+                    );
+                    errored = true;
+                    continue;
+                }
+            };
+            *slot = parse_join_endpoint_u32(cx, value);
+        }
+
+        if errored {
+            return None;
+        }
+        let Some((channel, rule)) = channel.zip(rule) else {
+            let attr_span = cx.attr_span;
+            cx.adcx().expected_specific_argument(attr_span, &[sym::channel, sym::rule]);
+            return None;
+        };
+        Some(AttributeKind::RustcJoinDirectAdapter { channel, rule })
+    }
 }
 
 pub(crate) struct RustcLegacyConstGenericsParser;
