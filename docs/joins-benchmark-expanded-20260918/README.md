@@ -36,6 +36,8 @@ runtime. The benchmark build uses the temporary endpoint-capture expansion
 documented by `scripts/build-join-suite.sh`; it does not modify the rustc
 checkout during measurement.
 
-Raw JSONL is kept beside this note. `manifest.txt` records the exact Rust and
-library revisions. The protocol definitions are in
+Raw JSONL is kept beside this note. `manifest.txt` records the base Rust and
+library revisions plus their working-tree status at measurement time; the
+one-way admission fix used by the run was committed afterward as Rust
+`c587a288162` and library `6f3ee99`. The protocol definitions are in
 [PROTOCOL-MATRIX.md](PROTOCOL-MATRIX.md).
