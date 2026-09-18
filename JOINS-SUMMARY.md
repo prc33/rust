@@ -96,15 +96,16 @@ legacy metadata statements, clears call descriptors and drops the backend-only
 summary; generated code therefore receives no join instruction while the
 optimized-MIR query remains available for future CFA/fusion passes.
 
-At Rust commit `4829810a8d5`, the supervisor safety slice is exercised by
+At Rust commit `8398cbf0782`, the supervisor safety slice is exercised by
 compiler-owned checks. Direct
 adapters carry explicit source channel/rule coordinates, are accepted only for
 the one-rule unary group shape, and must have the exact resolved channel ABI.
 The MIR consumer rejects scoped constructors, competing/unknown calls, and
 candidate endpoint aliases used through projections/casts, returns/yields,
 ordinary aggregates, indirect calls, or later call-result overwrites. Direct
-local copy/move/borrow propagation and the reaction's own coroutine capture are
-the only accepted alias-flow forms; terminal cleanup remains allowed. The
+local copy/move/borrow propagation and the exact reaction-body coroutine
+capture are the only accepted alias-flow forms; terminal cleanup remains
+allowed. The
 consumer rechecks the concrete callee, arguments and destination at the rewrite
 point. Optimize-mode summaries record the refusal (`SharedPolicy`, `Escape`,
 `UnknownOrigin`, etc.) instead of silently presenting a missing fusion as

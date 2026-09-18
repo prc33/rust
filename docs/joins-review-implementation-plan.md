@@ -30,15 +30,15 @@ for the backend boundary.
 
 ## What is already present
 
-Checkpoint update, 2026-09-18 at Rust commit `4829810a8d5`: Gates 1A/1B/1C
+Checkpoint update, 2026-09-18 at Rust commit `8398cbf0782`: Gates 1A/1B/1C
 and 3 have a first conservative vertical slice. Generated direct adapters carry explicit
 channel/rule coordinates and the descriptor query checks the one-rule unary
 shape plus exact resolved ABI. Optimize-only fusion rejects scoped constructor
 identity, candidate aliases passed to unsupported calls, projections/casts,
 returns/yields, ordinary aggregates, or later call-result overwrites, and stale
 concrete operands; the body dump records a machine-readable refusal. Direct
-local copy/move/borrow flow and the reaction coroutine's own capture are the
-only accepted alias propagation forms. Dynamic rule aliases bind to each rule's
+local copy/move/borrow flow and the exact reaction-body coroutine's own capture
+are the only accepted alias propagation forms. Dynamic rule aliases bind to each rule's
 cloned endpoint.
 Fresh stage-1 off/analyze/optimize native runs pass the same-signature adapter,
 aggregate-capture, cancelled-scope, and sync/async re-emission witnesses.
