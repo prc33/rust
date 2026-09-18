@@ -137,8 +137,9 @@
     <li>Use the committed profile as the baseline for the next lowering; keep
       hot-path work separate from the cold nested-dispatch fallback.</li>
     <li>Keep the new negative coverage for two same-type instances and repeated
-      requests, plus the withdrawal and owned-output regressions. Add the
-      per-fixture JSON rewrite-count assertions before widening eligibility.</li>
+      requests, plus the withdrawal and owned-output regressions. The result
+      and reentrant positives now have isolated JSON rewrite-count assertions;
+      keep this gate on any new positive fixture.</li>
     <li>Replace count-only descriptors with complete typed rule/policy records;
       keep analysis separate from MIR mutation and invalidate certificates at
       every transforming pass.</li>

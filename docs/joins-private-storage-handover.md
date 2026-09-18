@@ -154,8 +154,10 @@ owned-payload, owned-output, destructor, reentrant, paired-MIR and
 zero-allocation gates pass. The two same-type-instance and repeated-request
 negatives now also pass in all three modes and retain the public path. Runtime
 withdrawal tests cover a dropped unmatched request, FIFO removal and dropping
-one matched reply. Per-fixture JSON rewrite assertions remain before widening
-eligibility.
+one matched reply. The result-forwarding and reentrant positive witnesses now have
+isolated dump directories and exact per-fixture rewrite counts: one in
+optimize, zero in off/analyze. The owned-payload fixture remains a negative
+multi-instance/multi-channel ownership witness rather than a fusion positive.
 
 ## Task 2 — attribute remaining cost, using current generated code (timing complete)
 

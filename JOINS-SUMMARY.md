@@ -230,7 +230,9 @@ channel path in optimize, and the full native suite passes them in all three
 modes. The owned-result fixture checks output destruction and panic transport;
 the runtime now withdraws dropped unmatched requests atomically and tests that
 behavior in the unit and native suites. Per-fixture rewrite-count assertions
-remain open.
+now run in isolated dump directories for both the result-forwarding and
+reentrant positive witnesses: optimize records exactly one rewrite for each,
+while off/analyze record zero.
 
 ## Next execution gates
 

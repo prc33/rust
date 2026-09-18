@@ -12,8 +12,9 @@ Latest immediate-await proof and all-mode native gates passed. The follow-up
 the validated private-storage path. Static LLVM/hot-path attribution is now in
 [the attribution note](joins-llvm-attribution-20260918.md), with sequential
 call-graph reports in [the profile archive](joins-perf-profile-20260918/README.md).
-The remaining gate before widening is per-fixture proof accounting; do not
-widen eligibility before it.
+The result-forwarding and reentrant witnesses now have isolated per-fixture
+rewrite accounting. Do not widen eligibility until the guarded adapter's
+execution-context proof and the shared semantic policy are complete.
 
 September 18 measured follow-up: the guarded private forwarding path is now
 472.30 ns/op off, 476.74 analyze and 89.85 optimize, including construction and
