@@ -349,6 +349,7 @@ pub static BUILTIN_ATTRIBUTES: &[Symbol] = &[
     // source-level API.
     sym::join_direct_adapter,
     sym::join_endpoint,
+    sym::join_reaction,
     sym::join_rule,
     sym::rustc_never_returns_null_ptr,
     sym::rustc_no_implicit_autorefs,

@@ -42,12 +42,19 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 - The typed-definition slice is implemented: HIR markers preserve ordered rule
   inputs, reply mapping, asyncness and body ordinals; endpoint IR records the
   selected shared policy. The crate CFA graph now dumps these facts.
+- Dynamic endpoints now emit one compiler-marked named reaction helper per
+  source rule. `JoinRule.reaction_method_def_id` is the executable HIR/MIR
+  owner; shared dispatch is represented once without a fabricated rule index.
+  Restricted unary/pair expansions retain their existing nested-body evidence.
+  Duplicate, missing, or out-of-range reaction markers clear all body
+  identities for that endpoint rather than authorizing a partial proof.
 - MIR now records sorted per-channel body-local occupancy intervals in addition
   to its aggregate interval. This is an evidence surface only; no fixed-slot
   rewrite consumes it yet.
-- The native analyze fixture gate passes with the new records. The remaining
-  work is the cross-body state-token proof and proof-consuming storage/matcher
-  lowering described in sections 4–6.
+- The native analyze and optimize fixture gates pass after the reaction-helper
+  change; optimize still reports the existing narrow forwarding rewrites. The
+  remaining work is the cross-body state-token proof and proof-consuming
+  storage/matcher lowering described in sections 4–6.
 
 ## Constraints throughout
 

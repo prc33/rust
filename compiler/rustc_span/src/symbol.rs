@@ -1851,6 +1851,7 @@ symbols! {
         rustc_intrinsic_const_stable_indirect,
         join_direct_adapter,
         join_endpoint,
+        join_reaction,
         join_rule,
         channels,
         channel_order,

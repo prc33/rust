@@ -298,6 +298,47 @@ impl SingleAttributeParser for RustcJoinEndpointParser {
 /// later CFA must not reconstruct from generated method names.
 pub(crate) struct RustcJoinRuleParser;
 
+/// Parses the marker attached to the named helper that contains one expanded
+/// join reaction. Unlike the source-rule marker, this points at an executable
+/// HIR body and therefore supplies an unambiguous body identity to MIR CFA.
+pub(crate) struct RustcJoinReactionParser;
+
+impl SingleAttributeParser for RustcJoinReactionParser {
+    const PATH: &[Symbol] = &[sym::join_reaction];
+    const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[
+        Allow(Target::Method(MethodKind::Inherent)),
+    ]);
+    const TEMPLATE: AttributeTemplate = template!(List: &["rule = N"]);
+    const STABILITY: AttributeStability = unstable!(joins);
+
+    fn convert(cx: &mut AcceptContext<'_, '_>, args: &ArgParser) -> Option<AttributeKind> {
+        let list = cx.expect_list(args, cx.attr_span)?;
+        let mut rule = None;
+        let mut errored = false;
+        for item in list.mixed() {
+            let Some((ident, value)) = cx.expect_name_value(item, item.span(), None) else {
+                errored = true;
+                continue;
+            };
+            if ident.name != sym::rule {
+                cx.adcx().expected_specific_argument(ident.span, &[sym::rule]);
+                errored = true;
+                continue;
+            }
+            rule = parse_join_endpoint_u32(cx, value);
+        }
+        if errored {
+            return None;
+        }
+        let Some(rule) = rule else {
+            let attr_span = cx.attr_span;
+            cx.adcx().expected_specific_argument(attr_span, &[sym::rule]);
+            return None;
+        };
+        Some(AttributeKind::RustcJoinReaction { rule })
+    }
+}
+
 impl SingleAttributeParser for RustcJoinRuleParser {
     const PATH: &[Symbol] = &[sym::join_rule];
     const ALLOWED_TARGETS: AllowedTargets<'_> = AllowedTargets::AllowList(&[

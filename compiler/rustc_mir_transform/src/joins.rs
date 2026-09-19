@@ -131,8 +131,27 @@ fn body_descriptor<'tcx>(
             ));
         }
 
+        // The generated multi-rule endpoint has one shared dispatch method.
+        // It is deliberately not attributed to an arbitrary source rule;
+        // the rule-specific identity begins at the named reaction helper.
+        if endpoint.rules.iter().any(|rule| rule.method_def_id == local_def_id) {
+            return Some((
+                endpoint.endpoint_def_id.map_or(u32::MAX, |id| id.index() as u32),
+                local_def_id.index() as u32,
+                JoinBodyRole::Dispatch,
+                endpoint.declared_arity,
+                endpoint.declared_async_rule,
+                endpoint.frontend_direct_unary,
+                frontend_queue_bound(endpoint.frontend_queue_bound),
+                endpoint.endpoint_def_id,
+                None,
+                None,
+            ));
+        }
+
         for (rule_index, rule) in endpoint.rules.iter().enumerate() {
             if rule.method_def_id == local_def_id
+                || rule.reaction_method_def_id == Some(local_def_id)
                 || rule.body_def_ids.iter().any(|body_id| body_id == local_def_id)
             {
                 return Some((
@@ -1150,20 +1169,42 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
                 },
             );
         }
+        let mut dispatch_inserted = false;
         for (rule_index, rule) in endpoint.rules.iter().enumerate() {
             let rule_def_id = Some(rule.method_def_id.index() as u32);
-            targets.insert(
-                rule.method_def_id.index() as u32,
-                JoinCallTarget {
-                    kind: JoinCallTargetKind::Dispatch,
-                    endpoint_def_id,
-                    channel_index: None,
-                    rule_index: Some(rule_index as u32),
-                    queue_bound: frontend_queue_bound(endpoint.frontend_queue_bound),
-                    rule_def_id,
-                    direct_method_def_id: None,
-                },
-            );
+            if !dispatch_inserted {
+                // A shared dispatch method is one executable entry point for
+                // the endpoint, not one rule-specific callee. Keeping a
+                // source rule index here would make the last rule overwrite
+                // the previous entries in this identity map.
+                targets.insert(
+                    rule.method_def_id.index() as u32,
+                    JoinCallTarget {
+                        kind: JoinCallTargetKind::Dispatch,
+                        endpoint_def_id,
+                        channel_index: None,
+                        rule_index: None,
+                        queue_bound: frontend_queue_bound(endpoint.frontend_queue_bound),
+                        rule_def_id: None,
+                        direct_method_def_id: None,
+                    },
+                );
+                dispatch_inserted = true;
+            }
+            if let Some(reaction) = rule.reaction_method_def_id {
+                targets.insert(
+                    reaction.index() as u32,
+                    JoinCallTarget {
+                        kind: JoinCallTargetKind::ReactionBody,
+                        endpoint_def_id,
+                        channel_index: None,
+                        rule_index: Some(rule_index as u32),
+                        queue_bound: frontend_queue_bound(endpoint.frontend_queue_bound),
+                        rule_def_id,
+                        direct_method_def_id: None,
+                    },
+                );
+            }
             for body in rule.body_def_ids {
                 targets.insert(
                     body.index() as u32,
@@ -1754,8 +1795,14 @@ fn dump_crate_summary(
                         .map(u32::to_string)
                         .collect::<Vec<_>>()
                         .join(",");
+                    let nested_bodies = rule
+                        .body_def_ids
+                        .iter()
+                        .map(|body| body.index().to_string())
+                        .collect::<Vec<_>>()
+                        .join(",");
                     format!(
-                        "{{\"index\":{},\"arity\":{},\"async\":{},\"channels\":[{}],\"replies\":[{}],\"body_index\":{},\"body\":{}}}",
+                        "{{\"index\":{},\"arity\":{},\"async\":{},\"channels\":[{}],\"replies\":[{}],\"body_index\":{},\"body\":{},\"reaction_method\":{},\"nested_bodies\":[{}]}}",
                         index,
                         rule.arity,
                         rule.is_async,
@@ -1765,6 +1812,9 @@ fn dump_crate_summary(
                             .map_or_else(|| "null".to_string(), |value| value.to_string()),
                         rule.body_def_id
                             .map_or_else(|| "null".to_string(), |value| value.index().to_string()),
+                        rule.reaction_method_def_id
+                            .map_or_else(|| "null".to_string(), |value| value.index().to_string()),
+                        nested_bodies,
                     )
                 })
                 .collect::<Vec<_>>()

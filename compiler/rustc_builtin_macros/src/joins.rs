@@ -773,9 +773,18 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let dispatch_bounds = endpoint_dispatch_bounds(definition);
     let mut rule_definitions = Vec::with_capacity(definition.rules.len());
     let mut rule_metadata = Vec::with_capacity(definition.rules.len());
+    let mut reaction_definitions = Vec::with_capacity(definition.rules.len());
     let mut direct_method_definitions = Vec::new();
     let mut private_constructor = String::new();
     for (rule_index, rule) in definition.rules.iter().enumerate() {
+        let reserved_helper = format!("__join_reaction_{rule_index}");
+        if definition
+            .channels
+            .iter()
+            .any(|channel| channel.name.name.as_str() == reserved_helper)
+        {
+            return Err(format!("channel name `{reserved_helper}` is reserved by the join lowering"));
+        }
         let resolved = resolve_rule(definition, rule, rule_index)?;
         // Each rule owns a distinct endpoint clone below. Generate aliases
         // against that per-rule capture so re-emission cannot move the shared
@@ -803,6 +812,17 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         let pattern =
             resolved.iter().map(|(index, _, _)| index.to_string()).collect::<Vec<_>>().join(", ");
         let body = dynamic_rule_body(&resolved, &aliases, &prefix, &replies, rule.is_async)?;
+        // Give every source rule a named executable helper.  Inline closures
+        // all share the dispatch method as their HIR owner, which made the
+        // compiler unable to distinguish rule bodies.  The helper keeps the
+        // same callback ABI while giving the typed descriptor a stable body
+        // identity that survives through MIR.
+        reaction_definitions.push(dynamic_reaction_helper(
+            rule_index,
+            &body,
+            rule.is_async,
+            &dispatch_bounds,
+        ));
         // A dynamic endpoint may still contain one private, synchronous,
         // unary result rule (for example because the declaration also has an
         // unrelated one-way channel).  Emit a hidden ready-reply adapter for
@@ -862,11 +882,11 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         };
         let dispatch = if rule.is_async {
             format!(
-                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; {matcher}.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); {matcher}.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_{rule_index}(__join_rule_endpoint, inputs)) }}"
             )
         } else {
             format!(
-                "{{ let __join_rule_endpoint = __join_endpoint.clone(); let _ = __join_rule_endpoint; {matcher}.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| {{\n{body}\n}}) }}"
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); {matcher}.__join_dispatch_once_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_{rule_index}(__join_rule_endpoint, inputs)) }}"
             )
         };
         rule_definitions.push(format!("if {dispatch} {{ return true; }}"));
@@ -898,6 +918,7 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     let scoped_matcher = format!("::joins_runtime::DynamicMatcher::new_in_scope(scope, {})", definition.channels.len());
     let wrap = |expression: String| if private_storage { format!("Some({expression})") } else { expression };
     let direct_methods = direct_method_definitions.join("\n\n");
+    let reaction_definitions = reaction_definitions.join("\n\n");
     let rule_metadata = rule_metadata.join("\n\n");
     let rules = rule_definitions.join("\n        ");
     let endpoint_attribute = join_endpoint_attribute(definition, false, u32::MAX);
@@ -929,6 +950,8 @@ impl {impl_generics}{impl_name} {{
 
 {direct_methods}
 
+{reaction_definitions}
+
 {rule_metadata}
 
     fn __join_dispatch_once(&self) -> bool
@@ -951,6 +974,7 @@ impl {impl_generics}{impl_name} {{
         private_constructor = private_constructor,
         methods = methods,
         direct_methods = direct_methods,
+        reaction_definitions = reaction_definitions,
         rule_metadata = rule_metadata,
         rules = rules,
         dispatch_bounds = dispatch_bounds,
@@ -1126,6 +1150,32 @@ fn dynamic_rule_body(
         Ok(format!("async move {{\n{body}\n}}"))
     } else {
         Ok(format!("let inputs = inputs;\n{body}"))
+    }
+}
+
+/// Emit the executable helper for one dynamic reaction. Keeping this body in
+/// a named inherent method is semantically neutral—the matcher still owns
+/// admission, atomic claim and completion—but gives HIR/MIR a distinct owner
+/// for every source rule.  The helper's callback signatures intentionally
+/// match the hidden runtime ABI so no adapter or extra allocation is added.
+fn dynamic_reaction_helper(
+    rule_index: usize,
+    body: &str,
+    is_async: bool,
+    dispatch_bounds: &str,
+) -> String {
+    if is_async {
+        format!(
+            "    #[doc(hidden)]\n    #[join_reaction(rule = {rule_index})]\n    fn __join_reaction_{rule_index}(__join_rule_endpoint: Self, inputs: ::joins_runtime::DynamicFutureInputs) -> impl ::core::future::Future<Output = ::core::result::Result<::std::vec::Vec<::core::result::Result<::std::boxed::Box<dyn ::core::any::Any + Send>, ::joins_runtime::JoinError>>, ::joins_runtime::JoinError>> + Send + 'static\n{dispatch_bounds}{{\n        {body}\n    }}",
+            dispatch_bounds = dispatch_bounds,
+            body = body,
+        )
+    } else {
+        format!(
+            "    #[doc(hidden)]\n    #[join_reaction(rule = {rule_index})]\n    fn __join_reaction_{rule_index}(__join_rule_endpoint: Self, inputs: &mut [::joins_runtime::DynamicInvocation]) -> ::core::result::Result<::std::vec::Vec<::core::result::Result<::std::boxed::Box<dyn ::core::any::Any + Send>, ::joins_runtime::JoinError>>, ::joins_runtime::JoinError>\n{dispatch_bounds}{{\n        {body}\n    }}",
+            dispatch_bounds = dispatch_bounds,
+            body = body,
+        )
     }
 }
 

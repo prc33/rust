@@ -148,6 +148,10 @@ pub struct JoinRule<'tcx> {
     /// post-order. Keeping these identities lets pre-coroutine MIR analysis
     /// find the actual reaction closures without matching source strings.
     pub body_def_ids: &'tcx crate::ty::List<LocalDefId>,
+    /// Named executable helper emitted for this source rule.  This is the
+    /// authoritative reaction owner; `body_def_ids` retains nested closure or
+    /// coroutine identities below it for reachability analysis.
+    pub reaction_method_def_id: Option<LocalDefId>,
     /// Exact source-declaration channel order for this reaction. This is
     /// recovered from the per-rule compiler marker, not from generated names.
     pub channel_indices: Vec<u32>,

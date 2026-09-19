@@ -47,10 +47,15 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
         let mut scoped_constructor_def_id = None;
         let mut dispatch_method = None;
         let mut rule_markers = Vec::new();
+        let mut reaction_markers = Vec::new();
         for item_id in impl_.items {
             let item = tcx.hir_impl_item(*item_id);
             let ImplItemKind::Fn(_, _) = item.kind else { continue };
             let method_def_id = item.owner_id.def_id;
+            if let Some(rule) = find_attr!(tcx, method_def_id, RustcJoinReaction { rule } => *rule) {
+                reaction_markers.push((rule, method_def_id));
+                continue;
+            }
             if let Some(marker) = find_attr!(
                 tcx,
                 method_def_id,
@@ -155,6 +160,23 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
             })
             .collect();
         rule_markers.sort_by_key(|(index, ..)| *index);
+        reaction_markers.sort_by_key(|(index, ..)| *index);
+        let restricted_single_rule = declared_rules == 1
+            && declared_arity <= 2
+            && declared_channels == declared_arity;
+        let reaction_markers_valid = !restricted_single_rule
+            && reaction_markers.len() == declared_rules as usize
+            && reaction_markers
+                .windows(2)
+                .all(|pair| pair[0].0 != pair[1].0)
+            && reaction_markers.iter().all(|(index, _)| *index < declared_rules);
+        if !reaction_markers_valid && !restricted_single_rule {
+            // Do not partially associate malformed metadata with rules. A
+            // missing, duplicate, or out-of-range helper marker leaves every
+            // reaction body unknown and therefore prevents proof-consuming
+            // transforms for the endpoint.
+            reaction_markers.clear();
+        }
         let body_def_ids = body_owner
             .map(|method_def_id| tcx.nested_bodies_within(method_def_id))
             .unwrap_or_else(|| tcx.mk_local_def_ids(&[]));
@@ -169,6 +191,7 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                 arity: declared_arity,
                 is_async: declared_async_rule,
                 body_def_ids,
+                reaction_method_def_id: None,
                 channel_indices: Vec::new(),
                 reply_channel_indices: Vec::new(),
                 body_def_id: None,
@@ -178,7 +201,7 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
         } else {
             rule_markers
                 .into_iter()
-                .map(|(_, channel_order, channel_count, reply_mask, body_index, is_async)| {
+                .map(|(rule_index, channel_order, channel_count, reply_mask, body_index, is_async)| {
                     let channel_indices = decode_channel_order(channel_order, channel_count);
                     let reply_channel_indices = if channel_order == u32::MAX
                         || reply_mask == u32::MAX
@@ -191,16 +214,34 @@ fn join_definitions(tcx: TyCtxt<'_>, _: ()) -> JoinDefinitions<'_> {
                             .filter(|channel| reply_mask & (1u32 << channel) != 0)
                             .collect()
                     };
-                    let body_def_id = (channel_order != u32::MAX).then_some(method_def_id);
+                    let reaction_method_def_id = reaction_markers
+                        .iter()
+                        .find(|(index, _)| *index == rule_index)
+                        .map(|(_, method)| *method);
+                    // Missing helper metadata is an explicit rejection, not
+                    // permission to assign the shared dispatch method as the
+                    // body for every rule.
+                    let body_def_id = reaction_method_def_id.or_else(|| {
+                        restricted_single_rule.then_some(method_def_id)
+                    });
+                    let reaction_body_def_ids = reaction_method_def_id
+                        .map(|method| tcx.nested_bodies_within(method))
+                        .unwrap_or_else(|| {
+                            restricted_single_rule
+                                .then_some(body_def_ids)
+                                .unwrap_or_else(|| tcx.mk_local_def_ids(&[]))
+                        });
                     JoinRule {
                         method_def_id,
                         arity: channel_count,
                         is_async,
-                        body_def_ids,
+                        body_def_ids: reaction_body_def_ids,
+                        reaction_method_def_id,
                         channel_indices,
                         reply_channel_indices,
                         body_def_id,
-                        body_index: (channel_order != u32::MAX).then_some(body_index),
+                        body_index: body_def_id
+                            .and((channel_order != u32::MAX).then_some(body_index)),
                         span,
                     }
                 })

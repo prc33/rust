@@ -1318,6 +1318,12 @@ pub enum AttributeKind {
         async_rule: bool,
     },
 
+    /// Compiler-generated identity for the executable reaction helper.  The
+    /// builtin expansion emits one helper per source rule so rustc can keep
+    /// the body identity through HIR/MIR instead of assigning every rule the
+    /// enclosing dispatch method as a placeholder.
+    RustcJoinReaction { rule: u32 },
+
     /// Represents the compiler-generated join endpoint contract.
     ///
     /// This marker is emitted by the `join impl` builtin expansion and is
