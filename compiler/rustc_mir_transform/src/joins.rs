@@ -3362,6 +3362,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             .size;
         let mut rewritten = 0usize;
         for block_data in body.basic_blocks_mut() {
+            let span = block_data.terminator().source_info.span;
             let TerminatorKind::Call { func, args, .. } = &mut block_data.terminator_mut().kind
             else {
                 continue;
@@ -3385,7 +3386,6 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             {
                 continue;
             }
-            let span = block_data.terminator().source_info.span;
             args[1] = Spanned {
                 span,
                 node: Operand::const_from_scalar(
