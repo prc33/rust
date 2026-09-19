@@ -157,6 +157,17 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   metadata-only strategy label. This lowering must carry typed payload/reply
   operands, ownership and unwind/drop behavior, and be visible in optimized
   MIR before `lower_join_markers` erases descriptors.
+- The first runtime structural follow-up is now complete in library commit
+  `473a5d6`: `PairMatcher` uses one guarded typed `PairState` for both queues,
+  preserving the generic FIFO fallback and exact proof-selected slots while
+  making pair claims atomic under one lock interval. The 62-test runtime suite
+  passes. A serialized direct-source mutex focus measured 36.0 ns/op native,
+  715.8 off, 742.0 analyze and 560.8 optimize (100 samples, 10,000
+  iterations, ten warmups, four workers). This is a meaningful reduction from
+  the prior 779.8 ns/op optimize result, but it remains about 15.6x native;
+  reply publication, wake/scheduling, trampoline and generic matcher work are
+  now the priority. Do not treat this runtime simplification as the typed MIR
+  lowering promised above.
 
 ## Constraints throughout
 
