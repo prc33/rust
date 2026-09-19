@@ -1423,10 +1423,11 @@ fn channel_method(
         )
     } else {
         format!(
-            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ let _ = self.matcher.{submit}_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
+            "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ self.matcher.{submit}_oneway_at({value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",
             name = channel.name.name,
             argument = channel_method_argument(channel),
             value = channel_submit_value(channel),
+            submit = submit,
             dispatch_bounds = dispatch_bounds,
         )
     }
