@@ -26,11 +26,13 @@ mode; typed metadata on real MIR calls; local value/escape analysis and limited
 helper propagation; a narrow private constructor/result-forwarding rewrite;
 zero-allocation optimized forwarding. Do not reimplement those slices.
 
-Latest focused forwarding: 533.90/536.86/21.89 ns/op off/analyze/optimize.
-The expanded matrix exposes the larger remaining gaps: roughly 10× MPSC, 30×
-completion and 37× mutex/counter versus handwritten controls. These ratios are
-workload-specific, not guarantees of achievable speedups. See
-[the expanded evidence](joins-benchmark-expanded-20260918/README.md).
+The latest complete matrix exposes the larger remaining gaps: roughly 8.5×
+MPSC, 32–33× completion/mutex, and 77–96× RWLock versus handwritten controls.
+The same run is near parity for MPMC, barrier, thread join, once and
+work/resource, while the canonical all-channel/rendezvous and condvar rows are
+protocol-specific faster controls rather than evidence that every join is
+already cheaper. These ratios are workload-specific, not guarantees of
+achievable speedups. See the archived full report recorded below.
 
 The Dovetail checkout has separate analysis and code-generation drivers. Its
 closed/bounded representations are useful reference implementations; do not
@@ -101,6 +103,13 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   1,193.9 joins-analyze and 1,164.7 joins-optimize (about 1.11–1.16x native).
   This closes a dispatch-validation gap but leaves type erasure, reply cells,
   allocation and mutex costs for the next slice.
+- The complete serialized matrix is now finished and archived at
+  `../join-benchmarks/results/full-all-dispatch-20260919/` (30 samples, 5,000
+  iterations, five warmups, four workers, deterministic per-operation variant
+  shuffling, and 10,000-repetition bootstrap intervals). Every expected sample
+  passed validation and all checksums matched. This is the baseline for the
+  next structural change; no further timing run is needed until a
+  storage/reply representation changes.
 
 ## Constraints throughout
 
@@ -268,14 +277,41 @@ After correctness gates, run the focused counter benchmark against the native
 control and all CFA modes. Collect allocation counts separately and sequential
 perf profiles with instruction/basic-block attribution. Record sample counts
 and uncertainty; do not interpret sampled IP percentages as exact instruction
-latency. **The first focused gate is now complete:** the 100-sample
-`work-resource` archive is in `join-benchmarks/results/focused-work-resource-20260919-token/`.
-It shows near-parity for this one-way/state-token workload but does not prove
-generic matcher costs are gone. The next all-channel dispatch gate is also
-archived at `join-benchmarks/results/focused-work-resource-20260919-all-dispatch/`;
-it narrows the same workload to roughly 1.11–1.16x native. Run the full
-randomized matrix after the next storage/type-erasure change, not as a
-substitute for attribution.
+latency. **The focused gates and complete matrix are now complete:** the
+100-sample `work-resource` archive is in
+`join-benchmarks/results/focused-work-resource-20260919-token/`, the
+all-channel follow-up is in
+`join-benchmarks/results/focused-work-resource-20260919-all-dispatch/`, and the
+full matrix is in `join-benchmarks/results/full-all-dispatch-20260919/`.
+The full report's medians (joins optimize versus handwritten baseline) are:
+
+| operation | optimize / baseline | interpretation |
+| --- | ---: | --- |
+| MPMC | 1.00× | parity within noisy paired interval |
+| barrier | 0.97× | parity; interval overlaps 1 |
+| thread join | 0.97× | parity; interval overlaps 1 |
+| once | 1.00× | parity; interval overlaps 1 |
+| work/resource | 0.93× | interval overlaps 1 |
+| MPSC | 8.50× | major generic queue/dispatch gap |
+| completion | 33.39× | reply/admission overhead dominates |
+| mutex | 32.51× | per-operation coordination overhead dominates |
+| RWLock | 76.53× | shared-state representation is not competitive |
+
+Rendezvous (0.03×) and condvar (0.43×) use intentionally different protocol
+work from their handwritten controls and must not be counted as general wins.
+The async-request row is compared with the Tokio baseline and is 0.12× in this
+harness; it is likewise a protocol/measurement witness, not a claim that the
+generic join matcher beats an ordinary async function.
+
+All 30 samples per row passed, with matching checksums. CFA dump summaries
+contain 156 records and 57 reaction bodies in each mode; only four frontend
+direct-unary and four exact-queue-0 facts are currently recorded, with zero
+interprocedural direct candidates. Therefore the full matrix establishes the
+next attribution target—typed storage, reply allocation and generic
+coordination—rather than showing that CFA has already removed those costs.
+Do not rerun the matrix until a representation change is made; first collect
+allocation counts and one sequential instruction-level profile for the high-gap
+MPSC/completion/mutex/RWLock rows.
 
 The initial performance gate is a repeatable reduction in the identified
 generic work and measured cost. The target remains parity with the native
