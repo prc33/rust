@@ -71,7 +71,7 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   the generated IR still contains the generic matcher machinery.
 - The library runtime now has a proof-facing `DynamicMatcherStoragePolicy` and
   exact per-channel inline slots with fallible admission; occupied proven slots
-  never grow a FIFO while unrelated channels retain dynamic queues.  All 58
+  never grow a FIFO while unrelated channels retain dynamic queues.  All 60
   runtime unit tests pass.  Generated dynamic constructors now start with a
   zero channel mask, and the optimize-only `JoinStorageLowering` MIR pass
   consumes a proven `FixedUnarySlot` state-token record and rewrites only the
@@ -82,7 +82,7 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   no reply future, they cannot be withdrawn before matching.  Result-bearing
   admissions retain the weak-token withdrawal protocol.  This removes one
   per-message `Arc` allocation without recognizing or replacing any lock
-  implementation; the runtime unit suite remains at 58 passing tests.
+  implementation; the runtime unit suite remains at 60 passing tests.
 - A serialized 100-sample `work-resource` run (10,000 operations, four
   workers) after that change measured medians of 1,092.4 ns/op native, 1,807.5
   joins-off, 1,611.4 joins-analyze, and 1,167.6 joins-optimize.  The optimized
