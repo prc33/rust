@@ -1949,15 +1949,27 @@ fn state_token_endpoint_complete(
         return false;
     }
 
-    // The selected reaction (including its compiler-generated nested
-    // coroutine bodies) is part of the proof boundary.  A hidden unknown
-    // effect there could emit the candidate channel, so reject it instead of
-    // treating the known re-emission edge as exhaustive.
-    if bodies.iter().any(|body| {
-        body.endpoint_def_id == Some(endpoint_def_id)
-            && body.role == JoinBodyRole::ReactionBody
-            && body.rule_index == Some(rule_index)
-            && (body.unknown_effects != 0 || !body.endpoint_escapes.is_empty())
+    // The generated dynamic dispatcher has an outer reaction wrapper and a
+    // nested body for the source reaction.  The wrapper contains compiler
+    // plumbing (closure construction and result adaptation) that is not an
+    // independent producer; its nested body is the actual source-level
+    // reaction whose channel edges are recorded below.  Check only leaf
+    // reaction bodies here.  This still rejects unknown effects in the
+    // source body itself, while avoiding a false negative caused solely by
+    // generated wrapper MIR.
+    let reaction_bodies = bodies
+        .iter()
+        .filter(|body| {
+            body.endpoint_def_id == Some(endpoint_def_id)
+                && body.role == JoinBodyRole::ReactionBody
+                && body.rule_index == Some(rule_index)
+        })
+        .collect::<Vec<_>>();
+    if reaction_bodies.iter().any(|body| {
+        let has_nested_reaction = reaction_bodies
+            .iter()
+            .any(|candidate| candidate.parent_body_def_id == Some(body.body_def_id));
+        !has_nested_reaction && (body.unknown_effects != 0 || !body.endpoint_escapes.is_empty())
     }) {
         return false;
     }
@@ -3291,7 +3303,7 @@ fn state_token_constructor_lowering<'tcx>(
             continue;
         };
         let Some((callee, _)) = func.const_fn_def() else { continue };
-        if tcx.item_name(callee).as_str() != "new_with_channel_mask" {
+        if !is_dynamic_matcher_mask_constructor(tcx, callee) {
             continue;
         }
         if args.len() != 2 {
@@ -3368,7 +3380,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             };
             let Some((callee, _)) = func.const_fn_def() else { continue };
-            if tcx.item_name(callee).as_str() != "new_with_channel_mask"
+            if !is_dynamic_matcher_mask_constructor(tcx, callee)
                 || args.len() != 2
             {
                 continue;
@@ -3406,6 +3418,27 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             debug_assert_eq!(rewritten, 0, "join storage lowering partially matched constructor");
         }
     }
+}
+
+/// Identify the compiler-owned runtime policy constructor by crate, symbol,
+/// and signature.  The builtin macro emits an absolute `joins_runtime` path,
+/// but a name-only check would still allow an unrelated same-named function
+/// to be rewritten if generated MIR changes in the future.
+fn is_dynamic_matcher_mask_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+    if tcx.crate_name(callee.krate).as_str() != "joins_runtime"
+        || tcx.item_name(callee).as_str() != "new_with_channel_mask"
+    {
+        return false;
+    }
+    let signature = tcx.fn_sig(callee).instantiate_identity().skip_binder();
+    if signature.inputs().len() != 2 || signature.c_variadic() {
+        return false;
+    }
+    matches!(
+        signature.output().kind(),
+        ty::Adt(def, _) if tcx.crate_name(def.did().krate).as_str() == "joins_runtime"
+            && tcx.item_name(def.did()).as_str() == "DynamicMatcher"
+    )
 }
 
 impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
