@@ -103,7 +103,8 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   1,193.9 joins-analyze and 1,164.7 joins-optimize (about 1.11–1.16x native).
   This closes a dispatch-validation gap but leaves type erasure, reply cells,
   allocation and mutex costs for the next slice.
-- The complete serialized matrix is now finished and archived at
+- The complete serialized **expanded-source** matrix is now finished and
+  archived at
   `../join-benchmarks/results/full-all-dispatch-20260919/` (30 samples, 5,000
   iterations, five warmups, four workers, deterministic per-operation variant
   shuffling, and 10,000-repetition bootstrap intervals). Every expected sample
@@ -128,6 +129,34 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   Optimize is 5.77× native here, about 19% below the previous full-matrix
   optimize row. The serialized analyze outlier is retained as evidence, not
   attributed to CFA; all records and checksums pass.
+- The benchmark harness has now been corrected to compile the original join
+  source directly for the final executable. The former expanded-source
+  workaround removed the compiler-visible join graph before the final build,
+  so `full-all-dispatch-20260919` is a useful compatibility-runtime history
+  but is **not** valid evidence that CFA affected those binaries. A direct
+  source, 100-sample mutex focus (10,000 iterations, ten warmups, four
+  workers) measured medians of 35.35 ns/op native, 1,055.61 off, 744.88
+  analyze and 752.75 optimize. The source-preserving optimize build is about
+  1.40× faster than off on this run, but is still about 21.3× the native
+  control; the full direct-source matrix must be archived before broad ratios
+  are reported.
+- A codegen-boundary audit found that
+  `rustc_codegen_ssa::mir::lower_join_markers` currently clones the optimized
+  body immediately before backend lowering, removes join call descriptors and
+  marker statements, and clears `Body::join_info`. This is correct for the
+  current compatibility lowering, but it means no join metadata or CFA proof
+  reaches LLVM. Any optimization that needs join facts must therefore consume
+  them into executable, ordinary MIR (or an explicit typed lowering) before
+  this boundary; an LLVM pass cannot recover the erased pattern.
+- The current mask bridge is deliberately only a proof-to-policy adapter: it
+  changes the generated constructor's scalar channel mask, which lets the
+  runtime select an inline queue slot, but it does not produce a typed matcher
+  or remove the generic `PairQueue`/mutex/reply machinery. The next executable
+  compiler step is a proof-gated typed MIR lowering to a `FixedPairMatcher`
+  (with the existing generic matcher as its fallback), not another
+  metadata-only strategy label. This lowering must carry typed payload/reply
+  operands, ownership and unwind/drop behavior, and be visible in optimized
+  MIR before `lower_join_markers` erases descriptors.
 
 ## Constraints throughout
 
@@ -289,19 +318,62 @@ Ownership/race gates pass. MIR and assembly demonstrate the specific removed
 work. Merely selecting an independently handwritten counter implementation is
 not completion.
 
+### 6.1 Next slice: lower the proven pair to an executable typed matcher
+
+The scalar constructor-mask bridge is the completed first step, not the target
+representation. Implement the next slice in this order:
+
+1. Define the compiler/runtime contract for `FixedPairMatcher` using the actual
+   channel payload and reply types. It may use ordinary Rust fields and
+   atomics/CAS or a proven local synchronization mechanism, but it must not be
+   selected because the code resembles a library mutex and must not depend on
+   a particular lock implementation. Keep a generic queue-backed matcher for
+   every unsupported case.
+2. Extend the typed join descriptor and `JoinStorageLowering` so that a
+   positive state-token certificate selects the typed matcher at a real MIR
+   call/constructor site. The lowering must validate the exact group,
+   channel/rule indices, generic substitutions, payload/reply ABI, and
+   construction instance before changing the call. It must not merely set a
+   scalar policy bit or attach a side-table annotation.
+3. Preserve the operation through optimized MIR long enough for ordinary MIR
+   passes and coroutine lowering to see the typed fields, direct matching
+   branch, and reply completion. Lower to the canonical runtime ABI only after
+   ownership, drop, panic/unwind and cancellation paths have been checked. At
+   the existing backend boundary, erasing a consumed descriptor is acceptable;
+   erasing it before this lowering is not.
+4. Add positive and negative MIR fixtures. The positive state-token pair must
+   show `FixedPairMatcher` and no dynamic `PairQueue` construction; a competing
+   rule, extra producer, escaped instance, reordered pattern, unknown call,
+   borrowed payload, and non-proven bound must retain the generic matcher and
+   record a rejection reason. Off and analyze must keep the generic
+   representation while preserving behavior.
+5. Verify the generated MIR and assembly for removed enum dispatch, queue
+   growth, erased payload/reply-cell allocation and unnecessary scheduling
+   work. Then run the focused direct-source benchmark serially, with allocation
+   counters and checksums, before touching the full matrix. A successful gate
+   requires a measured reduction in the identified generic work, not just a
+   changed symbol or metadata dump.
+
+This is the first place where the CFA result becomes an executable compiler
+optimization. Do not proceed to completion/MPSC generalization until the
+typed pair has a sound fallback and the direct-source gate demonstrates that
+the lowering reaches generated code.
+
 ## 7. Measure, generalize, then migrate DataFusion
 
 After correctness gates, run the focused counter benchmark against the native
 control and all CFA modes. Collect allocation counts separately and sequential
 perf profiles with instruction/basic-block attribution. Record sample counts
 and uncertainty; do not interpret sampled IP percentages as exact instruction
-latency. **The focused gates and complete matrix are now complete:** the
-100-sample `work-resource` archive is in
+latency. The focused gates are complete, but the broad matrix must be
+compiled from direct source after the harness correction. The 100-sample
+`work-resource` archive is in
 `join-benchmarks/results/focused-work-resource-20260919-token/`, the
 all-channel follow-up is in
 `join-benchmarks/results/focused-work-resource-20260919-all-dispatch/`, and the
 full matrix is in `join-benchmarks/results/full-all-dispatch-20260919/`.
-The full report's medians (joins optimize versus handwritten baseline) are:
+The following table is the **historical expanded-source** report's medians
+(joins optimize versus handwritten baseline):
 
 | operation | optimize / baseline | interpretation |
 | --- | ---: | --- |
@@ -315,27 +387,32 @@ The full report's medians (joins optimize versus handwritten baseline) are:
 | mutex | 32.51× | per-operation coordination overhead dominates |
 | RWLock | 76.53× | shared-state representation is not competitive |
 
-Rendezvous (0.03×) and condvar (0.43×) use intentionally different protocol
-work from their handwritten controls and must not be counted as general wins.
+These ratios must not be used as CFA speedup claims: the expanded final source
+did not preserve the compiler-visible join graph. Retain them only as a
+compatibility-runtime history until the direct-source matrix supplies a valid
+replacement. Rendezvous (0.03×) and condvar (0.43×) use intentionally
+different protocol work from their handwritten controls and must not be
+counted as general wins.
 The async-request row is compared with the Tokio baseline and is 0.12× in this
 harness; it is likewise a protocol/measurement witness, not a claim that the
 generic join matcher beats an ordinary async function.
 
-All 30 samples per row passed, with matching checksums. CFA dump summaries
+All 30 samples per row passed, with matching checksums, but those samples do
+not establish compiler CFA consumption. CFA dump summaries
 contain 156 records and 57 reaction bodies in each mode; only four frontend
 direct-unary and four exact-queue-0 facts are currently recorded, with zero
 interprocedural direct candidates. Therefore the full matrix establishes the
 next attribution target—typed storage, reply allocation and generic
 coordination—rather than showing that CFA has already removed those costs.
-Do not rerun the matrix until a representation change is made. The next gate
-is a serialized attribution pass for the high-gap MPSC/completion/mutex/RWLock
-rows: count allocations and instrument queue admissions, reply-cell creation,
-wakeups, task submissions and atomic/lock acquisitions. Then implement the
-compiler-proven typed fixed-group representation (typed slots and typed reply
-operations) while retaining the generic matcher for partial, reordered,
-competing, escaping or borrowing-sensitive cases. No lock implementation may
-be recognized or substituted; the optimization must be justified by the join
-proof and visible in MIR/LLVM.
+The next broad gate is a serialized direct-source attribution pass for the
+high-gap MPSC/completion/mutex/RWLock rows: count allocations and instrument
+queue admissions, reply-cell creation, wakeups, task submissions and
+atomic/lock acquisitions. The immediate implementation target is the
+compiler-proven `FixedPairMatcher` lowering above, while retaining the generic
+matcher for partial, reordered, competing, escaping or borrowing-sensitive
+cases. No lock implementation may be recognized or substituted; the
+optimization must be justified by the join proof and visible in MIR before
+codegen erases the descriptors.
 
 The initial performance gate is a repeatable reduction in the identified
 generic work and measured cost. The target remains parity with the native

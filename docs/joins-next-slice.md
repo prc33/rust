@@ -1,5 +1,30 @@
 # Execution specification: authoritative join MIR and first result fusion
 
+## Current handoff correction — 2026-09-19
+
+The execution order in [`joins-next-plan.md`](joins-next-plan.md) supersedes
+the historical benchmark claims in this document. The old broad matrix was
+built by compiling an expanded source file for the final executable. That
+removed the compiler-visible join graph, so its timings remain useful as a
+compatibility-runtime baseline but cannot demonstrate CFA or compiler
+optimization. The benchmark builder now compiles the original join source
+directly. The first source-preserving mutex focus measured medians of 35.35
+ns/op native, 1,055.61 off, 744.88 analyze and 752.75 optimize; optimize was
+about 1.40× faster than off but still about 21.3× native. Archive the full
+direct-source matrix before using broad ratios.
+
+The compiler audit also confirms that
+`rustc_codegen_ssa::mir::lower_join_markers` currently removes
+`TerminatorKind::Call::join`, join marker statements and `Body::join_info`
+immediately before backend lowering. Consequently, a proof or metadata
+annotation cannot be optimized by LLVM on its own. The next concrete IR slice
+is to consume the positive state-token certificate in executable MIR by
+lowering the proven pair to a typed `FixedPairMatcher`, carrying real typed
+payload/reply operands and ownership/drop/unwind behavior. The generic matcher
+remains the fallback; the lowering must occur before this codegen erasure
+boundary and must be justified by join facts rather than recognition of a lock
+implementation.
+
 **Sequencing superseded:** [the next execution plan](joins-next-plan.md) now
 controls implementation order. Retain this document's applicable safety gates.
 
