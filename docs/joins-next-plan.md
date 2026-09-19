@@ -1,9 +1,9 @@
 # NEXT: analysis-driven shared join specialization
 
-Date: 2026-09-18. **This is the next execution plan. Start here.**
+Date: 2026-09-19. **This is the next execution plan. Start here.**
 
 This plan follows the private forwarding work and expanded benchmark run at
-Rust `06efc963d8e` and library `6f3ee99`. It supersedes the immediate sequencing
+Rust `8ad80e7ed2f` and library `ce12252`. It supersedes the immediate sequencing
 in `joins-private-storage-handover.md`, `joins-next-slice.md`, and older
 optimization inventories. Their safety requirements and regression fixtures
 remain applicable. The accepted async semantics remain authoritative.
@@ -37,7 +37,7 @@ closed/bounded representations are useful reference implementations; do not
 assume the checkout automatically infers every attribute it consumes. The
 standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
-### Progress on this plan (2026-09-18)
+### Progress on this plan (2026-09-19)
 
 - The typed-definition slice is implemented: HIR markers preserve ordered rule
   inputs, reply mapping, asyncness and body ordinals; endpoint IR records the
