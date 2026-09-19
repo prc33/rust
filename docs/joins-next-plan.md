@@ -122,6 +122,12 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   28.12× native. This is a typed join-semantic optimization, not lock
   recognition; the remaining reply-cell, queue, mutex, executor and
   re-emission costs are still the next target.
+- The same one-way PairMatcher slice was measured on the MPSC-shaped pair in
+  `../join-benchmarks/results/focused-pair-oneway-mpsc-20260919/`: medians are
+  95.07 ns/op native, 608.25 off, 1,006.62 analyze, and 548.17 optimize.
+  Optimize is 5.77× native here, about 19% below the previous full-matrix
+  optimize row. The serialized analyze outlier is retained as evidence, not
+  attributed to CFA; all records and checksums pass.
 
 ## Constraints throughout
 
