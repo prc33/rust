@@ -66,7 +66,9 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   mask, and `JoinStorageLowering` rewrites only the proven bit after validating
   the exact constructor identity and allocation site.  Typed runtime storage
   consumes that mask; specialized matching, lock/queue removal, and assembly
-  evidence remain outstanding.
+  evidence remain outstanding.  A serialized LLVM gate at `-O0` and `-O3`
+  observes the same positive `0/2` mode split as an immediate call argument;
+  the generated IR still contains the generic matcher machinery.
 - The library runtime now has a proof-facing `DynamicMatcherStoragePolicy` and
   exact per-channel inline slots with fallible admission; occupied proven slots
   never grow a FIFO while unrelated channels retain dynamic queues.  All 58
