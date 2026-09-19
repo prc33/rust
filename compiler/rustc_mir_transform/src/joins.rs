@@ -1317,6 +1317,25 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         if facts.value_flows.is_empty() && facts.call_edges.is_empty() {
             continue;
         }
+        // Ordinary callers are graph roots too.  Previously the crate graph
+        // only started from join-associated bodies, which meant that the
+        // constructor and seed emissions in `main` (or in an ordinary helper)
+        // were never selected.  That made a perfectly visible one-token
+        // protocol look as though it had no unique instance or producer.
+        // Include only bodies with a compiler-identified join edge; unrelated
+        // Rust functions remain outside the graph.
+        if facts.call_edges.iter().any(|edge| {
+            edge.endpoint_def_id.is_some()
+                && matches!(
+                    edge.target,
+                    JoinCallTargetKind::Constructor
+                        | JoinCallTargetKind::Channel
+                        | JoinCallTargetKind::Dispatch
+                        | JoinCallTargetKind::ReactionBody
+                )
+        }) {
+            pending_ordinary.push(def_id.index() as u32);
+        }
         ordinary_bodies.insert(
             def_id.index() as u32,
             JoinCfaBodyRecord {
@@ -1655,7 +1674,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         )
     });
 
-    let state_tokens = prove_state_tokens(tcx, &bodies, &instances, complete);
+    let state_tokens = prove_state_tokens(tcx, &bodies, &instances);
     let summary = JoinCfaCrateSummary {
         bodies,
         instances,
@@ -1682,7 +1701,6 @@ fn prove_state_tokens<'tcx>(
     tcx: TyCtxt<'tcx>,
     bodies: &[JoinCfaBodyRecord],
     instances: &[JoinCfaInstanceFact],
-    analysis_complete: bool,
 ) -> Vec<JoinStateTokenProof> {
     let mut proofs = Vec::new();
     for endpoint in &tcx.join_definitions(()).endpoints {
@@ -1715,9 +1733,18 @@ fn prove_state_tokens<'tcx>(
                 let mut extra_reemit = false;
                 let mut candidate_reaction = false;
 
-                for body in bodies.iter().filter(|body| {
+                // A body is relevant even when it is an ordinary caller: its
+                // endpoint identity is carried by the typed call edge rather
+                // than by a per-body join descriptor.  This is the root that
+                // supplies the initial token in a closed local witness.
+                let endpoint_body = |body: &&JoinCfaBodyRecord| {
                     body.endpoint_def_id == Some(endpoint_def_id)
-                }) {
+                        || body.call_edges.iter().any(|edge| {
+                            edge.endpoint_def_id == Some(endpoint_def_id)
+                        })
+                };
+
+                for body in bodies.iter().filter(endpoint_body) {
                     let reaction_for_rule = body.role == JoinBodyRole::ReactionBody
                         && body.rule_index == Some(rule_index as u32);
                     for edge in &body.call_edges {
@@ -1742,7 +1769,12 @@ fn prove_state_tokens<'tcx>(
                             // is not safe to infer one-token conservation from
                             // a single selected rule in that case.
                             extra_reemit = true;
-                        } else {
+                        } else if body.role == JoinBodyRole::Ordinary {
+                            // Only source-level ordinary callers are seeds.
+                            // Channel and dispatch implementation bodies may
+                            // contain internal calls to the same endpoint, but
+                            // treating those wrappers as independent token
+                            // producers would manufacture duplicate seeds.
                             seed_events = seed_events.saturating_add(1);
                             transitions.push(JoinStateTokenTransition {
                                 body_def_id: body.body_def_id,
@@ -1751,6 +1783,13 @@ fn prove_state_tokens<'tcx>(
                                 block: edge.block,
                                 statement: edge.statement,
                             });
+                        } else {
+                            // A compiler-generated endpoint body that emits
+                            // this channel is not a source-level seed, but it
+                            // is still an unmodelled producer.  Preserve the
+                            // conservative rejection rather than silently
+                            // treating it as part of the one-token protocol.
+                            extra_reemit = true;
                         }
                     }
                 }
@@ -1786,9 +1825,10 @@ fn prove_state_tokens<'tcx>(
                 let unique_instance = (endpoint_instances.len() == 1)
                     .then(|| endpoint_instances[0])
                     .filter(|instance| instance.status == JoinCfaInstanceStatus::Unique);
+                let endpoint_complete = state_token_endpoint_complete(endpoint_def_id, bodies);
                 let rejection = if competing_rules != 0 {
                     Some(JoinStateTokenRejection::CompetingRule)
-                } else if !analysis_complete {
+                } else if !endpoint_complete {
                     Some(JoinStateTokenRejection::IncompleteAnalysis)
                 } else if unique_instance.is_none() {
                     Some(JoinStateTokenRejection::NoUniqueInstance)
@@ -1845,6 +1885,67 @@ fn prove_state_tokens<'tcx>(
         )
     });
     proofs
+}
+
+/// Check completeness only for the body subgraph which can affect one state
+/// token endpoint.  The crate-wide graph may legitimately be incomplete: an
+/// unrelated join body can call an ordinary helper whose MIR is unavailable,
+/// and that must not disable a proof for a closed local protocol.  Conversely,
+/// an unresolved ordinary call in the candidate endpoint's own subgraph is a
+/// real soundness boundary, so it keeps the proof rejected.
+fn state_token_endpoint_complete(
+    endpoint_def_id: u32,
+    bodies: &[JoinCfaBodyRecord],
+) -> bool {
+    let by_id = bodies
+        .iter()
+        .map(|body| (body.body_def_id, body))
+        .collect::<FxHashMap<_, _>>();
+    let mut relevant = FxHashSet::default();
+    for body in bodies {
+        if body.endpoint_def_id == Some(endpoint_def_id)
+            || body
+                .call_edges
+                .iter()
+                .any(|edge| edge.endpoint_def_id == Some(endpoint_def_id))
+        {
+            relevant.insert(body.body_def_id);
+        }
+    }
+    if relevant.is_empty() {
+        return false;
+    }
+
+    // Follow ordinary helper calls from endpoint bodies. The graph builder
+    // normally selects these roots already; retaining the check here makes a
+    // missing body an explicit negative proof rather than an accidental
+    // omission.
+    let mut worklist = relevant.iter().copied().collect::<Vec<_>>();
+    while let Some(body_def_id) = worklist.pop() {
+        let Some(body) = by_id.get(&body_def_id).copied() else {
+            return false;
+        };
+        for edge in &body.call_edges {
+            if edge.target != JoinCallTargetKind::OrdinaryLocal {
+                continue;
+            }
+            let Some(callee) = edge.callee else {
+                return false;
+            };
+            if by_id.contains_key(&callee) && relevant.insert(callee) {
+                worklist.push(callee);
+            } else if !by_id.contains_key(&callee) {
+                return false;
+            }
+        }
+    }
+
+    relevant.into_iter().all(|body_def_id| {
+        let Some(body) = by_id.get(&body_def_id).copied() else {
+            return false;
+        };
+        body.unknown_effects == 0 && body.endpoint_escapes.is_empty()
+    })
 }
 
 #[allow(rustc::potential_query_instability)]
