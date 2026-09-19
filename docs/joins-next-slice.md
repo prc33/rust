@@ -536,7 +536,24 @@ manifest must name source commits plus any dirty patch, binary hashes, commands,
 policy, expected and observed site counts, and all open gates. Push rust commits
 to prc33/joins; library commits remain local until a remote is provided.
 
-## 8. Next slice after result fusion: fixed storage
+## 8. Next slice after result fusion: make the fixed-pair ABI executable
+
+The proof-to-constructor step is now implemented, rather than merely planned.
+Rust `8424aa6953e` classifies a positive canonical synchronous two-channel
+endpoint as `FixedPairMatcher` and rewrites its MIR constructor to
+`PairMatcher::new_with_fixed_pair_mask`; library `f7d358e` supplies that ABI
+and `34c4eff` checks the selected symbol and mask. The optimize native gate
+reports `pair_mask=1, pair_fixed=True`; off/analyze report
+`pair_mask=0, pair_fixed=False`, and all three gates pass. The optimized MIR
+contains the fixed constructor call and the CFA graph records the strategy.
+
+This is intentionally a narrow executable-MIR proof gate, not a performance
+claim: the new ABI currently initializes the same typed `PairState` as the
+generic mask constructor. It has not yet removed `Arc`, `Mutex`, reply cells,
+or the `PairQueue` enum. Do not mark fixed-storage or CFA speedup complete on
+the symbol alone. The next implementation must make the fixed ABI's body and
+hot paths genuinely specialized, then prove the reduction in MIR/assembly and
+timing.
 
 Do not implement a fixed pair slot from method-local peak counts. Build a
 per-instance transition system: available messages, demanded requests, claimed
@@ -547,8 +564,12 @@ producer, one owner and finite states; exhaustively compare reachable states
 against the analysis. Unknown/truncated analysis selects generic storage.
 
 Only then lower a proven 0/1 channel to an initialized flag plus owned payload
-slot, with exactly-once drop; no dynamic growth fallback. Stack/frame placement
-needs a separate lifetime/escape proof, including forget. Shared atomic state,
+slot, with exactly-once drop; no dynamic growth fallback. The first concrete
+runtime/compiler target is the canonical two-channel case: retain the existing
+`PairMatcher` source type for compatibility, but make the fixed constructor
+select typed fixed-slot fields and a direct complete-pair claim path. Do not
+select it by recognizing a lock implementation. Stack/frame placement needs a
+separate lifetime/escape proof, including forget. Shared atomic state,
 publication, ABA/reclamation and waiter races need their own protocol and model
 tests before concurrent fixed slots. General CAS lowering and DataFusion follow
 this evidence, retaining the larger handover's gates.
@@ -563,7 +584,8 @@ this evidence, retaining the larger handover's gates.
       for the current direct unary contract (shared/multi-input controls remain).
 - [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons.
 - [ ] 5: a complete checked certificate drives the actual result-channel MIR
-      rewrite (the narrow adapter rewrite is an executable partial gate).
+      rewrite (fixed-pair constructor selection now passes the symbol/mask
+      gate; typed storage/reply lowering remains).
 - [ ] 6: negative, drop/unwind, incremental and cross-crate regressions pass.
 - [ ] 7: committed IR, allocation and timing evidence; fork summary updated.
 

@@ -168,6 +168,21 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   reply publication, wake/scheduling, trampoline and generic matcher work are
   now the priority. Do not treat this runtime simplification as the typed MIR
   lowering promised above.
+- The first proof-consuming pair ABI slice is now complete in Rust
+  `8424aa6953e` and library `f7d358e`/`34c4eff`. A positive, canonical,
+  synchronous two-channel endpoint with a proven `AtMost(1)` token now
+  selects `FixedPairMatcher` in optimize mode. The MIR constructor call is
+  retargeted to the distinct `PairMatcher::new_with_fixed_pair_mask` symbol
+  and carries the proven mask (`1` in the positive fixture); `off` and
+  `analyze`, plus competing, reordered, async, scoped and non-canonical
+  endpoints, retain `new_with_channel_mask` and mask `0`. The optimize dump
+  contains the fixed symbol and the CFA graph records
+  `strategy=FixedPairMatcher`; the three native gates and stage-1 compiler
+  build pass. This is real executable-MIR selection, but the ABI currently
+  constructs the same typed `PairState` implementation as the generic mask
+  path. It therefore proves safe selection and fallback, not yet removal of
+  `Arc`, `Mutex`, reply cells or all `PairQueue` branches, and no speedup is
+  attributed to it until a paired timing/assembly gate demonstrates one.
 
 ## Constraints throughout
 
@@ -329,10 +344,10 @@ Ownership/race gates pass. MIR and assembly demonstrate the specific removed
 work. Merely selecting an independently handwritten counter implementation is
 not completion.
 
-### 6.1 Next slice: lower the proven pair to an executable typed matcher
+### 6.1 Next slice: make the proof-selected pair representation pay off
 
-The scalar constructor-mask bridge is the completed first step, not the target
-representation. Implement the next slice in this order:
+The proof-selected constructor ABI is now the completed first step, not the
+target representation. Implement the next slice in this order:
 
 1. Define the compiler/runtime contract for `FixedPairMatcher` using the actual
    channel payload and reply types. It may use ordinary Rust fields and
@@ -340,35 +355,41 @@ representation. Implement the next slice in this order:
    selected because the code resembles a library mutex and must not depend on
    a particular lock implementation. Keep a generic queue-backed matcher for
    every unsupported case.
-2. Extend the typed join descriptor and `JoinStorageLowering` so that a
-   positive state-token certificate selects the typed matcher at a real MIR
-   call/constructor site. The lowering must validate the exact group,
-   channel/rule indices, generic substitutions, payload/reply ABI, and
-   construction instance before changing the call. It must not merely set a
-   scalar policy bit or attach a side-table annotation.
+2. Keep the existing `JoinStorageLowering` proof checks as the admission gate,
+   then make `new_with_fixed_pair_mask` construct a representation whose hot
+   paths are statically specialized (for example typed fixed slots and a
+   direct complete-pair branch). The compiler must not identify or replace a
+   library lock implementation. Any atomics/CAS must be justified by the
+   join state protocol and have an explicit ownership/ordering proof. The
+   generic `PairQueue`/reply path remains the fallback.
 3. Preserve the operation through optimized MIR long enough for ordinary MIR
    passes and coroutine lowering to see the typed fields, direct matching
    branch, and reply completion. Lower to the canonical runtime ABI only after
    ownership, drop, panic/unwind and cancellation paths have been checked. At
    the existing backend boundary, erasing a consumed descriptor is acceptable;
    erasing it before this lowering is not.
-4. Add positive and negative MIR fixtures. The positive state-token pair must
-   show `FixedPairMatcher` and no dynamic `PairQueue` construction; a competing
-   rule, extra producer, escaped instance, reordered pattern, unknown call,
-   borrowed payload, and non-proven bound must retain the generic matcher and
-   record a rejection reason. Off and analyze must keep the generic
-   representation while preserving behavior.
+4. Extend the current positive and negative MIR fixtures. The positive
+   state-token pair must show `FixedPairMatcher` and the fixed constructor;
+   once the runtime specialization is real, its post-inline MIR/assembly must
+   show no dynamic `PairQueue` construction on the proven channels. A
+   competing rule, extra producer, escaped instance, reordered pattern,
+   unknown call, borrowed payload, and non-proven bound must retain the
+   generic matcher and record a rejection reason. Off and analyze must keep
+   the generic representation while preserving behavior.
 5. Verify the generated MIR and assembly for removed enum dispatch, queue
    growth, erased payload/reply-cell allocation and unnecessary scheduling
-   work. Then run the focused direct-source benchmark serially, with allocation
-   counters and checksums, before touching the full matrix. A successful gate
-   requires a measured reduction in the identified generic work, not just a
-   changed symbol or metadata dump.
+   work. The current gate is only symbol/mask/strategy evidence; the next gate
+   must add allocation counters and instruction-level evidence. Then run the
+   focused direct-source benchmark serially, with allocation counters and
+   checksums, before touching the full matrix. A successful gate requires a
+   measured reduction in the identified generic work, not just a changed
+   symbol or metadata dump.
 
-This is the first place where the CFA result becomes an executable compiler
-optimization. Do not proceed to completion/MPSC generalization until the
-typed pair has a sound fallback and the direct-source gate demonstrates that
-the lowering reaches generated code.
+The constructor retarget is the first place where the CFA result becomes an
+executable compiler optimization. Do not proceed to completion/MPSC
+generalization until the fixed body has a sound fallback and a direct-source
+gate demonstrates that the specialized representation, rather than only its
+symbol, reaches generated code.
 
 ## 7. Measure, generalize, then migrate DataFusion
 
