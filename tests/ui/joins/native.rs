@@ -46,6 +46,11 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
         Self(std::marker::PhantomData)
     }
 
+    #[doc(hidden)]
+    pub fn new_with_fixed_pair_mask(_channels: usize, _mask: u64) -> Self {
+        Self(std::marker::PhantomData)
+    }
+
     pub fn new_in_scope_with_channel_mask(
         _scope: QueryScope,
         _channels: usize,
