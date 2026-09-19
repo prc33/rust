@@ -110,6 +110,18 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   passed validation and all checksums matched. This is the baseline for the
   next structural change; no further timing run is needed until a
   storage/reply representation changes.
+- A safe typed admission slice then removed an unobservable completion cell
+  from restricted two-channel one-way participants. `PairMatcher` now stores an
+  optional completer and the macro emits typed `submit_*_oneway_at` calls;
+  result-bearing participants retain their ordinary reply/withdrawal path.
+  The runtime suite passes 61 tests. A serialized 100-sample mutex gate is
+  archived at
+  `../join-benchmarks/results/focused-pair-oneway-20260919/`: medians are
+  27.73 ns/op native, 928.73 off, 1,051.37 analyze, and 779.82 optimize.
+  Optimize is about 20% below the previous 976.1 ns/op mutex row, but remains
+  28.12× native. This is a typed join-semantic optimization, not lock
+  recognition; the remaining reply-cell, queue, mutex, executor and
+  re-emission costs are still the next target.
 
 ## Constraints throughout
 
@@ -309,9 +321,15 @@ direct-unary and four exact-queue-0 facts are currently recorded, with zero
 interprocedural direct candidates. Therefore the full matrix establishes the
 next attribution target—typed storage, reply allocation and generic
 coordination—rather than showing that CFA has already removed those costs.
-Do not rerun the matrix until a representation change is made; first collect
-allocation counts and one sequential instruction-level profile for the high-gap
-MPSC/completion/mutex/RWLock rows.
+Do not rerun the matrix until a representation change is made. The next gate
+is a serialized attribution pass for the high-gap MPSC/completion/mutex/RWLock
+rows: count allocations and instrument queue admissions, reply-cell creation,
+wakeups, task submissions and atomic/lock acquisitions. Then implement the
+compiler-proven typed fixed-group representation (typed slots and typed reply
+operations) while retaining the generic matcher for partial, reordered,
+competing, escaping or borrowing-sensitive cases. No lock implementation may
+be recognized or substituted; the optimization must be justified by the join
+proof and visible in MIR/LLVM.
 
 The initial performance gate is a repeatable reduction in the identified
 generic work and measured cost. The target remains parity with the native
