@@ -3,7 +3,7 @@
 Date: 2026-09-19. **This is the next execution plan. Start here.**
 
 This plan follows the private forwarding work, state-token bridge at Rust
-`d1fb9d12d6a`, and one-way admission benchmark at library `d57348d`. It supersedes the immediate sequencing
+`c3f548c89f5`, and all-channel dispatch benchmark at library `b547504`. It supersedes the immediate sequencing
 in `joins-private-storage-handover.md`, `joins-next-slice.md`, and older
 optimization inventories. Their safety requirements and regression fixtures
 remain applicable. The accepted async semantics remain authoritative.
@@ -91,6 +91,16 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   channel-mask plus one-way-admission slice only; the generic matcher still
   owns the mutex, erased payloads, reply cells and dispatch, and broader
   workloads remain to be measured.
+- Canonical declaration-order patterns now use a compiler-emitted
+  `__join_dispatch_*_all` operation.  The runtime claims every declared queue
+  under the existing mutex after checking all occupancies; it does not infer
+  or replace a lock implementation.  Reordered, partial, competing and
+  scoped rules retain the generic pattern operation.  The 60-test runtime
+  suite and optimize/analyze/off compiler fixture gates pass.  A serialized
+  100-sample follow-up measured 1,033.5 ns/op native, 1,147.2 joins-off,
+  1,193.9 joins-analyze and 1,164.7 joins-optimize (about 1.11–1.16x native).
+  This closes a dispatch-validation gap but leaves type erasure, reply cells,
+  allocation and mutex costs for the next slice.
 
 ## Constraints throughout
 
@@ -233,7 +243,10 @@ Otherwise retain the necessary owned storage.
 
 Generate matching specialized to the actual rule inputs; avoid temporary
 enqueue/dequeue when an eligible complete match can consume an incoming value
-directly. Preserve demand and competition. For shared state, specify the atomic
+directly. The first executable slice is the canonical declaration-order
+all-channel claim, which removes repeated pattern validation but still uses
+the generic queues and mutex. Preserve demand and competition. For shared
+state, specify the atomic
 claim/ownership protocol, memory ordering and linearization points before
 implementing CAS. Use systematic interleaving tests for that protocol.
 
@@ -258,8 +271,11 @@ and uncertainty; do not interpret sampled IP percentages as exact instruction
 latency. **The first focused gate is now complete:** the 100-sample
 `work-resource` archive is in `join-benchmarks/results/focused-work-resource-20260919-token/`.
 It shows near-parity for this one-way/state-token workload but does not prove
-generic matcher costs are gone. Run the full randomized matrix after the next
-structural change, not as a substitute for attribution.
+generic matcher costs are gone. The next all-channel dispatch gate is also
+archived at `join-benchmarks/results/focused-work-resource-20260919-all-dispatch/`;
+it narrows the same workload to roughly 1.11–1.16x native. Run the full
+randomized matrix after the next storage/type-erasure change, not as a
+substitute for attribution.
 
 The initial performance gate is a repeatable reduction in the identified
 generic work and measured cost. The target remains parity with the native
