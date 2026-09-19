@@ -31,6 +31,7 @@ use rustc_middle::mir::{
 use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
+use rustc_span::Spanned;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -3297,12 +3298,14 @@ fn state_token_constructor_lowering<'tcx>(
             continue;
         }
         let Some(channels) = args[0]
+            .node
             .constant()
             .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env))
         else {
             continue;
         };
         let Some(inline_mask) = args[1]
+            .node
             .constant()
             .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env))
         else {
@@ -3370,9 +3373,11 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             }
             let channels = args[0]
+                .node
                 .constant()
                 .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
             let mask = args[1]
+                .node
                 .constant()
                 .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
             if channels != Some(expected_channels)
@@ -3381,12 +3386,15 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             }
             let span = block_data.terminator().source_info.span;
-            args[1] = Operand::const_from_scalar(
-                tcx,
-                tcx.types.u64,
-                Scalar::from_uint(inline_mask as u128, mask_size),
+            args[1] = Spanned {
                 span,
-            );
+                node: Operand::const_from_scalar(
+                    tcx,
+                    tcx.types.u64,
+                    Scalar::from_uint(inline_mask as u128, mask_size),
+                    span,
+                ),
+            };
             rewritten += 1;
         }
         // The proof consumer must be all-or-nothing.  If the generated shape
