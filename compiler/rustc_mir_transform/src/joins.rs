@@ -1825,7 +1825,8 @@ fn prove_state_tokens<'tcx>(
                 let unique_instance = (endpoint_instances.len() == 1)
                     .then(|| endpoint_instances[0])
                     .filter(|instance| instance.status == JoinCfaInstanceStatus::Unique);
-                let endpoint_complete = state_token_endpoint_complete(endpoint_def_id, bodies);
+                let endpoint_complete =
+                    state_token_endpoint_complete(endpoint_def_id, rule_index as u32, bodies);
                 let rejection = if competing_rules != 0 {
                     Some(JoinStateTokenRejection::CompetingRule)
                 } else if !endpoint_complete {
@@ -1896,6 +1897,7 @@ fn prove_state_tokens<'tcx>(
 #[allow(rustc::potential_query_instability)]
 fn state_token_endpoint_complete(
     endpoint_def_id: u32,
+    rule_index: u32,
     bodies: &[JoinCfaBodyRecord],
 ) -> bool {
     let by_id = bodies
@@ -1917,11 +1919,32 @@ fn state_token_endpoint_complete(
         return false;
     }
 
+    // The selected reaction (including its compiler-generated nested
+    // coroutine bodies) is part of the proof boundary.  A hidden unknown
+    // effect there could emit the candidate channel, so reject it instead of
+    // treating the known re-emission edge as exhaustive.
+    if bodies.iter().any(|body| {
+        body.endpoint_def_id == Some(endpoint_def_id)
+            && body.role == JoinBodyRole::ReactionBody
+            && body.rule_index == Some(rule_index)
+            && (body.unknown_effects != 0 || !body.endpoint_escapes.is_empty())
+    }) {
+        return false;
+    }
+
     // Follow ordinary helper calls from endpoint bodies. The graph builder
     // normally selects these roots already; retaining the check here makes a
     // missing body an explicit negative proof rather than an accidental
     // omission.
-    let mut worklist = relevant.iter().copied().collect::<Vec<_>>();
+    let mut worklist = relevant
+        .iter()
+        .copied()
+        .filter(|body_def_id| {
+            by_id
+                .get(body_def_id)
+                .is_some_and(|body| body.role == JoinBodyRole::Ordinary)
+        })
+        .collect::<Vec<_>>();
     while let Some(body_def_id) = worklist.pop() {
         let Some(body) = by_id.get(&body_def_id).copied() else {
             return false;
@@ -1941,7 +1964,16 @@ fn state_token_endpoint_complete(
         }
     }
 
-    relevant.into_iter().all(|body_def_id| {
+    // Generated constructors, channel wrappers and dispatch bodies naturally
+    // contain aggregate-capture escapes.  Those are implementation details,
+    // not source-level token producers.  Keep the completeness boundary on
+    // ordinary source callers; the selected reaction body is checked below
+    // for unknown effects, while wrapper bodies are deliberately ignored.
+    relevant.into_iter().filter(|body_def_id| {
+        by_id
+            .get(body_def_id)
+            .is_some_and(|body| body.role == JoinBodyRole::Ordinary)
+    }).all(|body_def_id| {
         let Some(body) = by_id.get(&body_def_id).copied() else {
             return false;
         };
