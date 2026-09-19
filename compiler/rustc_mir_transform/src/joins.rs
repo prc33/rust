@@ -3303,7 +3303,7 @@ fn state_token_constructor_lowering<'tcx>(
             continue;
         };
         let Some((callee, _)) = func.const_fn_def() else { continue };
-        if !is_dynamic_matcher_mask_constructor(tcx, callee) {
+        if !is_join_mask_constructor(tcx, callee) {
             continue;
         }
         if args.len() != 2 {
@@ -3380,7 +3380,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             };
             let Some((callee, _)) = func.const_fn_def() else { continue };
-            if !is_dynamic_matcher_mask_constructor(tcx, callee)
+            if !is_join_mask_constructor(tcx, callee)
                 || args.len() != 2
             {
                 continue;
@@ -3424,7 +3424,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
 /// and signature.  The builtin macro emits an absolute `joins_runtime` path,
 /// but a name-only check would still allow an unrelated same-named function
 /// to be rewritten if generated MIR changes in the future.
-fn is_dynamic_matcher_mask_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
+fn is_join_mask_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     if tcx.crate_name(callee.krate).as_str() != "joins_runtime"
         || tcx.item_name(callee).as_str() != "new_with_channel_mask"
     {
@@ -3437,7 +3437,10 @@ fn is_dynamic_matcher_mask_constructor(tcx: TyCtxt<'_>, callee: DefId) -> bool {
     matches!(
         signature.output().kind(),
         ty::Adt(def, _) if tcx.crate_name(def.did().krate).as_str() == "joins_runtime"
-            && tcx.item_name(def.did()).as_str() == "DynamicMatcher"
+            && matches!(
+                tcx.item_name(def.did()).as_str(),
+                "DynamicMatcher" | "PairMatcher"
+            )
     )
 }
 

@@ -516,12 +516,12 @@ impl {impl_generics}Clone for {impl_name} {{
 impl {impl_generics}{impl_name} {{
 
     {visibility}fn new() -> Self {{
-        Self {{ matcher: ::joins_runtime::PairMatcher::new() }}
+        Self {{ matcher: ::joins_runtime::PairMatcher::new_with_channel_mask(2, 0u64) }}
     }}
 
     {visibility}fn new_in_scope(scope: ::joins_runtime::QueryScope) -> Self
-{scope_bounds}{{
-        Self {{ matcher: ::joins_runtime::PairMatcher::new_in_scope(scope) }}
+    {scope_bounds}{{
+        Self {{ matcher: ::joins_runtime::PairMatcher::new_in_scope_with_channel_mask(scope, 2, 0u64) }}
     }}
 
     {left_method}

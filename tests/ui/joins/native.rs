@@ -42,6 +42,18 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
         Self(std::marker::PhantomData)
     }
 
+    pub fn new_with_channel_mask(_channels: usize, _mask: u64) -> Self {
+        Self(std::marker::PhantomData)
+    }
+
+    pub fn new_in_scope_with_channel_mask(
+        _scope: QueryScope,
+        _channels: usize,
+        _mask: u64,
+    ) -> Self {
+        Self(std::marker::PhantomData)
+    }
+
     pub fn submit_left(&self, _value: L) -> Reply<LO> {
         Reply(std::marker::PhantomData)
     }
