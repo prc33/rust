@@ -812,6 +812,15 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         let pattern =
             resolved.iter().map(|(index, _, _)| index.to_string()).collect::<Vec<_>>().join(", ");
         let body = dynamic_rule_body(&resolved, &aliases, &prefix, &replies, rule.is_async)?;
+        // The runtime can claim every channel directly when the source rule
+        // covers the complete declaration in declaration order.  Preserve
+        // the generic slice path for reordered, partial, or competing rules:
+        // those cases need runtime validation and selection semantics.
+        let canonical_all = resolved.len() == definition.channels.len()
+            && resolved
+                .iter()
+                .enumerate()
+                .all(|(position, (index, _, _))| *index == position);
         // Give every source rule a named executable helper.  Inline closures
         // all share the dispatch method as their HIR owner, which made the
         // compiler unable to distinguish rule bodies.  The helper keeps the
@@ -880,7 +889,15 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
         } else {
             "self.matcher.as_ref().expect(\"private join used without its proven adapter\")"
         };
-        let dispatch = if rule.is_async {
+        let dispatch = if canonical_all && rule.is_async {
+            format!(
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); {matcher}.__join_dispatch_future_all_at(::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_{rule_index}(__join_rule_endpoint, inputs)) }}"
+            )
+        } else if canonical_all {
+            format!(
+                "{{ let __join_rule_endpoint = __join_endpoint.clone(); {matcher}.__join_dispatch_all_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_{rule_index}(__join_rule_endpoint, inputs)) }}"
+            )
+        } else if rule.is_async {
             format!(
                 "{{ let __join_rule_endpoint = __join_endpoint.clone(); {matcher}.__join_dispatch_future_at(&[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_{rule_index}(__join_rule_endpoint, inputs)) }}"
             )
