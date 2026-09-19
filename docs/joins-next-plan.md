@@ -52,9 +52,19 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   to its aggregate interval. This is an evidence surface only; no fixed-slot
   rewrite consumes it yet.
 - The native analyze and optimize fixture gates pass after the reaction-helper
-  change; optimize still reports the existing narrow forwarding rewrites. The
-  remaining work is the cross-body state-token proof and proof-consuming
-  storage/matcher lowering described in sections 4–6.
+  change; optimize still reports the existing narrow forwarding rewrites.
+- The first cross-body state-token proof is now live.  The positive witness
+  records one ordinary seed, one complete-pattern claim and one named-helper
+  re-emission, proving `AtMost(1)`; the duplicate-producer witness is rejected
+  as `DuplicateSeed`.  Endpoint-local completeness ignores generated wrapper
+  escapes while still rejecting unknown source callers and unknown effects in
+  the selected reaction.
+- Optimize mode now consumes only those positive certificates into an explicit
+  `state_token_lowerings` record selecting `FixedUnarySlot`; analyze mode emits
+  the evidence but selects no representation.  This is a checked compiler
+  decision surface, not yet executable storage: section 6 must still lower the
+  record into typed MIR operations and remove the generic channel queue without
+  changing off/analyze behavior.
 
 ## Constraints throughout
 

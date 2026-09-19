@@ -20,7 +20,7 @@ use rustc_middle::middle::joins::{
     JoinOccupancyFact,
     JoinLoweringStrategy, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
     JoinValueState, JoinStateTokenProof, JoinStateTokenRejection, JoinStateTokenStatus,
-    JoinStateTokenTransition, JoinStateTokenTransitionKind,
+    JoinStateTokenLowering, JoinStateTokenTransition, JoinStateTokenTransitionKind,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
@@ -1675,10 +1675,29 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     });
 
     let state_tokens = prove_state_tokens(tcx, &bodies, &instances);
+    // Do not let analysis mode change runtime representation.  Optimize mode
+    // consumes only positive certificates and records the selected storage
+    // contract for the later LowerJoins/MIR-to-LLVM step.
+    let state_token_lowerings = if tcx.sess.opts.unstable_opts.join_cfa == JoinCfaMode::Optimize {
+        state_tokens
+            .iter()
+            .filter(|proof| proof.status == JoinStateTokenStatus::Proven)
+            .map(|proof| JoinStateTokenLowering {
+                endpoint_def_id: proof.endpoint_def_id,
+                rule_index: proof.rule_index,
+                channel_index: proof.channel_index,
+                proven_bound: proof.proven_bound,
+                strategy: JoinLoweringStrategy::FixedUnarySlot,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let summary = JoinCfaCrateSummary {
         bodies,
         instances,
         state_tokens,
+        state_token_lowerings,
         solver_steps,
         complete,
     };
@@ -2126,6 +2145,21 @@ fn dump_crate_summary(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let state_token_lowerings = summary
+        .state_token_lowerings
+        .iter()
+        .map(|lowering| {
+            format!(
+                "{{\"endpoint\":{},\"rule_index\":{},\"channel\":{},\"bound\":\"{:?}\",\"strategy\":\"{:?}\"}}",
+                lowering.endpoint_def_id,
+                lowering.rule_index,
+                lowering.channel_index,
+                lowering.proven_bound,
+                lowering.strategy,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     // Keep the compiler-owned static definition beside the dynamic instance
     // graph.  The body records above intentionally contain only the facts
     // observed at MIR call sites; this descriptor is where a consumer can
@@ -2203,11 +2237,12 @@ fn dump_crate_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
         state_tokens,
+        state_token_lowerings,
         definitions,
         summary.solver_steps,
         summary.complete,

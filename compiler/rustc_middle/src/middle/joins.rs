@@ -694,6 +694,22 @@ pub struct JoinStateTokenProof {
     pub transitions: Vec<JoinStateTokenTransition>,
 }
 
+/// The first proof consumer for a state-token channel.  This is an explicit
+/// compiler decision, separate from the evidence record: only a `Proven`
+/// state-token proof in optimize mode can produce one.  The decision is still
+/// a lowering contract rather than a runtime hint; the eventual MIR/LLVM
+/// lowering must validate the referenced fingerprints and materialize the
+/// inline storage before this record is treated as executable.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinStateTokenLowering {
+    pub endpoint_def_id: u32,
+    pub rule_index: u32,
+    pub channel_index: u32,
+    pub proven_bound: JoinQueueBound,
+    pub strategy: JoinLoweringStrategy,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinStateTokenStatus {
@@ -710,6 +726,7 @@ pub struct JoinCfaCrateSummary {
     pub bodies: Vec<JoinCfaBodyRecord>,
     pub instances: Vec<JoinCfaInstanceFact>,
     pub state_tokens: Vec<JoinStateTokenProof>,
+    pub state_token_lowerings: Vec<JoinStateTokenLowering>,
     pub solver_steps: u32,
     pub complete: bool,
 }
