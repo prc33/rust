@@ -1893,6 +1893,7 @@ fn prove_state_tokens<'tcx>(
 /// and that must not disable a proof for a closed local protocol.  Conversely,
 /// an unresolved ordinary call in the candidate endpoint's own subgraph is a
 /// real soundness boundary, so it keeps the proof rejected.
+#[allow(rustc::potential_query_instability)]
 fn state_token_endpoint_complete(
     endpoint_def_id: u32,
     bodies: &[JoinCfaBodyRecord],
