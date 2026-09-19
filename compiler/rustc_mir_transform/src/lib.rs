@@ -604,6 +604,13 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
     // Keep join identities and pre-coroutine body shape visible before the
     // ordinary analysis cleanup and runtime lowering passes.
     joins::JoinSemanticOps.run_pass(tcx, body);
+    // The crate CFA query is forced before borrow checking and snapshots the
+    // same pre-cleanup bodies.  Once that query is available, this separate
+    // pass may consume only its positive state-token records and rewrite the
+    // generated runtime-constructor policy literal.  Keeping the consumer
+    // separate avoids a query cycle while preserving the semantic marker
+    // through the ordinary MIR/coroutine pipeline.
+    joins::JoinStorageLowering.run_pass(tcx, body);
 
     debug!("analysis_mir_cleanup({:?})", did);
     run_analysis_cleanup_passes(tcx, body);

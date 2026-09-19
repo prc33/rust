@@ -12,6 +12,7 @@
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxHasher, FxIndexSet};
 use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
+use rustc_middle::bug;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary, JoinFusionFact,
@@ -27,6 +28,7 @@ use rustc_middle::mir::{
     self, Body, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE, Rvalue, Statement,
     StatementKind, TerminatorKind,
 };
+use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::ty::{self, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use std::collections::{BTreeMap, BTreeSet};
@@ -36,6 +38,14 @@ use std::hash::{Hash, Hasher};
 use crate::{MirPass, PassPolicy};
 
 pub(super) struct JoinSemanticOps;
+
+/// Consume a positive state-token certificate at the generated dynamic
+/// endpoint constructor.  This is deliberately a separate pass from
+/// `JoinSemanticOps`: the crate-level CFA query snapshots bodies by running
+/// the semantic collector itself, so asking that query from the collector
+/// would create a cycle.  The compiler interface forces the query before
+/// borrow checking and this pass runs afterwards on the real pre-cleanup MIR.
+pub(super) struct JoinStorageLowering;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum InstanceAlias {
@@ -3187,6 +3197,206 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
             .insert(statement, Statement::new(source_info, StatementKind::Intrinsic(Box::new(
                 rustc_middle::mir::NonDivergingIntrinsic::Join(marker),
             ))));
+    }
+}
+
+/// Return the source rule/channel lowering which is safe to apply to one
+/// concrete generated endpoint constructor.  A lowering record is not enough
+/// by itself: the proof must also identify exactly one unscoped constructor
+/// allocation and the current constructor body must still contain the
+/// compiler-emitted policy call with its conservative literals.
+fn state_token_constructor_lowering<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
+    summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
+) -> Option<u64> {
+    let endpoint_def_id = endpoint.endpoint_def_id?.index() as u32;
+    let constructor_def_id = endpoint.constructor_def_id?;
+    let constructor_u32 = constructor_def_id.index() as u32;
+    if summary
+        .instances
+        .iter()
+        .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
+        .count()
+        != 1
+    {
+        // Rewriting the generated constructor body affects every call to that
+        // function.  The one-allocation requirement is therefore essential:
+        // a second instance could need generic queues even when one instance
+        // has a one-token witness.
+        return None;
+    }
+
+    let lowerings = summary
+        .state_token_lowerings
+        .iter()
+        .filter(|lowering| {
+            lowering.endpoint_def_id == endpoint_def_id
+                && lowering.strategy == JoinLoweringStrategy::FixedUnarySlot
+                && lowering.proven_bound == JoinQueueBound::AtMost(1)
+        })
+        .collect::<Vec<_>>();
+    if lowerings.is_empty() {
+        return None;
+    }
+    let mut inline_mask = 0u64;
+    for lowering in lowerings {
+        if lowering.channel_index >= u64::BITS as u32 {
+            return None;
+        }
+        let proof = summary.state_tokens.iter().find(|proof| {
+            proof.endpoint_def_id == endpoint_def_id
+                && proof.rule_index == lowering.rule_index
+                && proof.channel_index == lowering.channel_index
+                && proof.status == JoinStateTokenStatus::Proven
+                && proof.instance_body_def_id.is_some()
+                && proof.allocation_block.is_some()
+                && proof.allocation_statement.is_some()
+        })?;
+        let allocation_block = proof.allocation_block?;
+        let allocation_statement = proof.allocation_statement?;
+        let instance_body_def_id = proof.instance_body_def_id?;
+        let allocation_record = summary
+            .bodies
+            .iter()
+            .find(|record| record.body_def_id == instance_body_def_id)?;
+        let allocation = allocation_record.call_edges.iter().find(|edge| {
+            edge.target == JoinCallTargetKind::Constructor
+                && edge.endpoint_def_id == Some(endpoint_def_id)
+                && edge.callee == Some(constructor_u32)
+                && edge.block == allocation_block
+                && edge.statement == allocation_statement
+        })?;
+        let _ = allocation;
+        inline_mask |= 1u64 << lowering.channel_index;
+    }
+    // A scoped constructor has different cancellation/tracing ownership and
+    // cannot be replaced by the unscoped per-channel policy constructor.
+    if endpoint.scoped_constructor_def_id == Some(constructor_def_id)
+        || endpoint.constructor_def_id != Some(constructor_def_id)
+    {
+        return None;
+    }
+    // The current bridge uses an exact compiler-owned marker call emitted by
+    // the builtin macro.  Its name is checked together with the argument
+    // types/values below; no source-level endpoint or runtime symbol is
+    // searched in ordinary callers.
+    let typing_env = body.typing_env(tcx);
+    let expected_channels = endpoint.declared_channels as u64;
+    let mut matches = Vec::new();
+    for (block, block_data) in body.basic_blocks.iter_enumerated() {
+        let TerminatorKind::Call { func, args, .. } = &block_data.terminator().kind else {
+            continue;
+        };
+        let Some((callee, _)) = func.const_fn_def() else { continue };
+        if tcx.item_name(callee).as_str() != "new_with_channel_mask" {
+            continue;
+        }
+        if args.len() != 2 {
+            continue;
+        }
+        let Some(channels) = args[0]
+            .constant()
+            .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env))
+        else {
+            continue;
+        };
+        let Some(inline_mask) = args[1]
+            .constant()
+            .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env))
+        else {
+            continue;
+        };
+        if channels == expected_channels
+            && inline_mask == 0
+        {
+            matches.push(block);
+        }
+    }
+    if matches.len() == 1 {
+        Some(inline_mask)
+    } else {
+        None
+    }
+}
+
+/// Proof-consuming bridge from the compiler's per-channel state-token record
+/// to the runtime's mixed queue representation.  The generated constructor
+/// starts with a zero mask.  Only optimize mode with positive certificates
+/// replaces that scalar with the proven channel bits; off/analyze leave the
+/// exact same generic constructor path untouched.
+impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
+    fn policy(&self, _ctx: &crate::PassCtx<'_>) -> PassPolicy {
+        PassPolicy::Required
+    }
+
+    fn run_pass(&self, tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>) {
+        if !tcx.features().joins()
+            || tcx.sess.opts.unstable_opts.join_cfa != JoinCfaMode::Optimize
+        {
+            return;
+        }
+        let Some(local_def_id) = body.source.def_id().as_local() else { return };
+        let Some(endpoint) = tcx
+            .join_definitions(())
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.constructor_def_id == Some(local_def_id))
+        else {
+            return;
+        };
+        let summary = tcx.join_cfa_crate_summary(());
+        let Some(inline_mask) = state_token_constructor_lowering(tcx, body, endpoint, summary)
+        else {
+            return;
+        };
+        let typing_env = body.typing_env(tcx);
+        let expected_channels = endpoint.declared_channels as u64;
+        let mask_size = tcx
+            .layout_of(body.typing_env(tcx).as_query_input(tcx.types.u64))
+            .unwrap_or_else(|_| bug!("could not lay out u64 for join storage lowering"))
+            .size;
+        let mut rewritten = 0usize;
+        for block_data in body.basic_blocks_mut() {
+            let TerminatorKind::Call { func, args, .. } = &mut block_data.terminator_mut().kind
+            else {
+                continue;
+            };
+            let Some((callee, _)) = func.const_fn_def() else { continue };
+            if tcx.item_name(callee).as_str() != "new_with_channel_mask"
+                || args.len() != 2
+            {
+                continue;
+            }
+            let channels = args[0]
+                .constant()
+                .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+            let mask = args[1]
+                .constant()
+                .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+            if channels != Some(expected_channels)
+                || mask != Some(0)
+            {
+                continue;
+            }
+            let span = block_data.terminator().source_info.span;
+            args[1] = Operand::const_from_scalar(
+                tcx,
+                tcx.types.u64,
+                Scalar::from_uint(inline_mask as u128, mask_size),
+                span,
+            );
+            rewritten += 1;
+        }
+        // The proof consumer must be all-or-nothing.  If the generated shape
+        // changed between the snapshot and this body, restore neither a
+        // partial argument rewrite nor a guessed fallback.  The current
+        // generated constructor has exactly one policy call; this assertion
+        // is a debug-time tripwire while the release path remains conservative.
+        if rewritten != 1 {
+            debug_assert_eq!(rewritten, 0, "join storage lowering partially matched constructor");
+        }
     }
 }
 

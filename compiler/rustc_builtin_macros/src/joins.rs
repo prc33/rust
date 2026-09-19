@@ -914,8 +914,19 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     } else {
         "::joins_runtime::DynamicMatcher"
     };
-    let new_matcher = format!("::joins_runtime::DynamicMatcher::new({})", definition.channels.len());
-    let scoped_matcher = format!("::joins_runtime::DynamicMatcher::new_in_scope(scope, {})", definition.channels.len());
+    // Keep the representation choice as a scalar mask at the generated
+    // constructor boundary. Optimize-mode MIR may replace this zero only
+    // after the interprocedural state-token proof has selected concrete
+    // channel bits; off/analyze therefore retain the ordinary dynamic matcher
+    // without needing to manufacture a runtime enum or slice in MIR.
+    let new_matcher = format!(
+        "::joins_runtime::DynamicMatcher::new_with_channel_mask({}, 0u64)",
+        definition.channels.len()
+    );
+    let scoped_matcher = format!(
+        "::joins_runtime::DynamicMatcher::new_in_scope_with_channel_mask(scope, {}, 0u64)",
+        definition.channels.len()
+    );
     let wrap = |expression: String| if private_storage { format!("Some({expression})") } else { expression };
     let direct_methods = direct_method_definitions.join("\n\n");
     let reaction_definitions = reaction_definitions.join("\n\n");
