@@ -2,8 +2,8 @@
 
 Date: 2026-09-19. **This is the next execution plan. Start here.**
 
-This plan follows the private forwarding work and expanded benchmark run at
-Rust `8ad80e7ed2f` and library `ce12252`. It supersedes the immediate sequencing
+This plan follows the private forwarding work, state-token bridge at Rust
+`d1fb9d12d6a`, and one-way admission benchmark at library `d57348d`. It supersedes the immediate sequencing
 in `joins-private-storage-handover.md`, `joins-next-slice.md`, and older
 optimization inventories. Their safety requirements and regression fixtures
 remain applicable. The accepted async semantics remain authoritative.
@@ -78,6 +78,19 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   proven bit.  The rebuilt native gate observes positive mask `2`, negative
   mask `0`, and scoped mask `0`; off/analyze retain mask `0`.  This proves the
   typed MIR bridge, but not yet a runtime allocation/lock removal or a speedup.
+- One-way dynamic admissions now carry no withdrawal token: because they have
+  no reply future, they cannot be withdrawn before matching.  Result-bearing
+  admissions retain the weak-token withdrawal protocol.  This removes one
+  per-message `Arc` allocation without recognizing or replacing any lock
+  implementation; the runtime unit suite remains at 58 passing tests.
+- A serialized 100-sample `work-resource` run (10,000 operations, four
+  workers) after that change measured medians of 1,092.4 ns/op native, 1,807.5
+  joins-off, 1,611.4 joins-analyze, and 1,167.6 joins-optimize.  The optimized
+  path is therefore 1.07x native (bootstrap 95% CI 1.03–1.10x) and 35.4%
+  below joins-off for this focused workload.  This is evidence for the
+  channel-mask plus one-way-admission slice only; the generic matcher still
+  owns the mutex, erased payloads, reply cells and dispatch, and broader
+  workloads remain to be measured.
 
 ## Constraints throughout
 
@@ -242,7 +255,11 @@ After correctness gates, run the focused counter benchmark against the native
 control and all CFA modes. Collect allocation counts separately and sequential
 perf profiles with instruction/basic-block attribution. Record sample counts
 and uncertainty; do not interpret sampled IP percentages as exact instruction
-latency. Run the full randomized matrix after this structural change.
+latency. **The first focused gate is now complete:** the 100-sample
+`work-resource` archive is in `join-benchmarks/results/focused-work-resource-20260919-token/`.
+It shows near-parity for this one-way/state-token workload but does not prove
+generic matcher costs are gone. Run the full randomized matrix after the next
+structural change, not as a substitute for attribution.
 
 The initial performance gate is a repeatable reduction in the identified
 generic work and measured cost. The target remains parity with the native
