@@ -1728,8 +1728,8 @@ fn prove_state_tokens<'tcx>(
                     })
                     .count();
                 let mut transitions = Vec::new();
-                let mut seed_events = 0;
-                let mut reemit_events = 0;
+                let mut seed_events: u32 = 0;
+                let mut reemit_events: u32 = 0;
                 let mut extra_reemit = false;
                 let mut candidate_reaction = false;
 
