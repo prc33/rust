@@ -19,7 +19,8 @@ use rustc_middle::middle::joins::{
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinChannelOccupancyFact,
     JoinOccupancyFact,
     JoinLoweringStrategy, JoinOperationKind, JoinQueueBound, JoinValueFlow, JoinValueFlowKind,
-    JoinValueState,
+    JoinValueState, JoinStateTokenProof, JoinStateTokenRejection, JoinStateTokenStatus,
+    JoinStateTokenTransition, JoinStateTokenTransitionKind,
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
@@ -350,6 +351,7 @@ impl JoinBodyFacts {
         body_def_id: u32,
         endpoint_def_id: u32,
         rule_def_id: u32,
+        rule_index: Option<u32>,
         role: JoinBodyRole,
         arity: u32,
         is_async: bool,
@@ -411,6 +413,7 @@ impl JoinBodyFacts {
             body_def_id,
             endpoint_def_id,
             rule_def_id,
+            rule_index,
             mir_fingerprint,
             role,
             arity,
@@ -1269,6 +1272,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 body_def_id: def_id.index() as u32,
                 parent_body_def_id,
                 endpoint_def_id: Some(summary.endpoint_def_id),
+                rule_index: summary.rule_index,
                 role: summary.role,
                 value_flows: summary.value_flows.clone(),
                 call_edges: summary.call_edges.clone(),
@@ -1319,6 +1323,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 body_def_id: def_id.index() as u32,
                 parent_body_def_id,
                 endpoint_def_id: None,
+                rule_index: None,
                 role: JoinBodyRole::Ordinary,
                 value_flows: facts.value_flows,
                 call_edges: facts.call_edges,
@@ -1650,9 +1655,196 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         )
     });
 
-    let summary = JoinCfaCrateSummary { bodies, instances, solver_steps, complete };
+    let state_tokens = prove_state_tokens(tcx, &bodies, &instances, complete);
+    let summary = JoinCfaCrateSummary {
+        bodies,
+        instances,
+        state_tokens,
+        solver_steps,
+        complete,
+    };
     dump_crate_summary(tcx, &summary, &aliases_by_body);
     summary
+}
+
+/// Check the first interprocedural state-token shape without making any
+/// representation choice.  The proof intentionally uses only compiler-owned
+/// identities: a typed rule must consume one non-reply channel together with
+/// another input, one named reaction body must re-emit that channel, and one
+/// concrete constructor instance must be visible.  Runtime matcher names,
+/// mutexes, atomics and frontend queue hints never participate in this test.
+///
+/// This is a deliberately small certificate.  It rejects an endpoint when
+/// there are competing rules, more than one seed, more than one re-emission,
+/// or no unique instance.  A later lowering pass may consume only
+/// `JoinStateTokenStatus::Proven` after validating the current MIR snapshots.
+fn prove_state_tokens<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    bodies: &[JoinCfaBodyRecord],
+    instances: &[JoinCfaInstanceFact],
+    analysis_complete: bool,
+) -> Vec<JoinStateTokenProof> {
+    let mut proofs = Vec::new();
+    for endpoint in &tcx.join_definitions(()).endpoints {
+        let Some(endpoint_def_id) = endpoint.endpoint_def_id.map(|id| id.index() as u32) else {
+            continue;
+        };
+        for (rule_index, rule) in endpoint.rules.iter().enumerate() {
+            // A state-token rule has a state input and at least one other
+            // input. A unary result rule is an ordinary future, not this
+            // protocol, even if its body happens to call a channel.
+            if rule.channel_indices.len() < 2 {
+                continue;
+            }
+            for &channel_index in &rule.channel_indices {
+                if rule.reply_channel_indices.contains(&channel_index) {
+                    continue;
+                }
+                let competing_rules = endpoint
+                    .rules
+                    .iter()
+                    .enumerate()
+                    .filter(|(candidate_index, candidate)| {
+                        *candidate_index != rule_index
+                            && candidate.channel_indices.contains(&channel_index)
+                    })
+                    .count();
+                let mut transitions = Vec::new();
+                let mut seed_events = 0;
+                let mut reemit_events = 0;
+                let mut extra_reemit = false;
+                let mut candidate_reaction = false;
+
+                for body in bodies.iter().filter(|body| {
+                    body.endpoint_def_id == Some(endpoint_def_id)
+                }) {
+                    let reaction_for_rule = body.role == JoinBodyRole::ReactionBody
+                        && body.rule_index == Some(rule_index as u32);
+                    for edge in &body.call_edges {
+                        if edge.target != JoinCallTargetKind::Channel
+                            || edge.endpoint_def_id != Some(endpoint_def_id)
+                            || edge.channel_index != Some(channel_index)
+                        {
+                            continue;
+                        }
+                        if reaction_for_rule {
+                            candidate_reaction = true;
+                            reemit_events = reemit_events.saturating_add(1);
+                            transitions.push(JoinStateTokenTransition {
+                                body_def_id: body.body_def_id,
+                                role: body.role,
+                                kind: JoinStateTokenTransitionKind::Reemit,
+                                block: edge.block,
+                                statement: edge.statement,
+                            });
+                        } else if body.role == JoinBodyRole::ReactionBody {
+                            // Another reaction can produce this channel. It
+                            // is not safe to infer one-token conservation from
+                            // a single selected rule in that case.
+                            extra_reemit = true;
+                        } else {
+                            seed_events = seed_events.saturating_add(1);
+                            transitions.push(JoinStateTokenTransition {
+                                body_def_id: body.body_def_id,
+                                role: body.role,
+                                kind: JoinStateTokenTransitionKind::Seed,
+                                block: edge.block,
+                                statement: edge.statement,
+                            });
+                        }
+                    }
+                }
+
+                // A claim is represented by the static complete pattern. The
+                // shared dispatch call does not carry a source rule coordinate
+                // in MIR yet, so use the reaction owner's sentinel location;
+                // this record remains descriptive until a dedicated Match
+                // terminator is available.
+                if candidate_reaction {
+                    let body_def_id = bodies
+                        .iter()
+                        .find(|body| {
+                            body.endpoint_def_id == Some(endpoint_def_id)
+                                && body.role == JoinBodyRole::ReactionBody
+                                && body.rule_index == Some(rule_index as u32)
+                        })
+                        .map(|body| body.body_def_id)
+                        .unwrap_or(u32::MAX);
+                    transitions.push(JoinStateTokenTransition {
+                        body_def_id,
+                        role: JoinBodyRole::ReactionBody,
+                        kind: JoinStateTokenTransitionKind::Claim,
+                        block: u32::MAX,
+                        statement: rule_index as u32,
+                    });
+                }
+
+                let endpoint_instances = instances
+                    .iter()
+                    .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
+                    .collect::<Vec<_>>();
+                let unique_instance = (endpoint_instances.len() == 1)
+                    .then(|| endpoint_instances[0])
+                    .filter(|instance| instance.status == JoinCfaInstanceStatus::Unique);
+                let rejection = if competing_rules != 0 {
+                    Some(JoinStateTokenRejection::CompetingRule)
+                } else if !analysis_complete {
+                    Some(JoinStateTokenRejection::IncompleteAnalysis)
+                } else if unique_instance.is_none() {
+                    Some(JoinStateTokenRejection::NoUniqueInstance)
+                } else if seed_events != 1 {
+                    Some(if seed_events > 1 {
+                        JoinStateTokenRejection::DuplicateSeed
+                    } else {
+                        JoinStateTokenRejection::UnknownProducer
+                    })
+                } else if extra_reemit {
+                    Some(JoinStateTokenRejection::EscapingProducer)
+                } else if !candidate_reaction || reemit_events == 0 {
+                    Some(JoinStateTokenRejection::MissingReemission)
+                } else if reemit_events != 1 {
+                    Some(JoinStateTokenRejection::MultipleReemissions)
+                } else {
+                    None
+                };
+                let (instance_body_def_id, allocation_block, allocation_statement) =
+                    unique_instance.map_or((None, None, None), |instance| {
+                        (
+                            Some(instance.body_def_id),
+                            Some(instance.allocation_block),
+                            Some(instance.allocation_statement),
+                        )
+                    });
+                proofs.push(JoinStateTokenProof {
+                    endpoint_def_id,
+                    instance_body_def_id,
+                    allocation_block,
+                    allocation_statement,
+                    rule_index: rule_index as u32,
+                    channel_index,
+                    seed_events,
+                    claim_events: candidate_reaction as u32,
+                    reemit_events,
+                    proven_bound: JoinQueueBound::AtMost(1),
+                    status: if rejection.is_none() {
+                        JoinStateTokenStatus::Proven
+                    } else {
+                        JoinStateTokenStatus::Rejected
+                    },
+                    rejection,
+                    transitions,
+                });
+            }
+        }
+    }
+    proofs.sort_by_key(|proof| {
+        (
+            proof.endpoint_def_id,
+            proof.rule_index,
+            proof.channel_index,
+        )
+    });
+    proofs
 }
 
 #[allow(rustc::potential_query_instability)]
@@ -1726,12 +1918,14 @@ fn dump_crate_summary(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
                 body.endpoint_def_id
                     .map_or_else(|| "null".to_string(), |endpoint| endpoint.to_string()),
+                body.rule_index
+                    .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                 body.role,
                 value_flows,
                 aliases,
@@ -1752,6 +1946,48 @@ fn dump_crate_summary(
                 instance.allocation_statement,
                 instance.known_uses,
                 instance.status,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let state_tokens = summary
+        .state_tokens
+        .iter()
+        .map(|proof| {
+            let transitions = proof
+                .transitions
+                .iter()
+                .map(|transition| {
+                    format!(
+                        "{{\"body\":{},\"role\":\"{:?}\",\"kind\":\"{:?}\",\"block\":{},\"statement\":{}}}",
+                        transition.body_def_id,
+                        transition.role,
+                        transition.kind,
+                        transition.block,
+                        transition.statement,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"endpoint\":{},\"instance_body\":{},\"allocation_block\":{},\"allocation_statement\":{},\"rule_index\":{},\"channel\":{},\"seed_events\":{},\"claim_events\":{},\"reemit_events\":{},\"bound\":\"{:?}\",\"status\":\"{:?}\",\"rejection\":{},\"transitions\":[{}]}}",
+                proof.endpoint_def_id,
+                proof.instance_body_def_id
+                    .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                proof.allocation_block
+                    .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                proof.allocation_statement
+                    .map_or_else(|| "null".to_string(), |value| value.to_string()),
+                proof.rule_index,
+                proof.channel_index,
+                proof.seed_events,
+                proof.claim_events,
+                proof.reemit_events,
+                proof.proven_bound,
+                proof.status,
+                proof.rejection
+                    .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\"")),
+                transitions,
             )
         })
         .collect::<Vec<_>>()
@@ -1833,10 +2069,11 @@ fn dump_crate_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
+        state_tokens,
         definitions,
         summary.solver_steps,
         summary.complete,
@@ -2931,6 +3168,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             local_def_id.index() as u32,
             endpoint_def_id,
             rule_def_id,
+            rule_index,
             role,
             arity,
             is_async,

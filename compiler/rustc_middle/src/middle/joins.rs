@@ -530,6 +530,9 @@ pub struct JoinCfaSummary {
     pub body_def_id: u32,
     pub endpoint_def_id: u32,
     pub rule_def_id: u32,
+    /// Source-rule coordinate, when this body belongs to a named dynamic
+    /// reaction helper. Dispatch and ordinary endpoint bodies leave it unset.
+    pub rule_index: Option<u32>,
     /// Fingerprint of the executable MIR snapshot plus the extracted typed
     /// facts. A proof consumer must compare this with the current body before
     /// rewriting; a changed CFG or operation stream invalidates the snapshot.
@@ -590,6 +593,10 @@ pub struct JoinCfaBodyRecord {
     pub body_def_id: u32,
     pub parent_body_def_id: Option<u32>,
     pub endpoint_def_id: Option<u32>,
+    /// Source-rule coordinate for reaction bodies.  The generated dynamic
+    /// endpoint has one shared dispatch owner, so the method DefId alone is
+    /// not enough to relate a re-emission to the rule that consumed it.
+    pub rule_index: Option<u32>,
     pub role: JoinBodyRole,
     pub value_flows: Vec<JoinValueFlow>,
     pub call_edges: Vec<JoinCallEdge>,
@@ -624,6 +631,76 @@ pub struct JoinCfaInstanceFact {
     pub status: JoinCfaInstanceStatus,
 }
 
+/// A transition observed while checking a compiler-described state-token
+/// protocol.  These are evidence records only: they identify the concrete
+/// MIR edge which supplied, consumed, or re-emitted the token.  A proof
+/// consumer must still validate the current MIR fingerprint before changing
+/// representation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinStateTokenTransition {
+    pub body_def_id: u32,
+    pub role: JoinBodyRole,
+    pub kind: JoinStateTokenTransitionKind,
+    pub block: u32,
+    pub statement: u32,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinStateTokenTransitionKind {
+    Seed,
+    Claim,
+    Reemit,
+}
+
+/// Why a candidate state-token protocol was not proved.  The reasons are
+/// intentionally semantic rather than frontend-shape based: a generated
+/// queue implementation or a user annotation can never manufacture a proof.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinStateTokenRejection {
+    NoUniqueInstance,
+    DuplicateSeed,
+    EscapingProducer,
+    UnknownProducer,
+    CompetingRule,
+    MissingReemission,
+    MultipleReemissions,
+    UnsupportedRuleShape,
+    IncompleteAnalysis,
+}
+
+/// Cross-body proof for a state channel whose token count is statically
+/// bounded by one.  `status == Proven` is the only value that may eventually
+/// authorize inline storage; all other records are explicit negative evidence
+/// and must retain the generic matcher.  Pending requests on other channels
+/// are deliberately not included in this bound.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinStateTokenProof {
+    pub endpoint_def_id: u32,
+    pub instance_body_def_id: Option<u32>,
+    pub allocation_block: Option<u32>,
+    pub allocation_statement: Option<u32>,
+    pub rule_index: u32,
+    pub channel_index: u32,
+    pub seed_events: u32,
+    pub claim_events: u32,
+    pub reemit_events: u32,
+    pub proven_bound: JoinQueueBound,
+    pub status: JoinStateTokenStatus,
+    pub rejection: Option<JoinStateTokenRejection>,
+    pub transitions: Vec<JoinStateTokenTransition>,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinStateTokenStatus {
+    Proven,
+    Rejected,
+}
+
 /// Crate-level join facts.  This query is deliberately `eval_always` while the
 /// representation is experimental: it consumes pre-cleanup summaries and is
 /// not yet a stable incremental artifact.
@@ -632,6 +709,7 @@ pub struct JoinCfaInstanceFact {
 pub struct JoinCfaCrateSummary {
     pub bodies: Vec<JoinCfaBodyRecord>,
     pub instances: Vec<JoinCfaInstanceFact>,
+    pub state_tokens: Vec<JoinStateTokenProof>,
     pub solver_steps: u32,
     pub complete: bool,
 }
