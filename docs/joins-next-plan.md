@@ -65,6 +65,11 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   decision surface, not yet executable storage: section 6 must still lower the
   record into typed MIR operations and remove the generic channel queue without
   changing off/analyze behavior.
+- The library runtime now has a proof-facing `DynamicMatcherStoragePolicy` and
+  exact per-channel inline slots with fallible admission; occupied slots never
+  grow a FIFO and all 57 runtime unit tests pass.  The compiler-to-constructor
+  bridge is intentionally still absent, so this preparation does not affect
+  benchmark numbers or claim a completed storage optimization.
 
 ## Constraints throughout
 
