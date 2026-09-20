@@ -602,6 +602,10 @@ pub struct JoinCfaBodyRecord {
     pub call_edges: Vec<JoinCallEdge>,
     pub unknown_effects: u32,
     pub endpoint_escapes: Vec<JoinEndpointEscape>,
+    /// Basic blocks which are part of a control-flow cycle in this body.
+    /// State-token proofs must reject a producer/re-emission edge located in
+    /// one of these blocks until interprocedural multiplicity is modelled.
+    pub cyclic_blocks: Vec<u32>,
 }
 
 /// Result of the first compiler-owned instance/context propagation slice.
@@ -667,6 +671,8 @@ pub enum JoinStateTokenRejection {
     CompetingRule,
     MissingReemission,
     MultipleReemissions,
+    LoopMultiplicity,
+    HelperMultiplicity,
     UnsupportedRuleShape,
     IncompleteAnalysis,
 }

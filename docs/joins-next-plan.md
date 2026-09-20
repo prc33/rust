@@ -39,6 +39,38 @@ closed/bounded representations are useful reference implementations; do not
 assume the checkout automatically infers every attribute it consumes. The
 standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
+## Current gate status — 2026-09-20
+
+The first fixed-pair result path is implemented; the next work is attribution,
+not another broad runtime rewrite. The compiler now records cyclic CFG blocks
+in CFA body records and rejects a state-token producer inside a loop with
+`LoopMultiplicity`. The loop witness is executable in
+`joins-library/compiler-tests/joins_state_token.rs`. The positive canonical
+mask-1 pair still lowers to `FixedPairMatcher`, while loop, competing-rule,
+scoped, reordered and async witnesses stay generic. The lowering pass plans
+all recognized rewrites in a body before mutating MIR, and the three serialized
+native gates (`off`, `analyze`, `optimize`) pass with MIR validation.
+
+The compiler gate is deliberately conservative: it does not query other
+already-stolen MIR bodies from a pass invocation. A state-token seed hidden in
+an ordinary helper is rejected with `HelperMultiplicity`, because one static
+helper edge can execute repeatedly; the helper witness is executable beside
+the loop witness. Generated fixed shims are
+resolved by compiler-owned runtime identities and checked for compatible typed
+output/arity before replacement; a missing or malformed operation rejects that
+body before any rewrite. The runtime still retains the generic fallback for
+every unproven case. Optional library instrumentation (the
+`joins-runtime` `instrumentation` feature) counts fixed locks/claims, ready
+replies, pending reply-cell admissions and generic fused fallbacks. Use those
+counters and assembly to identify the remaining costs before extending CFA.
+
+The latest serialized focused result is 35.43 ns/op handwritten, 907.16
+joins-off, 610.78 analyze and 313.86 optimize (100 samples, matching
+checksums). This is directional because variants were sequential, not paired;
+the optimize path remains 8.86× the handwritten control. Do not rerun the full
+matrix until the attribution gate explains the remaining reply-cell, mutex,
+FIFO and trampoline work.
+
 ### Progress on this plan (2026-09-19)
 
 - The typed-definition slice is implemented: HIR markers preserve ordered rule

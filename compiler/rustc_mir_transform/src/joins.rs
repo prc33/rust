@@ -601,6 +601,19 @@ fn cfg_reaches<'tcx>(body: &Body<'tcx>, start: mir::BasicBlock, target: mir::Bas
     false
 }
 
+/// Return the basic blocks which can reach themselves through a non-empty
+/// control-flow path.  This is deliberately a conservative syntactic guard
+/// for the first state-token certificate: a channel producer or re-emission
+/// in such a block may execute more than once, so `AtMost(1)` cannot be
+/// justified until interprocedural multiplicity analysis is available.
+fn cfg_cyclic_blocks<'tcx>(body: &Body<'tcx>) -> Vec<u32> {
+    body.basic_blocks
+        .indices()
+        .filter(|&block| cfg_reaches(body, block, block))
+        .map(|block| block.index() as u32)
+        .collect()
+}
+
 fn alias_closure(flows: &[JoinValueFlow], source: u32) -> FxHashSet<u32> {
     let mut outgoing = BTreeMap::<u32, BTreeSet<u32>>::new();
     for flow in flows {
@@ -1289,6 +1302,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 call_edges: summary.call_edges.clone(),
                 unknown_effects: summary.unknown_effects,
                 endpoint_escapes: summary.endpoint_escapes.clone(),
+                cyclic_blocks: cfg_cyclic_blocks(&body),
             };
             pending_ordinary.extend(
                 record
@@ -1359,6 +1373,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 call_edges: facts.call_edges,
                 unknown_effects: facts.unknown_effects,
                 endpoint_escapes: facts.endpoint_escapes.into_iter().collect(),
+                cyclic_blocks: cfg_cyclic_blocks(&body),
             },
         );
     }
@@ -1783,6 +1798,7 @@ fn prove_state_tokens<'tcx>(
                 let mut reemit_events: u32 = 0;
                 let mut extra_reemit = false;
                 let mut candidate_reaction = false;
+                let mut loop_multiplicity = false;
 
                 // A body is relevant even when it is an ordinary caller: its
                 // endpoint identity is carried by the typed call edge rather
@@ -1804,6 +1820,13 @@ fn prove_state_tokens<'tcx>(
                             || edge.channel_index != Some(channel_index)
                         {
                             continue;
+                        }
+                        if body.cyclic_blocks.contains(&edge.block) {
+                            // A seed or re-emission in a cyclic block can
+                            // execute repeatedly.  Keep collecting evidence
+                            // for diagnostics, but never turn it into a
+                            // fixed slot from this first syntactic proof.
+                            loop_multiplicity = true;
                         }
                         if reaction_for_rule {
                             candidate_reaction = true;
@@ -1876,6 +1899,19 @@ fn prove_state_tokens<'tcx>(
                 let unique_instance = (endpoint_instances.len() == 1)
                     .then(|| endpoint_instances[0])
                     .filter(|instance| instance.status == JoinCfaInstanceStatus::Unique);
+                // A proof rooted in a constructor allocation is only safe
+                // when the source-level seed is in that allocation's body.
+                // If the seed is hidden behind an ordinary helper, the
+                // helper may be called more than once (or from a loop), while
+                // this bounded scan would still observe only one static call
+                // edge.  Reject that shape until the interprocedural call
+                // graph tracks multiplicity explicitly.
+                let seed_outside_allocation = unique_instance.is_some_and(|instance| {
+                    transitions.iter().any(|transition| {
+                        transition.kind == JoinStateTokenTransitionKind::Seed
+                            && transition.body_def_id != instance.body_def_id
+                    })
+                });
                 let endpoint_complete =
                     state_token_endpoint_complete(endpoint_def_id, rule_index as u32, bodies);
                 let rejection = if competing_rules != 0 {
@@ -1884,6 +1920,10 @@ fn prove_state_tokens<'tcx>(
                     Some(JoinStateTokenRejection::IncompleteAnalysis)
                 } else if unique_instance.is_none() {
                     Some(JoinStateTokenRejection::NoUniqueInstance)
+                } else if loop_multiplicity {
+                    Some(JoinStateTokenRejection::LoopMultiplicity)
+                } else if seed_outside_allocation {
+                    Some(JoinStateTokenRejection::HelperMultiplicity)
                 } else if seed_events != 1 {
                     Some(if seed_events > 1 {
                         JoinStateTokenRejection::DuplicateSeed
@@ -2114,8 +2154,14 @@ fn dump_crate_summary(
                 .map(|(local, alias)| format!("{{\"local\":{},\"alias\":\"{:?}\"}}", local, alias))
                 .collect::<Vec<_>>()
                 .join(",");
+            let cyclic_blocks = body
+                .cyclic_blocks
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -2126,6 +2172,7 @@ fn dump_crate_summary(
                 body.role,
                 value_flows,
                 aliases,
+                cyclic_blocks,
                 call_edges,
             )
         })
@@ -3396,9 +3443,14 @@ fn fixed_pair_constructor(tcx: TyCtxt<'_>, generic: DefId) -> Option<DefId> {
         .map(|item| item.def_id)
         .find(|target| {
             let target_signature = tcx.fn_sig(*target).instantiate_identity().skip_binder();
+            // The constructor is selected by compiler-owned identity and its
+            // call is type-checked again after the rewrite. Keep the full
+            // output-kind check here; generated impl shims may carry
+            // different late-bound ABI metadata even when their typed
+            // operands are the same.
             target_signature.inputs().len() == signature.inputs().len()
-                && matches!(target_signature.output().kind(), ty::Adt(..))
                 && target_signature.output() == signature.output()
+                && matches!(target_signature.output().kind(), ty::Adt(..))
         })
 }
 
@@ -3429,6 +3481,10 @@ fn fixed_pair_method(tcx: TyCtxt<'_>, generic: DefId, fixed_name: &str) -> Optio
         .map(|item| item.def_id)
         .find(|target| {
             let target_signature = tcx.fn_sig(*target).instantiate_identity().skip_binder();
+            // Generated fixed shims are compiler-owned ABI twins. The
+            // runtime/compiler operation identity and input arity are checked
+            // here; MIR validation checks the instantiated operands after the
+            // rewrite, while the fixed runtime entry point remains hidden.
             target_signature.inputs().len() == signature.inputs().len()
                 && target_signature.output() == signature.output()
         })
@@ -3546,17 +3602,29 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             .layout_of(body.typing_env(tcx).as_query_input(tcx.types.u64))
             .unwrap_or_else(|_| bug!("could not lay out u64 for join storage lowering"))
             .size;
-        let mut rewritten = 0usize;
-        for block_data in body.basic_blocks_mut() {
+        // Preflight every rewrite before mutating the body.  A proof-selected
+        // endpoint has several generated shims (constructor, admissions and
+        // dispatch); changing the first call and discovering a missing ABI
+        // twin at a later call would leave a fixed matcher reachable through
+        // its generic operation path.  Keep the plan immutable until every
+        // compiler/runtime identity and literal has been checked.
+        let mut planned = Vec::new();
+        for (block, block_data) in body.basic_blocks.iter_enumerated() {
             let span = block_data.terminator().source_info.span;
-            let TerminatorKind::Call { func, args, .. } = &mut block_data.terminator_mut().kind
+            let TerminatorKind::Call { func, args, .. } = &block_data.terminator().kind
             else {
                 continue;
             };
             let Some((callee, generic_args)) = func.const_fn_def() else { continue };
             if is_constructor {
-                if !is_join_mask_constructor(tcx, callee) || args.len() != 2 {
+                if !is_join_mask_constructor(tcx, callee) {
                     continue;
+                }
+                if args.len() != 2 {
+                    // A recognized policy call with a changed shape is not a
+                    // safe candidate.  Do not rewrite another call in this
+                    // body and leave this one on an incompatible ABI.
+                    return;
                 }
                 let channels = args[0]
                     .node
@@ -3567,29 +3635,20 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                     .constant()
                     .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
                 if channels != Some(expected_channels) || mask != Some(0) {
-                    continue;
+                    return;
                 }
-                if strategy == JoinLoweringStrategy::FixedPairMatcher {
+                let target = if strategy == JoinLoweringStrategy::FixedPairMatcher {
                     let Some(target) = fixed_pair_constructor(tcx, callee) else {
-                        // A missing compiler/runtime pair ABI is a conservative
-                        // rejection, never a reason to mutate the generic call.
-                        continue;
+                        // The positive proof is not permission to guess an
+                        // ABI twin.  If the runtime/compiler pair contract is
+                        // absent, leave this body entirely generic.
+                        return;
                     };
-                    *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
-                }
-                // Both the generic and fixed constructors receive the proven
-                // channel mask. The fixed ABI distinguishes the representation;
-                // the mask still carries the per-channel occupancy decision.
-                args[1] = Spanned {
-                    span,
-                    node: Operand::const_from_scalar(
-                        tcx,
-                        tcx.types.u64,
-                        Scalar::from_uint(inline_mask as u128, mask_size),
-                        span,
-                    ),
+                    Some(target)
+                } else {
+                    None
                 };
-                rewritten += 1;
+                planned.push((block, target, generic_args, span, Some(inline_mask)));
                 continue;
             }
 
@@ -3598,6 +3657,24 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             }
             let item_symbol = tcx.item_name(callee);
             let item_name = item_symbol.as_str();
+            let is_generic_fixed_operation = tcx.crate_name(callee.krate).as_str()
+                == "joins_runtime"
+                && matches!(
+                    item_name,
+                    "submit_left_at"
+                        | "submit_left_oneway_at"
+                        | "submit_right_at"
+                        | "submit_right_and_dispatch_at"
+                        | "submit_right_oneway_at"
+                        | "__join_dispatch_once_at"
+                );
+            // Channel/dispatch bodies contain ordinary helper calls (for
+            // example source-location construction) which are not part of
+            // the fixed ABI.  Only a recognized generic runtime operation
+            // enters the all-or-nothing shim preflight below.
+            if !is_generic_fixed_operation {
+                continue;
+            }
             let fixed_name = if is_dispatch && item_name == "__join_dispatch_once_at" {
                 Some("__join_dispatch_once_fixed_at")
             } else if let Some(index) = channel_index {
@@ -3614,22 +3691,54 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             } else {
                 None
             };
-            let Some(fixed_name) = fixed_name else { continue };
+            let Some(fixed_name) = fixed_name else {
+                // A generated endpoint operation that has no corresponding
+                // fixed shim invalidates the whole body.  Returning before
+                // the apply phase prevents a partial retarget.
+                return;
+            };
             let Some(target) = fixed_pair_method(tcx, callee, fixed_name) else {
                 // A missing compiler/runtime fixed method is a conservative
-                // rejection, never a partial rewrite of a generated body.
-                continue;
+                // rejection, never a reason to mutate an earlier call.
+                return;
             };
-            *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
-            rewritten += 1;
+            planned.push((block, Some(target), generic_args, span, None));
         }
-        // The proof consumer must be all-or-nothing.  If the generated shape
-        // changed between the snapshot and this body, restore neither a
-        // partial argument rewrite nor a guessed fallback.  The current
-        // generated constructor has exactly one policy call; this assertion
-        // is a debug-time tripwire while the release path remains conservative.
-        if rewritten != 1 {
-            debug_assert_eq!(rewritten, 0, "join storage lowering partially matched generated body");
+
+        if planned.is_empty() {
+            return;
+        }
+
+        // The complete preflight succeeded.  Apply all planned changes in a
+        // separate pass; no ABI lookup or shape validation remains on this
+        // mutation path.
+        for (block, target, generic_args, span, mask) in planned {
+            let block_data = &mut body.basic_blocks_mut()[block];
+            let TerminatorKind::Call { func, args, .. } = &mut block_data.terminator_mut().kind
+            else {
+                // The body cannot change between the two passes, but retain a
+                // conservative guard if a future MIR pass invalidates that
+                // assumption.
+                return;
+            };
+            if let Some(target) = target {
+                *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
+            }
+            if let Some(inline_mask) = mask {
+                // Both the generic and fixed constructors receive the proven
+                // channel mask. The fixed ABI distinguishes the representation;
+                // the mask still carries the per-channel occupancy decision.
+                let Some(mask_arg) = args.get_mut(1) else { return };
+                *mask_arg = Spanned {
+                    span,
+                    node: Operand::const_from_scalar(
+                        tcx,
+                        tcx.types.u64,
+                        Scalar::from_uint(inline_mask as u128, mask_size),
+                        span,
+                    ),
+                };
+            }
         }
     }
 }

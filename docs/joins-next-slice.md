@@ -593,6 +593,43 @@ publication, ABA/reclamation and waiter races need their own protocol and model
 tests before concurrent fixed slots. General CAS lowering and DataFusion follow
 this evidence, retaining the larger handover's gates.
 
+## Handover update — 2026-09-20
+
+The loop-multiplicity safety gate is now part of the executable plan. A source
+producer in a cyclic MIR block is rejected with `LoopMultiplicity`; a seed
+hidden behind an ordinary helper is rejected with `HelperMultiplicity` until
+the interprocedural call graph proves call multiplicity. The
+`StateTokenLoopProducer` and `StateTokenHelperProducer` witnesses must retain
+mask `0` and no fixed methods, while the canonical `PairStateToken` witness
+keeps mask `1` and all three fixed operations in optimize mode. The CFA JSON
+records the cyclic block set and rejection reason, so these decisions are
+inspectable rather than inferred from runtime behaviour.
+
+The fixed-operation consumer preflights all recognized calls in each MIR body
+and applies rewrites only after every required compiler/runtime identity and
+compatible typed arity/output check succeeds. Do not reintroduce a query over
+other endpoint bodies: those MIR bodies may already have been stolen by the
+pass manager. Unsupported or malformed operations remain generic. The
+serialized `off`, `analyze` and `optimize` native gates all pass after a
+rebuilt stage-1 compiler and library.
+
+The immediate next steps are strictly ordered:
+
+1. Run the optional runtime counters and inspect fixed-pair MIR/assembly to
+   attribute reply-cell creation, mutex acquisitions, FIFO traffic and
+   trampoline work. Do not add a new runtime representation until this list is
+   measured.
+2. Repeat one paired/shuffled focused result-channel benchmark with the same
+   compiler, inputs and checksums. The existing 313.86 ns/op optimize result is
+   directional (100 serialized samples), not a final parity claim.
+3. If the measured hot path is still generic work, lower only the proven
+   transition to typed fields/atomics with an ownership and memory-order proof;
+   keep the dynamic queue fallback for every unknown, competing, looping,
+   scoped, async or borrowed case. Never pattern-match on a library lock.
+4. Add completion and queued-delivery proofs only after the mask-1 result path
+   has sound cost attribution and a paired result. Expand the benchmark set
+   then, and postpone DataFusion until these compiler gates are green.
+
 ## Completion checklist
 
 - [x] 1: duplicate effects removed; misleading storage proof labels corrected.
@@ -601,10 +638,14 @@ this evidence, retaining the larger handover's gates.
       cross-crate substitutions and full policy are pending).
 - [x] 3: isolated unary semantics equal across modes and ordinary async controls
       for the current direct unary contract (shared/multi-input controls remain).
-- [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons.
+- [ ] 4: bounded CFA accepts and rejects the named witnesses with reasons
+      (the state-token positive, competing-rule, loop-multiplicity and
+      helper-multiplicity subset now passes; general interprocedural call-graph
+      multiplicity and the remaining matrix are still open).
 - [ ] 5: a complete checked certificate drives the actual result-channel MIR
-      rewrite (fixed-pair constructor selection now passes the symbol/mask
-      gate; typed storage/reply lowering remains).
+      rewrite (the canonical fixed-pair constructor/admission/dispatch path
+      now passes; allocation/assembly attribution and broader typed storage
+      remain).
 - [ ] 6: negative, drop/unwind, incremental and cross-crate regressions pass.
 - [ ] 7: committed IR, allocation and timing evidence; fork summary updated.
 
