@@ -536,24 +536,41 @@ manifest must name source commits plus any dirty patch, binary hashes, commands,
 policy, expected and observed site counts, and all open gates. Push rust commits
 to prc33/joins; library commits remain local until a remote is provided.
 
-## 8. Next slice after result fusion: make the fixed-pair ABI executable
+## 8. Fixed-pair executable ABI and next reply slice
 
 The proof-to-constructor step is now implemented, rather than merely planned.
-Rust `8424aa6953e` classifies a positive canonical synchronous two-channel
-endpoint as `FixedPairMatcher` and rewrites its MIR constructor to
-`PairMatcher::new_with_fixed_pair_mask`; library `f7d358e` supplies that ABI
-and `34c4eff` checks the selected symbol and mask. The optimize native gate
-reports `pair_mask=1, pair_fixed=True`; off/analyze report
-`pair_mask=0, pair_fixed=False`, and all three gates pass. The optimized MIR
-contains the fixed constructor call and the CFA graph records the strategy.
+Rust `8554ba05b1b` classifies a positive canonical synchronous two-channel
+endpoint as `FixedPairMatcher` and rewrites its MIR constructor, generated
+admissions, and synchronous dispatch to fixed operation methods. Library
+`f7d358e`/the current typed-state slice supplies that ABI and the library gate
+checks it. The optimize native gate reports `pair_mask=1, pair_fixed=True` and
+the fixed method names; off/analyze report `pair_mask=0, pair_fixed=False` and
+no fixed methods. The optimized MIR contains the fixed operation calls and the
+CFA graph records the strategy.
 
-This is intentionally a narrow executable-MIR proof gate, not a performance
-claim: the new ABI currently initializes the same typed `PairState` as the
-generic mask constructor. It has not yet removed `Arc`, `Mutex`, reply cells,
-or the `PairQueue` enum. Do not mark fixed-storage or CFA speedup complete on
-the symbol alone. The next implementation must make the fixed ABI's body and
-hot paths genuinely specialized, then prove the reduction in MIR/assembly and
-timing.
+The fixed runtime now has a separate typed `FixedPairState`: an inline left
+token and a typed FIFO of right requests. Claim is atomic under that state
+guard and restores both inputs on an incomplete match; the proven slot never
+silently upgrades to a dynamic queue. This removes generic `PairQueue`
+dispatch from selected calls, but does not yet remove the state `Arc<Mutex>`,
+result-reply allocation, or trampoline. A serialized direct-source focus
+measured provisional medians of 33.58 ns/op handwritten, 726.53 off, 740.21
+analyze, and 433.71 optimize (100 samples, 10,000 iterations, four workers).
+The run is not a paired final effect-size experiment; retain it as evidence
+that the structural slice is promising and repeat after the reply fast path.
+
+The immediate next implementation is a fixed-path result completion that can
+return `Reply::ready` when registration and matching execute synchronously.
+Pending requests must retain the shared reply/waker path. No compiler rewrite
+may infer or replace a library lock implementation. The next gates are:
+
+1. runtime tests for immediate and pending replies, ordering, re-emission,
+   panic, drop, and competing producers;
+2. optimized MIR checks for fixed constructor/admission/dispatch calls and
+   generic calls in all negative cases;
+3. allocation counters and assembly evidence showing which generic work was
+   removed; and
+4. one serialized paired focused benchmark before the full matrix is rerun.
 
 Do not implement a fixed pair slot from method-local peak counts. Build a
 per-instance transition system: available messages, demanded requests, claimed
