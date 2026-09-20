@@ -190,10 +190,12 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   the reaction runs in the caller and returns `Reply::ready`; pending requests
   retain the shared reply/waker path. Four focused tests cover ready and
   pending replies, FIFO, sibling completion, panic, and cancellation, and the
-  complete runtime suite passes 68/68. A focused direct-source run remains
-  provisional evidence only (native 33.58 ns/op, off 726.53, analyze 740.21,
-  optimize 433.71; 100 samples, 10k iterations, four workers); repeat it in
-  paired/shuffled form after assembly and allocation attribution.
+  complete runtime suite passes 68/68. A focused direct-source run after the
+  fused slice measured 35.43 ns/op native, 907.16 off, 610.78 analyze and
+  313.86 optimize (100 samples, 10k iterations, four workers; all checksums
+  matched). Variants were sequential, not paired/shuffled, so this is
+  directional evidence only; repeat it with paired ordering after assembly
+  and allocation attribution.
 
 ## Constraints throughout
 

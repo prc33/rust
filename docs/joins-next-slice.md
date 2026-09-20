@@ -539,10 +539,10 @@ to prc33/joins; library commits remain local until a remote is provided.
 ## 8. Fixed-pair executable ABI and next reply slice
 
 The proof-to-constructor step is now implemented, rather than merely planned.
-Rust `8554ba05b1b` classifies a positive canonical synchronous two-channel
+Rust `5ba3ce0ca60` classifies a positive canonical synchronous two-channel
 endpoint as `FixedPairMatcher` and rewrites its MIR constructor, generated
 admissions, and synchronous dispatch to fixed operation methods. Library
-`f7d358e`/the current typed-state slice supplies that ABI and the library gate
+`f7d358e`/`92d8dfe` supplies that ABI and the library gate
 checks it. The optimize native gate reports `pair_mask=1, pair_fixed=True` and
 the fixed method names; off/analyze report `pair_mask=0, pair_fixed=False` and
 no fixed methods. The optimized MIR contains the fixed operation calls and the
@@ -557,10 +557,12 @@ right admission: an immediately matched request executes in the caller and
 returns `Reply::ready`, while a pending request retains the shared reply/waker
 path. Four focused tests cover ready and pending replies, FIFO, sibling
 completion, panic, and cancellation; the full runtime suite passes 68/68.
-The provisional direct-source medians remain 33.58 ns/op handwritten, 726.53
-off, 740.21 analyze, and 433.71 optimize (100 samples, 10,000 iterations,
-four workers). They are not a paired final effect-size experiment; repeat only
-after assembly/allocation attribution for the fused call.
+The first post-fusion direct-source focus measured 35.43 ns/op handwritten,
+907.16 off, 610.78 analyze, and 313.86 optimize (100 samples, 10,000
+iterations, four workers; all checksums matched). Variants ran sequentially,
+not paired/shuffled, so this is directional evidence only; repeat after
+assembly/allocation attribution for the fused call. The raw methodology is in
+`../join-benchmarks/docs/focused-fixed-pair-fused-20260920.md`.
 
 The next gates are:
 
