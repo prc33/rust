@@ -1,6 +1,6 @@
 # NEXT: analysis-driven shared join specialization
 
-Date: 2026-09-19. **This is the next execution plan. Start here.**
+Date: 2026-09-20. **This is the next execution plan. Start here.**
 
 This plan follows the private forwarding work, state-token bridge at Rust
 `c3f548c89f5`, and all-channel dispatch benchmark at library `b547504`. It supersedes the immediate sequencing
@@ -171,18 +171,25 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 - The first proof-consuming pair ABI slice is now complete in Rust
   `8424aa6953e` and library `f7d358e`/`34c4eff`. A positive, canonical,
   synchronous two-channel endpoint with a proven `AtMost(1)` token now
-  selects `FixedPairMatcher` in optimize mode. The MIR constructor call is
-  retargeted to the distinct `PairMatcher::new_with_fixed_pair_mask` symbol
-  and carries the proven mask (`1` in the positive fixture); `off` and
-  `analyze`, plus competing, reordered, async, scoped and non-canonical
-  endpoints, retain `new_with_channel_mask` and mask `0`. The optimize dump
-  contains the fixed symbol and the CFA graph records
-  `strategy=FixedPairMatcher`; the three native gates and stage-1 compiler
-  build pass. This is real executable-MIR selection, but the ABI currently
-  constructs the same typed `PairState` implementation as the generic mask
-  path. It therefore proves safe selection and fallback, not yet removal of
-  `Arc`, `Mutex`, reply cells or all `PairQueue` branches, and no speedup is
-  attributed to it until a paired timing/assembly gate demonstrates one.
+  selects `FixedPairMatcher` in optimize mode. The MIR constructor, generated
+  channel admissions, and synchronous dispatch are retargeted to distinct
+  fixed methods (`new_with_fixed_pair_mask`, `submit_*_fixed_at`, and
+  `__join_dispatch_once_fixed_at`) and carry the proven mask (`1` in the
+  positive fixture). `off` and `analyze`, plus competing, reordered, async,
+  scoped and non-canonical endpoints, retain the generic methods and mask `0`.
+  The optimize dump contains all three fixed operation classes and the CFA
+  graph records `strategy=FixedPairMatcher`; the three native gates and
+  stage-1 compiler build pass. The library fixed ABI now uses a separate
+  typed `FixedPairState`: an inline left token plus a typed FIFO of right
+  requests, with atomic claim/restore under its own guard. It does not silently
+  grow the proven slot or inspect/replace a library lock implementation.
+  This removes the generic `PairQueue` dispatch from the selected methods, but
+  still retains an `Arc<Mutex<...>>`, reply-cell allocation for result-bearing
+  admissions, and the ordinary trampoline. A focused direct-source run is
+  provisional evidence only (native 33.58 ns/op, off 726.53, analyze 740.21,
+  optimize 433.71; 100 samples, 10k iterations, four workers); it must be
+  repeated in paired/shuffled form after the next reply fast path before being
+  used as a final effect size.
 
 ## Constraints throughout
 
@@ -346,8 +353,8 @@ not completion.
 
 ### 6.1 Next slice: make the proof-selected pair representation pay off
 
-The proof-selected constructor ABI is now the completed first step, not the
-target representation. Implement the next slice in this order:
+The proof-selected constructor and operation ABI are now the completed first
+step, not the target representation. Implement the next slice in this order:
 
 1. Define the compiler/runtime contract for `FixedPairMatcher` using the actual
    channel payload and reply types. It may use ordinary Rust fields and
@@ -355,10 +362,13 @@ target representation. Implement the next slice in this order:
    selected because the code resembles a library mutex and must not depend on
    a particular lock implementation. Keep a generic queue-backed matcher for
    every unsupported case.
-2. Keep the existing `JoinStorageLowering` proof checks as the admission gate,
-   then make `new_with_fixed_pair_mask` construct a representation whose hot
-   paths are statically specialized (for example typed fixed slots and a
-   direct complete-pair branch). The compiler must not identify or replace a
+2. Keep the existing `JoinStorageLowering` proof checks as the admission gate.
+   The fixed constructor now selects a separate typed state with an inline
+   proven token slot and a typed pending side; fixed submit/claim methods are
+   already selected in executable MIR. The immediate next optimization is a
+   fixed-path result completion that returns an already-ready reply when a
+   request is matched synchronously, while retaining a shared reply cell for a
+   request that was pending. The compiler must not identify or replace a
    library lock implementation. Any atomics/CAS must be justified by the
    join state protocol and have an explicit ownership/ordering proof. The
    generic `PairQueue`/reply path remains the fallback.
@@ -371,22 +381,23 @@ target representation. Implement the next slice in this order:
 4. Extend the current positive and negative MIR fixtures. The positive
    state-token pair must show `FixedPairMatcher` and the fixed constructor;
    once the runtime specialization is real, its post-inline MIR/assembly must
-   show no dynamic `PairQueue` construction on the proven channels. A
+   show no dynamic `PairQueue` construction on the proven channels and must
+   distinguish the ready-reply and pending-reply paths. A
    competing rule, extra producer, escaped instance, reordered pattern,
    unknown call, borrowed payload, and non-proven bound must retain the
    generic matcher and record a rejection reason. Off and analyze must keep
    the generic representation while preserving behavior.
 5. Verify the generated MIR and assembly for removed enum dispatch, queue
-   growth, erased payload/reply-cell allocation and unnecessary scheduling
-   work. The current gate is only symbol/mask/strategy evidence; the next gate
-   must add allocation counters and instruction-level evidence. Then run the
-   focused direct-source benchmark serially, with allocation counters and
-   checksums, before touching the full matrix. A successful gate requires a
-   measured reduction in the identified generic work, not just a changed
-   symbol or metadata dump.
+   growth, erased payload/reply-cell allocation on the immediately matched
+   path, and unnecessary scheduling work. The current gate is symbol/mask/
+   strategy evidence; the next gate must add allocation counters and
+   instruction-level evidence. Then run the focused direct-source benchmark
+   serially, with allocation counters and checksums, before touching the full
+   matrix. A successful gate requires a measured reduction in the identified
+   generic work, not just a changed symbol or metadata dump.
 
-The constructor retarget is the first place where the CFA result becomes an
-executable compiler optimization. Do not proceed to completion/MPSC
+The constructor and generated-operation retarget is the first place where the
+CFA result becomes an executable compiler optimization. Do not proceed to completion/MPSC
 generalization until the fixed body has a sound fallback and a direct-source
 gate demonstrates that the specialized representation, rather than only its
 symbol, reaches generated code.

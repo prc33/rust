@@ -3402,6 +3402,95 @@ fn fixed_pair_constructor(tcx: TyCtxt<'_>, generic: DefId) -> Option<DefId> {
         })
 }
 
+/// Resolve one of the compiler-owned fixed-pair operation shims beside the
+/// generic runtime method. The caller has already matched the generated HIR
+/// body to the proven endpoint/channel, so this identity check does not infer
+/// anything from a user lock or from a source spelling.
+fn fixed_pair_method(tcx: TyCtxt<'_>, generic: DefId, fixed_name: &str) -> Option<DefId> {
+    if tcx.crate_name(generic.krate).as_str() != "joins_runtime"
+        || !matches!(
+            tcx.item_name(generic).as_str(),
+            "submit_left_at"
+                | "submit_left_oneway_at"
+                | "submit_right_at"
+                | "submit_right_oneway_at"
+                | "__join_dispatch_once_at"
+        )
+    {
+        return None;
+    }
+    let signature = tcx.fn_sig(generic).instantiate_identity().skip_binder();
+    let container = tcx.parent(generic);
+    tcx.associated_items(container)
+        .in_definition_order()
+        .filter(|item| item.is_fn())
+        .filter(|item| tcx.item_name(item.def_id).as_str() == fixed_name)
+        .map(|item| item.def_id)
+        .find(|target| {
+            let target_signature = tcx.fn_sig(*target).instantiate_identity().skip_binder();
+            target_signature.inputs().len() == signature.inputs().len()
+                && target_signature.output() == signature.output()
+        })
+}
+
+/// Return the proven representation selected for an endpoint without
+/// requiring the caller to be its constructor body. Constructor lowering adds
+/// the stricter literal/unique-call-site checks; generated channel and
+/// dispatch methods use this same certificate only after their endpoint and
+/// method identities have been resolved from the typed descriptor.
+fn proven_endpoint_lowering<'tcx>(
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
+    summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
+) -> Option<(u64, JoinLoweringStrategy)> {
+    let endpoint_def_id = endpoint.endpoint_def_id?.index() as u32;
+    if summary
+        .instances
+        .iter()
+        .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
+        .count()
+        != 1
+    {
+        return None;
+    }
+    let lowerings = summary
+        .state_token_lowerings
+        .iter()
+        .filter(|lowering| {
+            lowering.endpoint_def_id == endpoint_def_id
+                && matches!(
+                    lowering.strategy,
+                    JoinLoweringStrategy::FixedUnarySlot
+                        | JoinLoweringStrategy::FixedPairMatcher
+                )
+                && lowering.proven_bound == JoinQueueBound::AtMost(1)
+        })
+        .collect::<Vec<_>>();
+    if lowerings.is_empty() {
+        return None;
+    }
+    let strategy = lowerings[0].strategy;
+    if lowerings.iter().any(|lowering| lowering.strategy != strategy) {
+        return None;
+    }
+    let mut mask = 0u64;
+    for lowering in lowerings {
+        if lowering.channel_index >= u64::BITS as u32 {
+            return None;
+        }
+        let proven = summary.state_tokens.iter().find(|proof| {
+            proof.endpoint_def_id == endpoint_def_id
+                && proof.rule_index == lowering.rule_index
+                && proof.channel_index == lowering.channel_index
+                && proof.status == JoinStateTokenStatus::Proven
+        })?;
+        if proven.proven_bound != JoinQueueBound::AtMost(1) {
+            return None;
+        }
+        mask |= 1u64 << lowering.channel_index;
+    }
+    Some((mask, strategy))
+}
+
 /// Proof-consuming bridge from the compiler's per-channel state-token record
 /// to the runtime's mixed queue representation.  The generated constructor
 /// starts with a zero mask.  Only optimize mode with positive certificates
@@ -3419,20 +3508,30 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             return;
         }
         let Some(local_def_id) = body.source.def_id().as_local() else { return };
-        let Some(endpoint) = tcx
-            .join_definitions(())
-            .endpoints
+        let Some(endpoint) = tcx.join_definitions(()).endpoints.iter().find(|endpoint| {
+            endpoint.constructor_def_id == Some(local_def_id)
+                || endpoint.channels.iter().any(|channel| channel.method_def_id == local_def_id)
+                || endpoint.rules.iter().any(|rule| rule.method_def_id == local_def_id)
+        }) else {
+            return;
+        };
+        let is_constructor = endpoint.constructor_def_id == Some(local_def_id);
+        let channel_index = endpoint
+            .channels
             .iter()
-            .find(|endpoint| endpoint.constructor_def_id == Some(local_def_id))
-        else {
-            return;
-        };
+            .find(|channel| channel.method_def_id == local_def_id)
+            .map(|channel| channel.index);
+        let is_dispatch = endpoint.rules.iter().any(|rule| rule.method_def_id == local_def_id);
         let summary = tcx.join_cfa_crate_summary(());
-        let Some((inline_mask, strategy)) =
+        let lowering = if is_constructor {
             state_token_constructor_lowering(tcx, body, endpoint, summary)
-        else {
-            return;
+        } else {
+            proven_endpoint_lowering(endpoint, summary)
         };
+        let Some((inline_mask, strategy)) = lowering else { return };
+        if !is_constructor && strategy != JoinLoweringStrategy::FixedPairMatcher {
+            return;
+        }
         let typing_env = body.typing_env(tcx);
         let expected_channels = endpoint.declared_channels as u64;
         let mask_size = tcx
@@ -3447,44 +3546,70 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             };
             let Some((callee, generic_args)) = func.const_fn_def() else { continue };
-            if !is_join_mask_constructor(tcx, callee)
-                || args.len() != 2
-            {
-                continue;
-            }
-            let channels = args[0]
-                .node
-                .constant()
-                .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
-            let mask = args[1]
-                .node
-                .constant()
-                .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
-            if channels != Some(expected_channels)
-                || mask != Some(0)
-            {
-                continue;
-            }
-            if strategy == JoinLoweringStrategy::FixedPairMatcher {
-                let Some(target) = fixed_pair_constructor(tcx, callee) else {
-                    // A missing compiler/runtime pair ABI is a conservative
-                    // rejection, never a reason to mutate the generic call.
+            if is_constructor {
+                if !is_join_mask_constructor(tcx, callee) || args.len() != 2 {
                     continue;
-                };
-                *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
-            }
-            // Both the generic and fixed constructors receive the proven
-            // channel mask. The fixed ABI distinguishes the representation;
-            // the mask still carries the per-channel occupancy decision.
-            args[1] = Spanned {
-                span,
-                node: Operand::const_from_scalar(
-                    tcx,
-                    tcx.types.u64,
-                    Scalar::from_uint(inline_mask as u128, mask_size),
+                }
+                let channels = args[0]
+                    .node
+                    .constant()
+                    .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+                let mask = args[1]
+                    .node
+                    .constant()
+                    .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+                if channels != Some(expected_channels) || mask != Some(0) {
+                    continue;
+                }
+                if strategy == JoinLoweringStrategy::FixedPairMatcher {
+                    let Some(target) = fixed_pair_constructor(tcx, callee) else {
+                        // A missing compiler/runtime pair ABI is a conservative
+                        // rejection, never a reason to mutate the generic call.
+                        continue;
+                    };
+                    *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
+                }
+                // Both the generic and fixed constructors receive the proven
+                // channel mask. The fixed ABI distinguishes the representation;
+                // the mask still carries the per-channel occupancy decision.
+                args[1] = Spanned {
                     span,
-                ),
+                    node: Operand::const_from_scalar(
+                        tcx,
+                        tcx.types.u64,
+                        Scalar::from_uint(inline_mask as u128, mask_size),
+                        span,
+                    ),
+                };
+                rewritten += 1;
+                continue;
+            }
+
+            if strategy != JoinLoweringStrategy::FixedPairMatcher {
+                continue;
+            }
+            let item_symbol = tcx.item_name(callee);
+            let item_name = item_symbol.as_str();
+            let fixed_name = if is_dispatch && item_name == "__join_dispatch_once_at" {
+                Some("__join_dispatch_once_fixed_at")
+            } else if let Some(index) = channel_index {
+                match (index, item_name) {
+                    (0, "submit_left_at") => Some("submit_left_fixed_at"),
+                    (0, "submit_left_oneway_at") => Some("submit_left_oneway_fixed_at"),
+                    (1, "submit_right_at") => Some("submit_right_fixed_at"),
+                    (1, "submit_right_oneway_at") => Some("submit_right_oneway_fixed_at"),
+                    _ => None,
+                }
+            } else {
+                None
             };
+            let Some(fixed_name) = fixed_name else { continue };
+            let Some(target) = fixed_pair_method(tcx, callee, fixed_name) else {
+                // A missing compiler/runtime fixed method is a conservative
+                // rejection, never a partial rewrite of a generated body.
+                continue;
+            };
+            *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
             rewritten += 1;
         }
         // The proof consumer must be all-or-nothing.  If the generated shape
@@ -3493,7 +3618,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
         // generated constructor has exactly one policy call; this assertion
         // is a debug-time tripwire while the release path remains conservative.
         if rewritten != 1 {
-            debug_assert_eq!(rewritten, 0, "join storage lowering partially matched constructor");
+            debug_assert_eq!(rewritten, 0, "join storage lowering partially matched generated body");
         }
     }
 }

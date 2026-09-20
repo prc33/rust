@@ -67,6 +67,14 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
         Reply(std::marker::PhantomData)
     }
 
+    #[doc(hidden)]
+    pub fn submit_left_fixed_at(&self, _value: L, _source: SourceLocation) -> Reply<LO> {
+        Reply(std::marker::PhantomData)
+    }
+
+    #[doc(hidden)]
+    pub fn submit_left_oneway_fixed_at(&self, _value: L, _source: SourceLocation) {}
+
     pub fn submit_right(&self, _value: R) -> Reply<RO> {
         Reply(std::marker::PhantomData)
     }
@@ -74,6 +82,14 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
     pub fn submit_right_at(&self, _value: R, _source: SourceLocation) -> Reply<RO> {
         Reply(std::marker::PhantomData)
     }
+
+    #[doc(hidden)]
+    pub fn submit_right_fixed_at(&self, _value: R, _source: SourceLocation) -> Reply<RO> {
+        Reply(std::marker::PhantomData)
+    }
+
+    #[doc(hidden)]
+    pub fn submit_right_oneway_fixed_at(&self, _value: R, _source: SourceLocation) {}
 
     pub fn __join_dispatch_once<F>(&self, _body: F) -> bool
     where
@@ -83,6 +99,14 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
     }
 
     pub fn __join_dispatch_once_at<F>(&self, _source: SourceLocation, _body: F) -> bool
+    where
+        F: FnOnce(L, R) -> (Result<LO, JoinError>, Result<RO, JoinError>),
+    {
+        false
+    }
+
+    #[doc(hidden)]
+    pub fn __join_dispatch_once_fixed_at<F>(&self, _source: SourceLocation, _body: F) -> bool
     where
         F: FnOnce(L, R) -> (Result<LO, JoinError>, Result<RO, JoinError>),
     {
