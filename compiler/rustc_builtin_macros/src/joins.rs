@@ -479,9 +479,6 @@ fn generate_restricted_endpoint(
     let visibility = visibility_prefix(&definition.visibility);
     let struct_attributes = attributes_prefix(&definition.struct_attributes);
     let impl_attributes = attributes_prefix(&definition.impl_attributes);
-    let left_method = channel_method(&visibility, left, "submit_left", left_reply, &scope_bounds);
-    let right_method =
-        channel_method(&visibility, right, "submit_right", right_reply, &scope_bounds);
     let left_result = if left.reply.is_some() { left_expression.to_string() } else { "()".into() };
     let right_result =
         if right.reply.is_some() { right_expression.to_string() } else { "()".into() };
@@ -492,13 +489,39 @@ fn generate_restricted_endpoint(
         &format!("({left_reply}, {right_reply})"),
         rule.is_async,
     );
+    // A synchronous result-bearing right channel can use the proof-selected
+    // fused admission ABI.  The generic method has exactly the old
+    // submit-then-dispatch behavior; optimize-mode MIR may retarget that one
+    // call to the fixed implementation, which can return `Reply::ready` when
+    // the proven left token is already present. Async reactions retain the
+    // ordinary two-step path because their body must become a Future before
+    // execution is scheduled.
+    let reaction_helper = (!rule.is_async).then(|| {
+        format!(
+            "    #[doc(hidden)]\n    #[join_reaction(rule = 0)]\n    fn __join_reaction(__join_endpoint: Self, {left_binding}: {left_type}, {right_binding}: {right_type}) -> (::core::result::Result<{left_reply}, ::joins_runtime::JoinError>, ::core::result::Result<{right_reply}, ::joins_runtime::JoinError>)\n{scope_bounds}{{\n        {left_unpack}\n        {right_unpack}\n        let __join_result = {reaction};\n        match __join_result {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }}\n    }}"
+        )
+    }).unwrap_or_default();
+    let right_dispatch_body = (!rule.is_async && right.reply.is_some()).then(|| {
+        format!(
+            "move |{left_binding}, {right_binding}| Self::__join_reaction(__join_endpoint, {left_binding}, {right_binding})"
+        )
+    });
+    let left_method = channel_method(&visibility, left, "submit_left", left_reply, &scope_bounds);
+    let right_method = pair_channel_method(
+        &visibility,
+        right,
+        "submit_right",
+        right_reply,
+        &scope_bounds,
+        right_dispatch_body.as_deref(),
+    );
     let dispatch = if rule.is_async {
         format!(
             "self.matcher.__join_dispatch_future_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{\n{left_unpack}\n{right_unpack}\nlet __join_result = {reaction};\nasync move {{ match __join_result.await {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }} }}\n}})"
         )
     } else {
         format!(
-            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| {{\n{left_unpack}\n{right_unpack}\nlet __join_result = {reaction};\nmatch __join_result {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }}\n}})"
+            "self.matcher.__join_dispatch_once_at(::joins_runtime::source_location(file!(), line!(), column!()), move |{left_binding}, {right_binding}| Self::__join_reaction(__join_endpoint, {left_binding}, {right_binding}))"
         )
     };
     Ok(format!(
@@ -523,6 +546,8 @@ impl {impl_generics}{impl_name} {{
     {scope_bounds}{{
         Self {{ matcher: ::joins_runtime::PairMatcher::new_in_scope_with_channel_mask(scope, 2, 0u64) }}
     }}
+
+    {reaction_helper}
 
     {left_method}
 
@@ -1431,6 +1456,33 @@ fn channel_method(
             dispatch_bounds = dispatch_bounds,
         )
     }
+}
+
+/// Generate a pair endpoint's result-bearing method with an optional fused
+/// admission body. The ordinary form is intentionally unchanged. The fused
+/// form is still a generic runtime operation in off/analyze modes; the MIR
+/// pass may retarget its exact call to a proof-selected fixed adapter.
+fn pair_channel_method(
+    visibility: &str,
+    channel: &Channel,
+    submit: &str,
+    reply_type: &str,
+    dispatch_bounds: &str,
+    fused_body: Option<&str>,
+) -> String {
+    let Some(body) = fused_body else {
+        return channel_method(visibility, channel, submit, reply_type, dispatch_bounds);
+    };
+    debug_assert!(channel.reply.is_some());
+    let argument = channel_method_argument(channel);
+    let value = channel_submit_value(channel);
+    format!(
+        "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{reply_type}>\n{dispatch_bounds}{{ let __join_endpoint = self.clone(); self.matcher.{submit}_and_dispatch_at({value}, ::joins_runtime::source_location(file!(), line!(), column!()), {body}) }}",
+        name = channel.name.name,
+        argument = argument,
+        value = value,
+        body = body,
+    )
 }
 
 fn channel_input_type(channel: &Channel) -> String {

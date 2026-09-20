@@ -3413,6 +3413,7 @@ fn fixed_pair_method(tcx: TyCtxt<'_>, generic: DefId, fixed_name: &str) -> Optio
             "submit_left_at"
                 | "submit_left_oneway_at"
                 | "submit_right_at"
+                | "submit_right_and_dispatch_at"
                 | "submit_right_oneway_at"
                 | "__join_dispatch_once_at"
         )
@@ -3532,6 +3533,13 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
         if !is_constructor && strategy != JoinLoweringStrategy::FixedPairMatcher {
             return;
         }
+        // The first fixed-pair runtime representation has an inline left
+        // token and a FIFO right side. Do not select it for a certificate
+        // whose only bounded channel is the right side; retain the generic
+        // matcher until a symmetric representation is implemented.
+        if strategy == JoinLoweringStrategy::FixedPairMatcher && inline_mask != 1 {
+            return;
+        }
         let typing_env = body.typing_env(tcx);
         let expected_channels = endpoint.declared_channels as u64;
         let mask_size = tcx
@@ -3597,6 +3605,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                     (0, "submit_left_at") => Some("submit_left_fixed_at"),
                     (0, "submit_left_oneway_at") => Some("submit_left_oneway_fixed_at"),
                     (1, "submit_right_at") => Some("submit_right_fixed_at"),
+                    (1, "submit_right_and_dispatch_at") => {
+                        Some("submit_right_fixed_and_dispatch_at")
+                    }
                     (1, "submit_right_oneway_at") => Some("submit_right_oneway_fixed_at"),
                     _ => None,
                 }

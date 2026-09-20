@@ -84,7 +84,33 @@ impl<L, R, LO, RO> PairMatcher<L, R, LO, RO> {
     }
 
     #[doc(hidden)]
+    pub fn submit_right_and_dispatch_at<F>(
+        &self,
+        _value: R,
+        _source: SourceLocation,
+        _body: F,
+    ) -> Reply<RO>
+    where
+        F: FnOnce(L, R) -> (Result<LO, JoinError>, Result<RO, JoinError>),
+    {
+        Reply(std::marker::PhantomData)
+    }
+
+    #[doc(hidden)]
     pub fn submit_right_fixed_at(&self, _value: R, _source: SourceLocation) -> Reply<RO> {
+        Reply(std::marker::PhantomData)
+    }
+
+    #[doc(hidden)]
+    pub fn submit_right_fixed_and_dispatch_at<F>(
+        &self,
+        _value: R,
+        _source: SourceLocation,
+        _body: F,
+    ) -> Reply<RO>
+    where
+        F: FnOnce(L, R) -> (Result<LO, JoinError>, Result<RO, JoinError>),
+    {
         Reply(std::marker::PhantomData)
     }
 

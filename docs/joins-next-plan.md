@@ -184,12 +184,16 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
   requests, with atomic claim/restore under its own guard. It does not silently
   grow the proven slot or inspect/replace a library lock implementation.
   This removes the generic `PairQueue` dispatch from the selected methods, but
-  still retains an `Arc<Mutex<...>>`, reply-cell allocation for result-bearing
-  admissions, and the ordinary trampoline. A focused direct-source run is
+  still retains an `Arc<Mutex<...>>` and a FIFO for pending right requests. The
+  result-bearing right admission is now fused in library `3e9dfcb`: when the
+  proven left token is already present and no older right request is waiting,
+  the reaction runs in the caller and returns `Reply::ready`; pending requests
+  retain the shared reply/waker path. Four focused tests cover ready and
+  pending replies, FIFO, sibling completion, panic, and cancellation, and the
+  complete runtime suite passes 68/68. A focused direct-source run remains
   provisional evidence only (native 33.58 ns/op, off 726.53, analyze 740.21,
-  optimize 433.71; 100 samples, 10k iterations, four workers); it must be
-  repeated in paired/shuffled form after the next reply fast path before being
-  used as a final effect size.
+  optimize 433.71; 100 samples, 10k iterations, four workers); repeat it in
+  paired/shuffled form after assembly and allocation attribution.
 
 ## Constraints throughout
 
@@ -364,14 +368,16 @@ step, not the target representation. Implement the next slice in this order:
    every unsupported case.
 2. Keep the existing `JoinStorageLowering` proof checks as the admission gate.
    The fixed constructor now selects a separate typed state with an inline
-   proven token slot and a typed pending side; fixed submit/claim methods are
-   already selected in executable MIR. The immediate next optimization is a
-   fixed-path result completion that returns an already-ready reply when a
-   request is matched synchronously, while retaining a shared reply cell for a
-   request that was pending. The compiler must not identify or replace a
-   library lock implementation. Any atomics/CAS must be justified by the
-   join state protocol and have an explicit ownership/ordering proof. The
-   generic `PairQueue`/reply path remains the fallback.
+   proven token slot and a typed pending side; fixed submit/claim methods and
+   the fused result admission are selected in executable MIR. The immediate
+   reply path is only valid for the canonical unscoped synchronous mask-1
+   proof; the runtime constructor asserts that contract, and the MIR pass
+   rejects other masks so they retain the generic matcher. The compiler must
+   not identify or replace a library lock implementation. Any atomics/CAS must
+   be justified by the join state protocol and have an explicit
+   ownership/ordering proof. The generic `PairQueue`/reply path remains the
+   fallback for pending, scoped, competing, reordered, async, or unknown
+   cases.
 3. Preserve the operation through optimized MIR long enough for ordinary MIR
    passes and coroutine lowering to see the typed fields, direct matching
    branch, and reply completion. Lower to the canonical runtime ABI only after
@@ -388,13 +394,14 @@ step, not the target representation. Implement the next slice in this order:
    generic matcher and record a rejection reason. Off and analyze must keep
    the generic representation while preserving behavior.
 5. Verify the generated MIR and assembly for removed enum dispatch, queue
-   growth, erased payload/reply-cell allocation on the immediately matched
-   path, and unnecessary scheduling work. The current gate is symbol/mask/
-   strategy evidence; the next gate must add allocation counters and
-   instruction-level evidence. Then run the focused direct-source benchmark
-   serially, with allocation counters and checksums, before touching the full
-   matrix. A successful gate requires a measured reduction in the identified
-   generic work, not just a changed symbol or metadata dump.
+   growth, reply-cell allocation on the immediately matched path, and
+   unnecessary scheduling work. The current gate is symbol/mask/strategy
+   evidence and the 68-test runtime suite; the next gate must add allocation
+   counters and instruction-level evidence for the fused result call. Then run
+   the focused direct-source benchmark serially, with allocation counters and
+   checksums, before touching the full matrix. A successful gate requires a
+   measured reduction in the identified generic work, not just a changed
+   symbol or metadata dump.
 
 The constructor and generated-operation retarget is the first place where the
 CFA result becomes an executable compiler optimization. Do not proceed to completion/MPSC

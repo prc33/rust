@@ -551,25 +551,25 @@ CFA graph records the strategy.
 The fixed runtime now has a separate typed `FixedPairState`: an inline left
 token and a typed FIFO of right requests. Claim is atomic under that state
 guard and restores both inputs on an incomplete match; the proven slot never
-silently upgrades to a dynamic queue. This removes generic `PairQueue`
-dispatch from selected calls, but does not yet remove the state `Arc<Mutex>`,
-result-reply allocation, or trampoline. A serialized direct-source focus
-measured provisional medians of 33.58 ns/op handwritten, 726.53 off, 740.21
-analyze, and 433.71 optimize (100 samples, 10,000 iterations, four workers).
-The run is not a paired final effect-size experiment; retain it as evidence
-that the structural slice is promising and repeat after the reply fast path.
+silently upgrades to a dynamic queue. The fixed constructor no longer creates
+the unused generic `PairState`. Library `3e9dfcb` adds a fused result-bearing
+right admission: an immediately matched request executes in the caller and
+returns `Reply::ready`, while a pending request retains the shared reply/waker
+path. Four focused tests cover ready and pending replies, FIFO, sibling
+completion, panic, and cancellation; the full runtime suite passes 68/68.
+The provisional direct-source medians remain 33.58 ns/op handwritten, 726.53
+off, 740.21 analyze, and 433.71 optimize (100 samples, 10,000 iterations,
+four workers). They are not a paired final effect-size experiment; repeat only
+after assembly/allocation attribution for the fused call.
 
-The immediate next implementation is a fixed-path result completion that can
-return `Reply::ready` when registration and matching execute synchronously.
-Pending requests must retain the shared reply/waker path. No compiler rewrite
-may infer or replace a library lock implementation. The next gates are:
+The next gates are:
 
-1. runtime tests for immediate and pending replies, ordering, re-emission,
-   panic, drop, and competing producers;
-2. optimized MIR checks for fixed constructor/admission/dispatch calls and
-   generic calls in all negative cases;
-3. allocation counters and assembly evidence showing which generic work was
-   removed; and
+1. optimized MIR checks for the fused fixed constructor/admission/dispatch
+   calls and generic calls in all negative cases;
+2. allocation counters and assembly evidence showing that the immediate path
+   removes reply-cell creation and avoids the generic queue/trampoline work;
+3. concurrency tests for a competing right request, re-emission, and a left
+   result reply (the existing 68-test suite is the baseline); and
 4. one serialized paired focused benchmark before the full matrix is rerun.
 
 Do not implement a fixed pair slot from method-local peak counts. Build a
