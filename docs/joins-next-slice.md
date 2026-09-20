@@ -617,8 +617,11 @@ The immediate next steps are strictly ordered:
 
 1. Run the optional runtime counters and inspect fixed-pair MIR/assembly to
    attribute reply-cell creation, mutex acquisitions, FIFO traffic and
-   trampoline work. Do not add a new runtime representation until this list is
-   measured.
+   trampoline work. **Done for the first focused window:** the optimized path
+   has 38,311 immediate replies, 1,689 pending reply-cell admissions, 123,380
+   fixed mutex calls and 81,690 fixed claims for 40,000 operations; off/analyze
+   remain fully generic. Do not add a new runtime representation until this
+   list is measured.
 2. Repeat one paired/shuffled focused result-channel benchmark with the same
    compiler, inputs and checksums. The existing 313.86 ns/op optimize result is
    directional (100 serialized samples), not a final parity claim.

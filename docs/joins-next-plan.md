@@ -71,6 +71,17 @@ the optimize path remains 8.86× the handwritten control. Do not rerun the full
 matrix until the attribution gate explains the remaining reply-cell, mutex,
 FIFO and trampoline work.
 
+The first attribution window now explains that gap. For 40,000 optimized
+`mutex` operations, 38,311 replies were immediately ready and 1,689 used a
+pending reply cell, but the path still made 123,380 fixed-state mutex calls and
+81,690 fixed claims. Off/analyze recorded 40,000 generic fallback calls and no
+fixed calls. Non-instrumented assembly shows the fixed submit/dispatch symbols
+are smaller and have no queue-growth calls, yet still contain mutex/CAS,
+reply/drop, trace and trampoline paths. The evidence supports a join-specific
+atomic state-token lowering; it does not support recognizing a library lock.
+Full counters and symbol metrics are in the benchmark repository's
+`docs/attribution-fixed-pair-20260920.md`.
+
 ### Progress on this plan (2026-09-19)
 
 - The typed-definition slice is implemented: HIR markers preserve ordered rule
