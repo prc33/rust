@@ -1,5 +1,12 @@
 # NEXT: analysis-driven shared join specialization
 
+Current review and immediate sequencing: [2026-09-20 assessment](joins-review-20260920.md).
+It supersedes the next-step/completion claims below: validate one endpoint-wide
+lowering plan and ABI contract, resolve cancellation ownership, then archive clean
+paired timings before selecting further storage changes. The 187.71 ns/op mutex
+result used instrumentation-enabled binaries with counters disabled and remains
+provisional; a state-token bound does not establish a reply-queue bound.
+
 Date: 2026-09-20. **This is the next execution plan. Start here.**
 
 This plan follows the private forwarding work, state-token bridge at Rust
