@@ -3298,7 +3298,10 @@ fn is_exact_atomic_u64_pair<'tcx>(
     // The runtime ABI uses an AtomicU8 state machine around an AtomicU64
     // payload.  Do not select it for targets which cannot provide both
     // widths; those targets retain the ordinary fixed-pair mutex path.
-    if tcx.sess.target.min_atomic_width() > 8 || tcx.sess.target.max_atomic_width() < 64 {
+    if !tcx.sess.target.atomic_cas
+        || tcx.sess.target.min_atomic_width() > 8
+        || tcx.sess.target.max_atomic_width() < 64
+    {
         return false;
     }
     if rule.reply_channel_indices != [1] || endpoint.channels.len() != 2 {
@@ -3504,15 +3507,57 @@ fn fixed_pair_constructor_named<'tcx>(
     .map(|item| item.def_id)
     .find(|target| {
         let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
-        // The constructor is selected by compiler-owned identity and its
-        // call is type-checked again after the rewrite. Keep the full
-        // output-kind check here; generated impl shims may carry
-        // different late-bound ABI metadata even when their typed
-        // operands are the same.
-        target_signature.inputs().len() == signature.inputs().len()
-            && target_signature.output() == signature.output()
+        same_join_abi(tcx, signature, target_signature)
             && matches!(target_signature.output().kind(), ty::Adt(..))
     })
+}
+
+/// Compare the complete instantiated function ABI before a compiler-owned
+/// runtime shim is selected. Arity/output checks alone are insufficient: two
+/// generic methods can have the same shape while moving different payload
+/// types, safety modes, variadic conventions, or Rust/C ABIs. The call is
+/// still validated by MIR type checking after replacement, but this predicate
+/// is the proof gate that prevents a malformed or unrelated helper from being
+/// selected in the first place.
+fn same_join_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    lhs: ty::FnSig<'tcx>,
+    rhs: ty::FnSig<'tcx>,
+) -> bool {
+    tcx.erase_and_anonymize_regions(lhs.inputs_and_output)
+        == tcx.erase_and_anonymize_regions(rhs.inputs_and_output)
+        && lhs.abi() == rhs.abi()
+        && lhs.safety() == rhs.safety()
+        && lhs.c_variadic() == rhs.c_variadic()
+        && lhs.splatted() == rhs.splatted()
+}
+
+/// Operation shims are methods, so their receiver lifetime may have a
+/// distinct late-bound identity even when it denotes the same
+/// `PairMatcher<...>`. Compare every payload and result type after erasing
+/// those region identities; the receiver's ADT is already restricted to the
+/// proven endpoint's inherent impl below.
+fn same_join_operation_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    lhs: ty::FnSig<'tcx>,
+    rhs: ty::FnSig<'tcx>,
+) -> bool {
+    let lhs_inputs = lhs.inputs();
+    let rhs_inputs = rhs.inputs();
+    lhs_inputs.len() == rhs_inputs.len()
+        && lhs_inputs
+            .iter()
+            .skip(1)
+            .zip(rhs_inputs.iter().skip(1))
+            .all(|(lhs, rhs)| {
+                tcx.erase_and_anonymize_regions(*lhs) == tcx.erase_and_anonymize_regions(*rhs)
+            })
+        && tcx.erase_and_anonymize_regions(lhs.output())
+            == tcx.erase_and_anonymize_regions(rhs.output())
+        && lhs.abi() == rhs.abi()
+        && lhs.safety() == rhs.safety()
+        && lhs.c_variadic() == rhs.c_variadic()
+        && lhs.splatted() == rhs.splatted()
 }
 
 /// Resolve one of the compiler-owned fixed-pair operation shims beside the
@@ -3551,12 +3596,10 @@ fn fixed_pair_method<'tcx>(
     .map(|item| item.def_id)
     .find(|target| {
         let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
-        // Generated fixed shims are compiler-owned ABI twins. The
-        // runtime/compiler operation identity and input arity are checked
-        // here; MIR validation checks the instantiated operands after the
-        // rewrite, while the fixed runtime entry point remains hidden.
-        target_signature.inputs().len() == signature.inputs().len()
-            && target_signature.output() == signature.output()
+        // Generated fixed shims are compiler-owned ABI twins. Compare all
+        // payload/result types and ABI flags while ignoring only receiver
+        // lifetime identities; MIR validation still checks the final call.
+        same_join_operation_abi(tcx, signature, target_signature)
     })
 }
 

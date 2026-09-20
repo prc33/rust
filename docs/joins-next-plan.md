@@ -48,6 +48,36 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
 ## Current gate status — 2026-09-20
 
+### Runtime/compiler boundary consolidation — 2026-09-20
+
+The compiler-facing fixed-pair boundary has been narrowed without changing
+the selected hot path. `PairMatcher`'s ordinary typed operations now detect a
+proof-selected fixed state and route to the existing fixed implementation;
+this keeps the fallback and fixed endpoints on one source-level operation
+ABI. The current MIR consumer still retargets those operations to direct fixed
+symbols when that removes the state-kind branch, so the consolidation is
+performance-neutral rather than a claim that all fixed helpers have already
+been deleted. The runtime test
+`fixed_pair_uses_canonical_operations_after_constructor_selection` exercises
+the shared ABI directly.
+
+The exact `FixedAtomicU64Pair` path remains a deliberately separate compiler /
+runtime primitive. Its left input is represented by an `AtomicU64`, while the
+generic `PairMatcher<L, ...>` operation cannot safely reinterpret an arbitrary
+`L`. It therefore retains its three type-specialized entry points until the
+compiler emits the token state and claim/completion operations directly in
+ordinary MIR. This is analogous to async lowering: rustc owns the typed state
+machine and representation selection, while the runtime keeps futures,
+wakers, executors and scope services. It is not lock recognition, and the
+compiler now requires target CAS support as well as 8/64-bit atomic widths.
+
+The ABI proof compares instantiated payload/result types (with only method
+receiver lifetime identities erased) and safety, ABI, variadic and splat
+metadata. A missing or incompatible helper rejects the whole candidate. The
+next consolidation step is to consume the endpoint-wide plan in MIR and
+replace the fixed/atomic adapter calls with explicit typed state transitions;
+do not add another runtime helper family for each payload width.
+
 The first fixed-pair result path is implemented; the next work is attribution,
 not another broad runtime rewrite. The compiler now records cyclic CFG blocks
 in CFA body records and rejects a state-token producer inside a loop with

@@ -5,6 +5,23 @@ source/evidence review, not a full soundness audit. No benchmarks were rerun.
 
 ## Assessment
 
+### Follow-up implementation slice
+
+The runtime/compiler boundary has since been consolidated for the ordinary
+fixed-pair path. Canonical typed admission and dispatch operations can route
+through a constructor-selected fixed state, and a regression test covers that
+ABI without naming a fixed helper. Optimize mode may still retarget the same
+operations to direct fixed symbols when the extra state-kind branch would be
+measurable; this preserves the fast path while avoiding a new helper family.
+The exact atomic-token path remains type-specialized because its `u64` input
+is stored in an `AtomicU64`; it is not sound to feed it through a generic
+payload operation without a compiler-emitted typed representation.
+
+The compiler proof now rejects targets without CAS support and compares
+instantiated payload/result types (receiver lifetime identities are erased),
+plus ABI, safety, variadic and splat metadata, before selecting a shim.
+Runtime tests and the serialized native fixture suite pass after this change.
+
 The performance direction is promising. Isolated unary joins already use ordinary
 futures and approach ordinary async costs. Private forwarding eliminates real
 allocations. Shared state-token CFA now changes executable MIR, and counters
