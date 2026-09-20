@@ -10,6 +10,42 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
+### Proof-selected atomic pair lowering — 2026-09-20
+
+The current compiler/runtime slice consumes a narrow CFA certificate for the
+canonical mutex-shaped join: an unscoped synchronous two-channel endpoint,
+an exact `u64` one-way state token with a proven `AtMost(1)` bound, and one
+result-bearing reply channel. Optimize-mode MIR now selects
+`FixedAtomicU64Pair`, passing a real mask and calling the atomic admission and
+dispatch symbols; off/analyze remain generic. The compiler only selects this
+strategy when the target supports both 8-bit and 64-bit atomics. The runtime
+uses an `AtomicU8` state protocol plus `AtomicU64` token value, a separately
+locked result FIFO, identity-based dropped-request withdrawal, and explicit
+token/reply cancellation draining. This is a join storage lowering, not lock
+recognition or a dependency on a library lock implementation. Unsupported
+targets retain the ordinary path.
+
+The rebuilt stage-1 compiler passes the off/analyze/optimize native fixture
+gates. The runtime suite passes 74 tests, including FIFO and duplicate-token
+checks, cancellation and withdrawal, and a dispatch/cancellation race. An
+untimed attribution window over 40,000 mutex operations reports:
+
+| mode | generic fallbacks | immediate replies | pending reply cells | atomic publishes | successful claims | failed claims |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| off | 40,000 | 0 | 0 | 0 | 0 | 0 |
+| analyze | 40,000 | 0 | 0 | 0 | 0 | 0 |
+| optimize | 0 | 37,201 | 2,799 | 40,001 | 40,000 | 2,795 |
+
+A serial 100-sample timing window (10,000 iterations, four workers, ten
+warmups) measured 39.840 ns/op handwritten, 398.375 joins-off, 380.738
+joins-analyze, and 187.714 joins-optimize (directional bootstrap intervals
+38.415–41.291, 376.295–420.575, 369.305–395.035, and 184.939–193.998).
+Optimize is 4.71× handwritten and 0.471× joins-off. The remaining cost is now
+primarily result-FIFO locking, reply completion/ownership, tracing and the
+trampoline; a paired/shuffled committed artifact is still required before
+using this row in the broad matrix. See
+`../join-benchmarks/docs/attribution-fixed-pair-20260920.md`.
+
 ### Private storage fusion — validated September 18
 
 The patch implements paired private-constructor/result-call selection, an empty

@@ -401,6 +401,10 @@ pub enum JoinLoweringStrategy {
     DirectFuture,
     FixedUnarySlot,
     FixedPairMatcher,
+    /// Safe atomic token storage for an exact `u64` one-way state channel.
+    /// This is deliberately narrower than `FixedPairMatcher`; no generic
+    /// payload is reinterpreted as an integer by the lowering.
+    FixedAtomicU64Pair,
 }
 
 /// Body-local occupancy transfer facts for semantic register/match events.

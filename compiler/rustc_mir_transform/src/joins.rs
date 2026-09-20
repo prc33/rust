@@ -29,7 +29,7 @@ use rustc_middle::mir::{
     StatementKind, TerminatorKind,
 };
 use rustc_middle::mir::interpret::Scalar;
-use rustc_middle::ty::{self, Ty, TyCtxt};
+use rustc_middle::ty::{self, GenericArgsRef, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use rustc_span::Spanned;
 use std::collections::{BTreeMap, BTreeSet};
@@ -1724,12 +1724,17 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     && rule.arity == 2
                     && !rule.is_async
                     && rule.channel_indices == [0, 1];
+                let exact_atomic_pair = canonical_pair
+                    && proof.channel_index == 0
+                    && is_exact_atomic_u64_pair(tcx, endpoint, rule);
                 Some(JoinStateTokenLowering {
                     endpoint_def_id: proof.endpoint_def_id,
                     rule_index: proof.rule_index,
                     channel_index: proof.channel_index,
                     proven_bound: proof.proven_bound,
-                    strategy: if canonical_pair {
+                    strategy: if exact_atomic_pair {
+                        JoinLoweringStrategy::FixedAtomicU64Pair
+                    } else if canonical_pair {
                         JoinLoweringStrategy::FixedPairMatcher
                     } else {
                         JoinLoweringStrategy::FixedUnarySlot
@@ -3281,6 +3286,34 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
     }
 }
 
+/// Select the deliberately narrow atomic-token ABI.  The state-token proof
+/// establishes boundedness and uniqueness; this additional typed check keeps
+/// the runtime representation honest: channel zero must be the one-way
+/// `u64` token, and the sole rule must complete channel one.
+fn is_exact_atomic_u64_pair<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
+    rule: &rustc_middle::middle::joins::JoinRule<'tcx>,
+) -> bool {
+    // The runtime ABI uses an AtomicU8 state machine around an AtomicU64
+    // payload.  Do not select it for targets which cannot provide both
+    // widths; those targets retain the ordinary fixed-pair mutex path.
+    if tcx.sess.target.min_atomic_width() > 8 || tcx.sess.target.max_atomic_width() < 64 {
+        return false;
+    }
+    if rule.reply_channel_indices != [1] || endpoint.channels.len() != 2 {
+        return false;
+    }
+    let Some(token) = endpoint.channels.first() else { return false };
+    let signature = tcx
+        .fn_sig(token.method_def_id.to_def_id())
+        .instantiate_identity()
+        .skip_binder();
+    signature.inputs().len() == 2
+        && signature.inputs().get(1) == Some(&tcx.types.u64)
+        && signature.output() == tcx.types.unit
+}
+
 /// Return the source rule/channel lowering which is safe to apply to one
 /// concrete generated endpoint constructor.  A lowering record is not enough
 /// by itself: the proof must also identify exactly one unscoped constructor
@@ -3318,6 +3351,7 @@ fn state_token_constructor_lowering<'tcx>(
                     lowering.strategy,
                     JoinLoweringStrategy::FixedUnarySlot
                         | JoinLoweringStrategy::FixedPairMatcher
+                        | JoinLoweringStrategy::FixedAtomicU64Pair
                 )
                 && lowering.proven_bound == JoinQueueBound::AtMost(1)
         })
@@ -3422,43 +3456,75 @@ fn state_token_constructor_lowering<'tcx>(
 /// positive proof may retarget only a `PairMatcher` call to this distinct
 /// runtime entry point; no runtime lock implementation is inspected or
 /// selected here.
-fn fixed_pair_constructor(tcx: TyCtxt<'_>, generic: DefId) -> Option<DefId> {
+fn fixed_pair_constructor<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+) -> Option<DefId> {
+    fixed_pair_constructor_named(tcx, generic, generic_args, "new_with_fixed_pair_mask")
+}
+
+fn fixed_atomic_pair_constructor<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+) -> Option<DefId> {
+    fixed_pair_constructor_named(
+        tcx,
+        generic,
+        generic_args,
+        "new_with_fixed_atomic_u64_pair_mask",
+    )
+}
+
+fn fixed_pair_constructor_named<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+    target_name: &str,
+) -> Option<DefId> {
     if tcx.crate_name(generic.krate).as_str() != "joins_runtime"
         || tcx.item_name(generic).as_str() != "new_with_channel_mask"
     {
         return None;
     }
-    let signature = tcx.fn_sig(generic).instantiate_identity().skip_binder();
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_binder();
     let ty::Adt(output, _) = signature.output().kind() else { return None };
     if tcx.crate_name(output.did().krate).as_str() != "joins_runtime"
         || tcx.item_name(output.did()).as_str() != "PairMatcher"
     {
         return None;
     }
-    let container = tcx.parent(generic);
-    tcx.associated_items(container)
-        .in_definition_order()
-        .filter(|item| item.is_fn())
-        .filter(|item| tcx.item_name(item.def_id).as_str() == "new_with_fixed_pair_mask")
-        .map(|item| item.def_id)
-        .find(|target| {
-            let target_signature = tcx.fn_sig(*target).instantiate_identity().skip_binder();
-            // The constructor is selected by compiler-owned identity and its
-            // call is type-checked again after the rewrite. Keep the full
-            // output-kind check here; generated impl shims may carry
-            // different late-bound ABI metadata even when their typed
-            // operands are the same.
-            target_signature.inputs().len() == signature.inputs().len()
-                && target_signature.output() == signature.output()
-                && matches!(target_signature.output().kind(), ty::Adt(..))
-        })
+    let mut containers = vec![tcx.parent(generic)];
+    containers.extend(tcx.inherent_impls(output.did()).iter().copied());
+    containers.into_iter().flat_map(|container| {
+        tcx.associated_items(container).in_definition_order().filter(|item| item.is_fn())
+    })
+    .filter(|item| tcx.item_name(item.def_id).as_str() == target_name)
+    .map(|item| item.def_id)
+    .find(|target| {
+        let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
+        // The constructor is selected by compiler-owned identity and its
+        // call is type-checked again after the rewrite. Keep the full
+        // output-kind check here; generated impl shims may carry
+        // different late-bound ABI metadata even when their typed
+        // operands are the same.
+        target_signature.inputs().len() == signature.inputs().len()
+            && target_signature.output() == signature.output()
+            && matches!(target_signature.output().kind(), ty::Adt(..))
+    })
 }
 
 /// Resolve one of the compiler-owned fixed-pair operation shims beside the
 /// generic runtime method. The caller has already matched the generated HIR
 /// body to the proven endpoint/channel, so this identity check does not infer
 /// anything from a user lock or from a source spelling.
-fn fixed_pair_method(tcx: TyCtxt<'_>, generic: DefId, fixed_name: &str) -> Option<DefId> {
+fn fixed_pair_method<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+    fixed_name: &str,
+) -> Option<DefId> {
     if tcx.crate_name(generic.krate).as_str() != "joins_runtime"
         || !matches!(
             tcx.item_name(generic).as_str(),
@@ -3472,22 +3538,26 @@ fn fixed_pair_method(tcx: TyCtxt<'_>, generic: DefId, fixed_name: &str) -> Optio
     {
         return None;
     }
-    let signature = tcx.fn_sig(generic).instantiate_identity().skip_binder();
-    let container = tcx.parent(generic);
-    tcx.associated_items(container)
-        .in_definition_order()
-        .filter(|item| item.is_fn())
-        .filter(|item| tcx.item_name(item.def_id).as_str() == fixed_name)
-        .map(|item| item.def_id)
-        .find(|target| {
-            let target_signature = tcx.fn_sig(*target).instantiate_identity().skip_binder();
-            // Generated fixed shims are compiler-owned ABI twins. The
-            // runtime/compiler operation identity and input arity are checked
-            // here; MIR validation checks the instantiated operands after the
-            // rewrite, while the fixed runtime entry point remains hidden.
-            target_signature.inputs().len() == signature.inputs().len()
-                && target_signature.output() == signature.output()
-        })
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_binder();
+    let receiver_def = signature.inputs().first().and_then(|ty| ty.peel_refs().ty_adt_def());
+    let mut containers = vec![tcx.parent(generic)];
+    if let Some(receiver_def) = receiver_def {
+        containers.extend(tcx.inherent_impls(receiver_def.did()).iter().copied());
+    }
+    containers.into_iter().flat_map(|container| {
+        tcx.associated_items(container).in_definition_order().filter(|item| item.is_fn())
+    })
+    .filter(|item| tcx.item_name(item.def_id).as_str() == fixed_name)
+    .map(|item| item.def_id)
+    .find(|target| {
+        let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
+        // Generated fixed shims are compiler-owned ABI twins. The
+        // runtime/compiler operation identity and input arity are checked
+        // here; MIR validation checks the instantiated operands after the
+        // rewrite, while the fixed runtime entry point remains hidden.
+        target_signature.inputs().len() == signature.inputs().len()
+            && target_signature.output() == signature.output()
+    })
 }
 
 /// Return the proven representation selected for an endpoint without
@@ -3518,6 +3588,7 @@ fn proven_endpoint_lowering<'tcx>(
                     lowering.strategy,
                     JoinLoweringStrategy::FixedUnarySlot
                         | JoinLoweringStrategy::FixedPairMatcher
+                        | JoinLoweringStrategy::FixedAtomicU64Pair
                 )
                 && lowering.proven_bound == JoinQueueBound::AtMost(1)
         })
@@ -3586,14 +3657,18 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             proven_endpoint_lowering(endpoint, summary)
         };
         let Some((inline_mask, strategy)) = lowering else { return };
-        if !is_constructor && strategy != JoinLoweringStrategy::FixedPairMatcher {
+        let pair_strategy = matches!(
+            strategy,
+            JoinLoweringStrategy::FixedPairMatcher | JoinLoweringStrategy::FixedAtomicU64Pair
+        );
+        if !is_constructor && !pair_strategy {
             return;
         }
         // The first fixed-pair runtime representation has an inline left
         // token and a FIFO right side. Do not select it for a certificate
         // whose only bounded channel is the right side; retain the generic
         // matcher until a symmetric representation is implemented.
-        if strategy == JoinLoweringStrategy::FixedPairMatcher && inline_mask != 1 {
+        if pair_strategy && inline_mask != 1 {
             return;
         }
         let typing_env = body.typing_env(tcx);
@@ -3637,8 +3712,17 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 if channels != Some(expected_channels) || mask != Some(0) {
                     return;
                 }
-                let target = if strategy == JoinLoweringStrategy::FixedPairMatcher {
-                    let Some(target) = fixed_pair_constructor(tcx, callee) else {
+                let target = if pair_strategy {
+                    let target = match strategy {
+                        JoinLoweringStrategy::FixedAtomicU64Pair => {
+                            fixed_atomic_pair_constructor(tcx, callee, generic_args)
+                        }
+                        JoinLoweringStrategy::FixedPairMatcher => {
+                            fixed_pair_constructor(tcx, callee, generic_args)
+                        }
+                        _ => None,
+                    };
+                    let Some(target) = target else {
                         // The positive proof is not permission to guess an
                         // ABI twin.  If the runtime/compiler pair contract is
                         // absent, leave this body entirely generic.
@@ -3652,7 +3736,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             }
 
-            if strategy != JoinLoweringStrategy::FixedPairMatcher {
+            if !pair_strategy {
                 continue;
             }
             let item_symbol = tcx.item_name(callee);
@@ -3676,17 +3760,34 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             }
             let fixed_name = if is_dispatch && item_name == "__join_dispatch_once_at" {
-                Some("__join_dispatch_once_fixed_at")
-            } else if let Some(index) = channel_index {
-                match (index, item_name) {
-                    (0, "submit_left_at") => Some("submit_left_fixed_at"),
-                    (0, "submit_left_oneway_at") => Some("submit_left_oneway_fixed_at"),
-                    (1, "submit_right_at") => Some("submit_right_fixed_at"),
-                    (1, "submit_right_and_dispatch_at") => {
-                        Some("submit_right_fixed_and_dispatch_at")
+                Some(match strategy {
+                    JoinLoweringStrategy::FixedAtomicU64Pair => {
+                        "__join_dispatch_once_atomic_u64_at"
                     }
-                    (1, "submit_right_oneway_at") => Some("submit_right_oneway_fixed_at"),
-                    _ => None,
+                    _ => "__join_dispatch_once_fixed_at",
+                })
+            } else if let Some(index) = channel_index {
+                if strategy == JoinLoweringStrategy::FixedAtomicU64Pair {
+                    match (index, item_name) {
+                        (0, "submit_left_oneway_at") => {
+                            Some("submit_left_atomic_u64_oneway_at")
+                        }
+                        (1, "submit_right_and_dispatch_at") => {
+                            Some("submit_right_atomic_u64_and_dispatch_at")
+                        }
+                        _ => None,
+                    }
+                } else {
+                    match (index, item_name) {
+                        (0, "submit_left_at") => Some("submit_left_fixed_at"),
+                        (0, "submit_left_oneway_at") => Some("submit_left_oneway_fixed_at"),
+                        (1, "submit_right_at") => Some("submit_right_fixed_at"),
+                        (1, "submit_right_and_dispatch_at") => {
+                            Some("submit_right_fixed_and_dispatch_at")
+                        }
+                        (1, "submit_right_oneway_at") => Some("submit_right_oneway_fixed_at"),
+                        _ => None,
+                    }
                 }
             } else {
                 None
@@ -3697,7 +3798,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 // the apply phase prevents a partial retarget.
                 return;
             };
-            let Some(target) = fixed_pair_method(tcx, callee, fixed_name) else {
+            let Some(target) = fixed_pair_method(tcx, callee, generic_args, fixed_name) else {
                 // A missing compiler/runtime fixed method is a conservative
                 // rejection, never a reason to mutate an earlier call.
                 return;

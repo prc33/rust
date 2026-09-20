@@ -82,6 +82,59 @@ atomic state-token lowering; it does not support recognizing a library lock.
 Full counters and symbol metrics are in the benchmark repository's
 `docs/attribution-fixed-pair-20260920.md`.
 
+### Atomic state-token gate completed — 2026-09-20
+
+The attribution target is now implemented and verified. Optimize-mode MIR
+selects `FixedAtomicU64Pair` only for the exact `u64` one-way-token witness;
+off/analyze remain generic and the `u32` pair remains `FixedPairMatcher`.
+The runtime uses a release/acquire `AtomicU8` state around an `AtomicU64`
+token, a separate result FIFO, identity-based withdrawal for dropped pending
+requests, and explicit cancellation draining. The atomic runtime has a
+mutex-based fallback definition for targets without both atomic widths, while
+the compiler target gate prevents selecting this ABI there. This is generated
+join storage, not lock recognition.
+
+Verification is complete for this slice: 74 runtime tests pass, including a
+dispatch/cancellation race; the rebuilt stage-1 off/analyze/optimize native
+gates pass; and the untimed attribution counters show 40,000 generic
+fallbacks in off/analyze versus 40,000 successful atomic claims in optimize.
+A serial 100-sample mutex timing window measured 39.840 ns/op handwritten,
+398.375 off, 380.738 analyze and 187.714 optimize. The result is directional
+until the same rows are rerun in a committed paired/shuffled artifact, but it
+establishes that the compiler-selected atomic path is active and halves the
+optimized runtime relative to the generic path. The remaining work is not
+another lock tweak: attribute and lower the result-side FIFO, reply-cell
+completion/ownership, tracing and trampoline before broadening the CFA proof.
+
+## Next slice after the atomic gate
+
+1. **Commit a paired attribution artifact.** Re-run the mutex row with native,
+   off, analyze and optimize in deterministic shuffled order, retain raw
+   JSONL, checksums, counters and assembly, and report paired ratios. Do not
+   expand the full matrix until this artifact confirms the atomic result.
+2. **Remove result-side generic costs by typed MIR lowering.** Extend the
+   current `FixedAtomicU64Pair` proof to a compiler-owned reply slot/completion
+   operation. Preserve typed payloads, independent waiter ownership, panic and
+   drop edges; lower the result FIFO only when CFA proves its bound. The
+   fallback must remain the ordinary matcher, and no transformation may
+   pattern-match a lock implementation.
+3. **Lower eligible reactions through ordinary coroutine MIR.** Keep the body
+   as the existing async/coroutine future, but make claim, completion and
+   cancellation explicit MIR operations before codegen. Verify optimized MIR
+   and LLVM contain no erased generic matcher calls for the selected witness;
+   verify all unsupported bodies retain them.
+4. **Add target and semantic regression coverage.** Cross-check the atomic
+   target-width fallback, direct/async single-input equivalence, dropped
+   unmatched requests, cancellation linearization, borrowed-state rejection,
+   and independent multi-reply completion. A point-in-time `cancel_pending`
+   race may linearize a concurrent emission after cancellation; document this
+   unless a permanent closed-state contract is introduced.
+5. **Only then expand the benchmark matrix and DataFusion port.** Preserve the
+   native/async/manual controls, collect serial flamegraph/perf attribution,
+   and report executor-policy differences. DataFusion changes must consume
+   first-class generated operations rather than call the hidden atomic ABI
+   directly.
+
 ### Progress on this plan (2026-09-19)
 
 - The typed-definition slice is implemented: HIR markers preserve ordered rule
