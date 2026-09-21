@@ -20,8 +20,9 @@ baseline, so values below 1.0 are lower elapsed time.
 
 The matrix was built from Rust `eefa709551299f553b585d234312feea58baabaf`
 and library `82f01e0f789ef36faaacb0a639700f73525f5087`.  The current Rust
-branch is newer (`75f49897ae2`), and the fixed atomic-pair lowering landed
-after this matrix, so the mutex follow-up is reported separately below.
+branch is newer (`ebd7c824df1`), and the fixed atomic-pair lowering plus
+bounded context CFA landed after this matrix, so the mutex follow-up remains
+reported separately below.
 
 ## Complete primitive matrix
 
