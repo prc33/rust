@@ -304,6 +304,22 @@ pub struct JoinValueFlow {
     pub statement: u32,
 }
 
+/// A closure/aggregate value and the MIR locals it captures. Keeping this
+/// separate from `JoinValueFlow` is important: an aggregate can be a tuple,
+/// a coroutine frame, or a closure, and only the latter needs the recursive
+/// capture edge used by the JCAM escape solver. The MIR visitor records the
+/// exact operands; the solver decides whether the resulting closure crosses a
+/// join boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaClosureFact {
+    pub destination: u32,
+    pub body_def_id: u32,
+    pub captures: Vec<u32>,
+    pub block: u32,
+    pub statement: u32,
+}
+
 /// The intrabody value state used by the first compiler-native CFA solver.
 ///
 /// The lattice is deliberately small. `Internal` is the optimistic seed for
@@ -573,6 +589,7 @@ pub struct JoinCfaSummary {
     pub instance_closedness_reason: JoinInstanceClosednessReason,
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
+    pub closure_facts: Vec<JoinCfaClosureFact>,
     /// Monotone intrabody solution for the locals touched by the extracted
     /// value-flow edges. This is compiler-owned CFA state, not a second MIR.
     pub local_facts: Vec<JoinLocalFact>,
@@ -626,6 +643,7 @@ pub struct JoinCfaBodyRecord {
     pub rule_index: Option<u32>,
     pub role: JoinBodyRole,
     pub value_flows: Vec<JoinValueFlow>,
+    pub closure_facts: Vec<JoinCfaClosureFact>,
     pub call_edges: Vec<JoinCallEdge>,
     /// Number of MIR call and yield events in this body.  Keeping these
     /// effects on the crate graph lets the context solver distinguish a
@@ -713,6 +731,110 @@ pub struct JoinCfaContextSummary {
     pub instances: Vec<JoinCfaContextInstance>,
     pub transitions: u32,
     pub complete: bool,
+}
+
+/// The two control-flow states used by the JCAM abstract interpreter.
+///
+/// Rust still has ordinary function calls in addition to join emissions, so
+/// this state is carried by the compiler's value facts rather than being
+/// encoded in a generated runtime helper.  `Foreground` is the caller's
+/// currently demanded path; `Background` is a value which may be retained by
+/// a channel or closure and reached again by a later emission.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaFlowState {
+    Background,
+    Foreground,
+}
+
+/// The side of a wildcard in the JCAM abstract value domain.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaSide {
+    Inner,
+    Outer,
+    Primitive,
+}
+
+/// A compiler-owned abstract value.  Unlike the old `JoinValueState` lattice,
+/// this records *what* flows, not only whether a MIR local looks opaque.
+/// `Channel` and `Closure` preserve the identities needed by `Emit` to decide
+/// whether a value stays inside one join group or crosses its boundary.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaValue {
+    Wildcard(JoinCfaSide),
+    Primitive,
+    Channel {
+        endpoint_def_id: u32,
+        channel_index: Option<u32>,
+    },
+    Closure {
+        body_def_id: u32,
+        /// Values captured by this closure aggregate, in the typed MIR
+        /// capture-field order. Keeping the actual values on the abstract
+        /// closure preserves the substitution inputs; the solver uses them
+        /// when entering the nested body at an Emit site.
+        captures: Box<[u64]>,
+    },
+}
+
+/// One solved abstract value at a semantic variable.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaValueFact {
+    /// Locals use `(body_def_id << 32) | local`; the high-bit tagged values
+    /// used for synthetic channel variables are documented in rustc_mir.
+    pub variable: u64,
+    pub state: JoinCfaFlowState,
+    pub value: JoinCfaValue,
+}
+
+/// A JCAM-style constraint extracted from typed MIR.  Constraints remain
+/// source-positioned and typed until the fixed-point solver has consumed
+/// them, so later lowering does not need to reverse engineer queue helpers.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaConstraintKind {
+    /// `destination >= state(source)`; `None` preserves the source state.
+    Succ {
+        destination: u64,
+        state: Option<JoinCfaFlowState>,
+        source: u64,
+    },
+    /// Seed a variable with an abstract value.
+    In {
+        destination: u64,
+        state: JoinCfaFlowState,
+        value: JoinCfaValue,
+    },
+    /// Emit the input values to a channel/continuation variable.  The bounded
+    /// call history includes ordinary calls as well as join construction and
+    /// registration, matching the Rust interpretation of JCAM's `k` history.
+    Emit {
+        inputs: Box<[u64]>,
+        target: u64,
+        history: Box<[JoinCfaContextFrame]>,
+    },
+    /// Construct a closure-like value and retain explicit capture edges.
+    Closure {
+        destination: u64,
+        body_def_id: u32,
+        captures: Box<[u64]>,
+    },
+    /// A typed value crossed an external boundary.
+    Escape {
+        source: u64,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaConstraint {
+    pub body_def_id: u32,
+    pub block: u32,
+    pub statement: u32,
+    pub kind: JoinCfaConstraintKind,
 }
 
 /// Result of the first compiler-owned instance/context propagation slice.
@@ -845,6 +967,13 @@ pub struct JoinCfaCrateSummary {
     pub state_tokens: Vec<JoinStateTokenProof>,
     pub state_token_lowerings: Vec<JoinStateTokenLowering>,
     pub context: JoinCfaContextSummary,
+    /// The fixed-point JCAM value constraints and their solved facts.  These
+    /// are deliberately separate from the effect/context summary above: a
+    /// context graph without abstract values is not a complete CFA.
+    pub cfa_constraints: Vec<JoinCfaConstraint>,
+    pub cfa_solution: Vec<JoinCfaValueFact>,
+    pub cfa_steps: u32,
+    pub cfa_complete: bool,
     pub solver_steps: u32,
     pub complete: bool,
 }

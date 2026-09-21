@@ -16,9 +16,11 @@ use rustc_hir::def_id::{DefId, LOCAL_CRATE, LocalDefId};
 use rustc_index::Idx;
 use rustc_middle::bug;
 use rustc_middle::middle::joins::{
-    JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
-    JoinCfaContextFrame, JoinCfaContextFrameKind, JoinCfaContextInstance,
-    JoinCfaContextSummary, JoinCfaEffects,
+    JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaConstraint,
+    JoinCfaClosureFact, JoinCfaConstraintKind, JoinCfaCrateSummary, JoinCfaContextFrame,
+    JoinCfaContextFrameKind,
+    JoinCfaContextInstance, JoinCfaContextSummary, JoinCfaEffects, JoinCfaFlowState, JoinCfaSide,
+    JoinCfaValue, JoinCfaValueFact,
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary, JoinFusionFact,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinChannelOccupancyFact,
@@ -29,8 +31,8 @@ use rustc_middle::middle::joins::{
 };
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    self, Body, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE, Rvalue, Statement,
-    StatementKind, TerminatorKind,
+    self, AggregateKind, Body, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE, Rvalue,
+    Statement, StatementKind, TerminatorKind,
 };
 use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::ty::{self, GenericArgsRef, Ty, TyCtxt};
@@ -277,6 +279,7 @@ struct JoinBodyFacts {
     queue_bound: JoinQueueBound,
     operations: Vec<JoinMirOperation>,
     value_flows: Vec<JoinValueFlow>,
+    closure_facts: Vec<(u32, Vec<u32>, u32, u32, u32)>,
     call_edges: Vec<JoinCallEdge>,
     escapes: FxIndexSet<u32>,
     endpoint_escapes: FxIndexSet<JoinEndpointEscape>,
@@ -408,6 +411,17 @@ impl JoinBodyFacts {
             &self.call_edges,
         );
         let endpoint_escapes = self.endpoint_escapes.iter().copied().collect::<Vec<_>>();
+        let closure_facts = self
+            .closure_facts
+            .into_iter()
+            .map(|(destination, captures, closure_body_def_id, block, statement)| JoinCfaClosureFact {
+                destination,
+                body_def_id: closure_body_def_id,
+                captures,
+                block,
+                statement,
+            })
+            .collect::<Vec<_>>();
         let (local_facts, solver_steps, solver_complete, locally_closed) = solve_local_facts(
             local_count,
             &self.value_flows,
@@ -468,6 +482,7 @@ impl JoinBodyFacts {
             instance_closedness_reason,
             operations: self.operations,
             value_flows: self.value_flows,
+            closure_facts,
             local_facts,
             solver_steps,
             solver_complete,
@@ -1701,6 +1716,593 @@ fn solve_context_cfa(
     }
 }
 
+// The high bit distinguishes synthetic channel variables from `(body, local)`
+// variables. Body and local indices are both 32-bit in the compiler's local
+// crate representation, so the remaining bits are sufficient for a channel
+// coordinate without allocating an arena or exposing a runtime pointer.
+const JOIN_CFA_CHANNEL_TAG: u64 = 1 << 63;
+
+fn join_cfa_local_variable(body_def_id: u32, local: u32) -> u64 {
+    ((body_def_id as u64) << 32) | local as u64
+}
+
+fn join_cfa_channel_variable(endpoint_def_id: u32, channel_index: Option<u32>) -> u64 {
+    JOIN_CFA_CHANNEL_TAG
+        | ((endpoint_def_id as u64) << 31)
+        | channel_index.unwrap_or(u32::MAX) as u64
+}
+
+fn join_cfa_history(
+    record: &JoinCfaBodyRecord,
+    edge: &JoinCallEdge,
+    depth: u32,
+) -> Box<[JoinCfaContextFrame]> {
+    if depth == 0 {
+        return Vec::new().into_boxed_slice();
+    }
+    let Some(callee_body_def_id) = edge.callee else {
+        return Vec::new().into_boxed_slice();
+    };
+    let kind = match edge.target {
+        JoinCallTargetKind::Constructor => JoinCfaContextFrameKind::JoinCreate,
+        JoinCallTargetKind::Channel
+        | JoinCallTargetKind::Dispatch
+        | JoinCallTargetKind::ReactionBody => JoinCfaContextFrameKind::JoinRegister,
+        JoinCallTargetKind::OrdinaryLocal | JoinCallTargetKind::Unknown => {
+            JoinCfaContextFrameKind::RustCall
+        }
+    };
+    vec![JoinCfaContextFrame {
+        kind,
+        caller_body_def_id: record.body_def_id,
+        block: edge.block,
+        statement: edge.statement,
+        callee_body_def_id,
+        group_def_id: edge.group_def_id,
+        channel_index: edge.channel_index,
+        rule_index: edge.rule_index,
+    }]
+    .into_boxed_slice()
+}
+
+/// Extract the JCAM-style constraint graph from the typed MIR graph.
+///
+/// This is intentionally separate from `solve_context_cfa`: the latter
+/// computes bounded call-string effects, while this graph carries abstract
+/// channel/closure values and `Emit` edges. Keeping both views means the `k`
+/// history is not lost when an ordinary Rust helper sits between two join
+/// operations. In particular, a join registration is a semantic emission in
+/// the graph even though its executable MIR is an ordinary call terminator.
+#[allow(rustc::potential_query_instability)]
+fn build_join_cfa_constraints(
+    bodies: &[JoinCfaBodyRecord],
+    context_depth: u32,
+) -> Vec<JoinCfaConstraint> {
+    let mut constraints = Vec::new();
+    let mut seeded_channels = FxHashSet::default();
+
+    for record in bodies {
+        let variable = |local| join_cfa_local_variable(record.body_def_id, local);
+        let closure_destinations = record
+            .closure_facts
+            .iter()
+            .map(|closure| closure.destination)
+            .collect::<FxHashSet<_>>();
+        for flow in &record.value_flows {
+            let destination = variable(flow.destination);
+            match (flow.kind, flow.source) {
+                (
+                    JoinValueFlowKind::Copy | JoinValueFlowKind::Move | JoinValueFlowKind::Borrow,
+                    Some(source),
+                ) => constraints.push(JoinCfaConstraint {
+                    body_def_id: record.body_def_id,
+                    block: flow.block,
+                    statement: flow.statement,
+                    kind: JoinCfaConstraintKind::Succ {
+                        destination,
+                        state: None,
+                        source: variable(source),
+                    },
+                }),
+                (JoinValueFlowKind::Aggregate, _) => {
+                    // A typed closure aggregate is represented by the
+                    // separate `Closure` constraint below.  Seeding it with
+                    // `PRIM` as well would merge a callable value with an
+                    // unrelated primitive and make every Emit look escaped;
+                    // only non-callable aggregates receive the primitive
+                    // approximation.
+                    if !closure_destinations.contains(&flow.destination) {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: flow.block,
+                            statement: flow.statement,
+                            kind: JoinCfaConstraintKind::In {
+                                destination,
+                                state: JoinCfaFlowState::Foreground,
+                                value: JoinCfaValue::Wildcard(JoinCfaSide::Primitive),
+                            },
+                        });
+                    }
+                }
+                (JoinValueFlowKind::Unknown, _) | (_, None) => {
+                    constraints.push(JoinCfaConstraint {
+                        body_def_id: record.body_def_id,
+                        block: flow.block,
+                        statement: flow.statement,
+                        kind: JoinCfaConstraintKind::In {
+                            destination,
+                            state: JoinCfaFlowState::Foreground,
+                            value: JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+                        },
+                    });
+                }
+            }
+        }
+
+        for closure in &record.closure_facts {
+            constraints.push(JoinCfaConstraint {
+                body_def_id: record.body_def_id,
+                block: closure.block,
+                statement: closure.statement,
+                kind: JoinCfaConstraintKind::Closure {
+                    destination: variable(closure.destination),
+                    body_def_id: closure.body_def_id,
+                    captures: closure
+                        .captures
+                        .iter()
+                        .copied()
+                        .map(variable)
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice(),
+                },
+            });
+        }
+
+        for escape in &record.endpoint_escapes {
+            constraints.push(JoinCfaConstraint {
+                body_def_id: record.body_def_id,
+                block: u32::MAX,
+                statement: u32::MAX,
+                kind: JoinCfaConstraintKind::Escape { source: variable(escape.local) },
+            });
+        }
+
+        for edge in &record.call_edges {
+            let destination = edge.destination_local.map(variable);
+            match edge.target {
+                JoinCallTargetKind::Constructor => {
+                    if let (Some(destination), Some(endpoint)) = (destination, edge.endpoint_def_id) {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::In {
+                                destination,
+                                state: JoinCfaFlowState::Foreground,
+                                value: JoinCfaValue::Channel {
+                                    endpoint_def_id: endpoint,
+                                    channel_index: None,
+                                },
+                            },
+                        });
+                    }
+                }
+                JoinCallTargetKind::Channel
+                | JoinCallTargetKind::Dispatch
+                | JoinCallTargetKind::ReactionBody => {
+                    let Some(endpoint) = edge.endpoint_def_id else { continue };
+                    let target = join_cfa_channel_variable(endpoint, edge.channel_index);
+                    if seeded_channels.insert(target) {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::In {
+                                destination: target,
+                                state: JoinCfaFlowState::Foreground,
+                                value: JoinCfaValue::Channel {
+                                    endpoint_def_id: endpoint,
+                                    channel_index: edge.channel_index,
+                                },
+                            },
+                        });
+                    }
+                    let start = usize::from(edge.receiver_local.is_some());
+                    let inputs = edge
+                        .argument_locals
+                        .iter()
+                        .skip(start)
+                        .flatten()
+                        .map(|local| variable(*local))
+                        .collect::<Vec<_>>()
+                        .into_boxed_slice();
+                    constraints.push(JoinCfaConstraint {
+                        body_def_id: record.body_def_id,
+                        block: edge.block,
+                        statement: edge.statement,
+                        kind: JoinCfaConstraintKind::Emit {
+                            inputs,
+                            target,
+                            history: join_cfa_history(record, edge, context_depth),
+                        },
+                    });
+                    if let Some(destination) = destination {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::In {
+                                destination,
+                                state: JoinCfaFlowState::Foreground,
+                                value: JoinCfaValue::Wildcard(JoinCfaSide::Primitive),
+                            },
+                        });
+                    }
+                }
+                JoinCallTargetKind::OrdinaryLocal => {
+                    let Some(callee) = edge.callee else { continue };
+                    for (position, source) in edge.argument_locals.iter().enumerate() {
+                        let Some(source) = source else { continue };
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::Succ {
+                                destination: join_cfa_local_variable(callee, position as u32 + 1),
+                                state: None,
+                                source: variable(*source),
+                            },
+                        });
+                    }
+                    if let Some(destination) = destination {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::Succ {
+                                destination,
+                                state: None,
+                                source: join_cfa_local_variable(callee, 0),
+                            },
+                        });
+                    }
+                }
+                JoinCallTargetKind::Unknown => {
+                    for source in edge.argument_locals.iter().flatten() {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::Escape { source: variable(*source) },
+                        });
+                    }
+                    if let Some(destination) = destination {
+                        constraints.push(JoinCfaConstraint {
+                            body_def_id: record.body_def_id,
+                            block: edge.block,
+                            statement: edge.statement,
+                            kind: JoinCfaConstraintKind::In {
+                                destination,
+                                state: JoinCfaFlowState::Foreground,
+                                value: JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+                            },
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    // A channel variable is the JCAM `gamma` value for the corresponding
+    // endpoint.  In the expanded Rust frontend the matcher is represented by
+    // a shared dispatch body rather than by a source-level closure literal at
+    // every registration site.  Seed that typed dispatch closure here so an
+    // Emit can instantiate its body exactly as JCAM instantiates a channel's
+    // transition.  The old solver seeded only a synthetic `Channel` marker,
+    // which carried no executable closure and therefore could never reach the
+    // reaction constraints.
+    let mut channels_by_endpoint = FxHashMap::<u32, FxHashSet<Option<u32>>>::default();
+    for record in bodies {
+        for edge in &record.call_edges {
+            if matches!(edge.target, JoinCallTargetKind::Channel)
+                && let Some(endpoint) = edge.endpoint_def_id
+            {
+                channels_by_endpoint
+                    .entry(endpoint)
+                    .or_default()
+                    .insert(edge.channel_index);
+            }
+        }
+    }
+    for record in bodies {
+        let Some(endpoint) = record.endpoint_def_id else { continue };
+        if record.role != JoinBodyRole::Dispatch {
+            continue;
+        }
+        let Some(channels) = channels_by_endpoint.get(&endpoint) else { continue };
+        for channel_index in channels {
+            constraints.push(JoinCfaConstraint {
+                body_def_id: record.body_def_id,
+                block: u32::MAX,
+                statement: u32::MAX,
+                kind: JoinCfaConstraintKind::In {
+                    destination: join_cfa_channel_variable(endpoint, *channel_index),
+                    state: JoinCfaFlowState::Foreground,
+                    value: JoinCfaValue::Closure {
+                        body_def_id: record.body_def_id,
+                        captures: Box::new([]),
+                    },
+                },
+            });
+        }
+    }
+    constraints
+}
+
+fn join_cfa_add_fact(
+    facts: &mut FxHashMap<u64, FxHashSet<(JoinCfaFlowState, JoinCfaValue)>>,
+    work: &mut VecDeque<u64>,
+    variable: u64,
+    state: JoinCfaFlowState,
+    value: JoinCfaValue,
+) -> bool {
+    let values = facts.entry(variable).or_default();
+    if values.insert((state, value)) {
+        work.push_back(variable);
+        true
+    } else {
+        false
+    }
+}
+
+#[allow(rustc::potential_query_instability)]
+fn join_cfa_escape_variable(
+    facts: &mut FxHashMap<u64, FxHashSet<(JoinCfaFlowState, JoinCfaValue)>>,
+    work: &mut VecDeque<u64>,
+    variable: u64,
+) -> bool {
+    let mut changed = join_cfa_add_fact(
+        facts,
+        work,
+        variable,
+        JoinCfaFlowState::Foreground,
+        JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+    );
+    if let Some(values) = facts.get(&variable).cloned() {
+        for (state, value) in values {
+            if matches!(value, JoinCfaValue::Primitive | JoinCfaValue::Wildcard(JoinCfaSide::Primitive)) {
+                continue;
+            }
+            if let JoinCfaValue::Closure { captures, .. } = &value {
+                for capture in captures.iter().copied() {
+                    // Do not recurse here: recursive closures are legal and
+                    // the work queue is the termination mechanism for this
+                    // monotone escape propagation.
+                    changed |= join_cfa_add_fact(
+                        facts,
+                        work,
+                        capture,
+                        JoinCfaFlowState::Foreground,
+                        JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+                    );
+                }
+            }
+            changed |= join_cfa_add_fact(
+                facts,
+                work,
+                variable,
+                state,
+                JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+            );
+        }
+    }
+    changed
+}
+
+/// Solve the extracted graph to a monotone fixed point.
+///
+/// `In`, `Succ`, and `Emit` are processed until no abstract fact changes. A
+/// hard work budget is only a termination guard; exhausting it marks the
+/// result incomplete and callers must retain generic storage. The history
+/// attached to each `Emit` is the semantic Rust call string and includes
+/// `JoinCreate`/`JoinRegister` frames, not just ordinary Rust calls.
+#[allow(rustc::potential_query_instability)]
+fn solve_join_cfa(
+    constraints: &[JoinCfaConstraint],
+    budget: u32,
+) -> (Vec<JoinCfaValueFact>, u32, bool) {
+    let mut facts = FxHashMap::<u64, FxHashSet<(JoinCfaFlowState, JoinCfaValue)>>::default();
+    let mut closure_captures = FxHashMap::<u64, Vec<u64>>::default();
+    let mut instantiated_bodies = FxHashSet::<u32>::default();
+    let mut work = VecDeque::new();
+    for constraint in constraints {
+        match &constraint.kind {
+            JoinCfaConstraintKind::In { destination, state, value } => {
+                join_cfa_add_fact(&mut facts, &mut work, *destination, *state, value.clone());
+            }
+            JoinCfaConstraintKind::Closure { destination, body_def_id, captures } => {
+                join_cfa_add_fact(
+                    &mut facts,
+                    &mut work,
+                    *destination,
+                    JoinCfaFlowState::Foreground,
+                    JoinCfaValue::Closure {
+                        body_def_id: *body_def_id,
+                        captures: captures.clone(),
+                    },
+                );
+                closure_captures
+                    .entry(*destination)
+                    .or_default()
+                    .extend(captures.iter().copied());
+            }
+            _ => {}
+        }
+    }
+
+    let mut steps = 0u32;
+    let mut complete = budget != 0;
+    while let Some(changed_variable) = work.pop_front() {
+        if steps >= budget {
+            complete = false;
+            break;
+        }
+        steps = steps.saturating_add(1);
+        let variable_escaped = facts.get(&changed_variable).is_some_and(|values| {
+            values
+                .iter()
+                .any(|(_, value)| matches!(value, JoinCfaValue::Wildcard(JoinCfaSide::Outer)))
+        });
+        if variable_escaped {
+            if let Some(captures) = closure_captures.get(&changed_variable).cloned() {
+                for capture in captures {
+                    join_cfa_escape_variable(&mut facts, &mut work, capture);
+                }
+            }
+        }
+        for constraint in constraints {
+            match &constraint.kind {
+                JoinCfaConstraintKind::Succ { destination, state, source }
+                    if *source == changed_variable =>
+                {
+                    if let Some(source_values) = facts.get(source).cloned() {
+                        for (source_state, value) in source_values {
+                            join_cfa_add_fact(
+                                &mut facts,
+                                &mut work,
+                                *destination,
+                                state.unwrap_or(source_state),
+                                value,
+                            );
+                        }
+                    }
+                }
+                JoinCfaConstraintKind::Emit { inputs, target, .. }
+                    if *target == changed_variable
+                        || inputs.iter().any(|input| *input == changed_variable) =>
+                {
+                    let target_endpoints = facts
+                        .get(target)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(_, value)| match value {
+                            JoinCfaValue::Channel { endpoint_def_id, .. } => Some(*endpoint_def_id),
+                            _ => None,
+                        })
+                        .collect::<FxHashSet<_>>();
+                    // A foreground closure in the target is the executable
+                    // JCAM transition.  Instantiate its body once and bind
+                    // the emitted payloads to the first body locals (the
+                    // generated dispatch ABI passes the receiver separately,
+                    // so local 1 is the first source argument).  This is the
+                    // missing edge in the old implementation: it recorded
+                    // that a channel value existed but never entered the
+                    // reaction constraints.
+                    let target_closures = facts
+                        .get(target)
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|(_, value)| match value {
+                            JoinCfaValue::Closure { body_def_id, captures } => {
+                                Some((*body_def_id, captures.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    for (body_def_id, captures) in target_closures {
+                        if instantiated_bodies.insert(body_def_id) {
+                            // Apply the closure's captured environment to its
+                            // environment local.  MIR represents upvar reads
+                            // through the closure receiver; joining captures
+                            // at local 1 is conservative and preserves the
+                            // escape direction without inventing aliases.
+                            let environment = join_cfa_local_variable(body_def_id, 1);
+                            for capture in captures.iter().copied() {
+                                if let Some(capture_values) = facts.get(&capture).cloned() {
+                                    for (state, value) in capture_values {
+                                        join_cfa_add_fact(
+                                            &mut facts,
+                                            &mut work,
+                                            environment,
+                                            state,
+                                            value,
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                        for (position, input) in inputs.iter().copied().enumerate() {
+                            let Some(input_values) = facts.get(&input).cloned() else { continue };
+                            let destination =
+                                join_cfa_local_variable(body_def_id, position as u32 + 1);
+                            for (state, value) in input_values {
+                                join_cfa_add_fact(
+                                    &mut facts,
+                                    &mut work,
+                                    destination,
+                                    state,
+                                    value,
+                                );
+                            }
+                        }
+                    }
+                    for input in inputs.iter().copied() {
+                        let Some(input_values) = facts.get(&input).cloned() else { continue };
+                        for (_, value) in input_values {
+                            if matches!(value, JoinCfaValue::Primitive | JoinCfaValue::Wildcard(JoinCfaSide::Primitive)) {
+                                continue;
+                            }
+                            let internal = match value {
+                                JoinCfaValue::Channel { endpoint_def_id, .. } => {
+                                    target_endpoints.contains(&endpoint_def_id)
+                                }
+                                JoinCfaValue::Closure { .. } => false,
+                                JoinCfaValue::Wildcard(JoinCfaSide::Inner) => {
+                                    !target_endpoints.is_empty()
+                                }
+                                JoinCfaValue::Wildcard(JoinCfaSide::Outer) => false,
+                                JoinCfaValue::Wildcard(JoinCfaSide::Primitive)
+                                | JoinCfaValue::Primitive => true,
+                            };
+                            if internal {
+                                join_cfa_add_fact(
+                                    &mut facts,
+                                    &mut work,
+                                    *target,
+                                    JoinCfaFlowState::Background,
+                                    value,
+                                );
+                            } else {
+                                join_cfa_escape_variable(&mut facts, &mut work, input);
+                            }
+                        }
+                    }
+                }
+                JoinCfaConstraintKind::Escape { source } if *source == changed_variable => {
+                    join_cfa_escape_variable(&mut facts, &mut work, *source);
+                }
+                _ => {}
+            }
+        }
+    }
+    if !work.is_empty() {
+        complete = false;
+    }
+
+    let mut solution = facts
+        .into_iter()
+        .flat_map(|(variable, values)| {
+            values.into_iter().map(move |(state, value)| JoinCfaValueFact {
+                variable,
+                state,
+                value,
+            })
+        })
+        .collect::<Vec<_>>();
+    solution.sort();
+    (solution, steps, complete)
+}
+
 /// Build the first crate-level instance graph from the summaries attached to
 /// pre-cleanup MIR bodies. This deliberately starts with facts that can be
 /// proved without guessing through an unknown call: a constructor result is
@@ -1754,6 +2356,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 rule_index: summary.rule_index,
                 role: summary.role,
                 value_flows: summary.value_flows.clone(),
+                closure_facts: summary.closure_facts.clone(),
                 call_edges: summary.call_edges.clone(),
                 calls: summary.calls,
                 yields: summary.yields,
@@ -1785,6 +2388,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
             queue_bound: JoinQueueBound::Unknown,
             operations: Vec::new(),
             value_flows: Vec::new(),
+            closure_facts: Vec::new(),
             call_edges: Vec::new(),
             escapes: FxIndexSet::default(),
             endpoint_escapes: FxIndexSet::default(),
@@ -1828,6 +2432,17 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 rule_index: None,
                 role: JoinBodyRole::Ordinary,
                 value_flows: facts.value_flows,
+                closure_facts: facts
+                    .closure_facts
+                    .into_iter()
+                    .map(|(destination, captures, closure_body_def_id, block, statement)| JoinCfaClosureFact {
+                        destination,
+                        body_def_id: closure_body_def_id,
+                        captures,
+                        block,
+                        statement,
+                    })
+                    .collect(),
                 call_edges: facts.call_edges,
                 calls: facts.calls,
                 yields: facts.yields,
@@ -2014,7 +2629,9 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                             updates.push((record.body_def_id, destination, returned));
                         }
                     }
-                } else if matches!(edge.target, JoinCallTargetKind::OrdinaryLocal | JoinCallTargetKind::Unknown) {
+                } else if record.role == JoinBodyRole::Ordinary
+                    && matches!(edge.target, JoinCallTargetKind::OrdinaryLocal | JoinCallTargetKind::Unknown)
+                {
                     for source in edge.argument_locals.iter().flatten() {
                         let alias = caller_aliases.get(source).copied().unwrap_or(InstanceAlias::None);
                         if !matches!(alias, InstanceAlias::None) {
@@ -2045,7 +2662,11 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     // A compiler-known use is attached to exactly one constructor origin
     // only when the receiver alias is unique and its endpoint matches the
     // call edge. Unknown/multiple aliases invalidate the crate proof but
-    // never manufacture a positive fact.
+    // never manufacture a positive fact.  Generated constructors, channel
+    // shims, dispatch adapters and reaction wrappers are part of the
+    // compiler's implementation of the same endpoint; their ABI temporaries
+    // must not be mistaken for a user-level handle escape.  Only ordinary
+    // source bodies are roots for this whole-instance ownership proof.
     for record in &bodies {
         let Some(aliases) = aliases_by_body.get(&record.body_def_id) else { continue };
         for edge in &record.call_edges {
@@ -2053,7 +2674,9 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 continue;
             }
             let Some(receiver_local) = edge.receiver_local else {
-                complete = false;
+                if record.role == JoinBodyRole::Ordinary {
+                    complete = false;
+                }
                 continue;
             };
             let alias = aliases.get(&receiver_local).copied().unwrap_or(InstanceAlias::None);
@@ -2102,33 +2725,41 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 }
             }
         }
-        if record.unknown_effects != 0 {
-            complete = false;
-            for instance in instances.iter_mut().filter(|instance| {
-                instance.body_def_id == record.body_def_id
-            }) {
-                instance.status = JoinCfaInstanceStatus::Escaped;
-            }
-        }
-        for escape in &record.endpoint_escapes {
-            complete = false;
-            match aliases.get(&escape.local).copied().unwrap_or(InstanceAlias::None) {
-                InstanceAlias::Unique {
-                    endpoint_def_id,
-                    body_def_id,
-                    block,
-                    statement,
-                } => {
-                    if let Some(instance) = instances.iter_mut().find(|instance| {
-                        instance.body_def_id == body_def_id
-                            && instance.endpoint_def_id == endpoint_def_id
-                            && instance.allocation_block == block
-                            && instance.allocation_statement == statement
-                    }) {
-                        instance.status = JoinCfaInstanceStatus::Escaped;
+        // Primitive-only opaque MIR operations (array stores, aggregate
+        // adapters, application arithmetic, and similar details) do not
+        // expose a join handle.  Dovetail's closedness analysis likewise
+        // widens a channel value only when that value, or a closure capturing
+        // it, crosses the boundary.  Keep the generic `unknown_effects`
+        // diagnostic in the body record, but do not reject an otherwise
+        // unique endpoint instance merely because its payload computation is
+        // opaque.
+        //
+        // The typed endpoint-escape list is still a hard boundary for source
+        // bodies. Generated endpoint plumbing is intentionally transparent:
+        // its closures must capture the endpoint to implement recursive
+        // re-emission, which is an internal JCAM closure edge rather than an
+        // escape from the concrete instance.
+        if record.role == JoinBodyRole::Ordinary {
+            for escape in &record.endpoint_escapes {
+                complete = false;
+                match aliases.get(&escape.local).copied().unwrap_or(InstanceAlias::None) {
+                    InstanceAlias::Unique {
+                        endpoint_def_id,
+                        body_def_id,
+                        block,
+                        statement,
+                    } => {
+                        if let Some(instance) = instances.iter_mut().find(|instance| {
+                            instance.body_def_id == body_def_id
+                                && instance.endpoint_def_id == endpoint_def_id
+                                && instance.allocation_block == block
+                                && instance.allocation_statement == statement
+                        }) {
+                            instance.status = JoinCfaInstanceStatus::Escaped;
+                        }
                     }
+                    _ => {}
                 }
-                _ => {}
             }
         }
     }
@@ -2164,6 +2795,15 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         &bodies,
         tcx.sess.opts.unstable_opts.join_cfa_depth,
         tcx.sess.opts.unstable_opts.join_cfa_budget,
+    );
+    // The context graph above is only the history/effect half of CFA. Build
+    // and solve the typed JCAM value constraints independently, then expose
+    // both certificates in the crate summary. A context fixed point without
+    // this value solution is not sufficient to claim closedness.
+    let cfa_constraints = build_join_cfa_constraints(&bodies, context.context_depth);
+    let (cfa_solution, cfa_steps, cfa_complete) = solve_join_cfa(
+        &cfa_constraints,
+        tcx.sess.opts.unstable_opts.join_cfa_budget.min(u32::MAX as usize) as u32,
     );
     let state_tokens = prove_state_tokens(tcx, &bodies, &instances, &context);
     // Do not let analysis mode change runtime representation.  Optimize mode
@@ -2218,8 +2858,12 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         state_tokens,
         state_token_lowerings,
         context,
+        cfa_constraints,
+        cfa_solution,
+        cfa_steps,
+        cfa_complete,
         solver_steps,
-        complete,
+        complete: complete && cfa_complete,
     };
     dump_crate_summary(tcx, &summary, &aliases_by_body);
     summary
@@ -2718,6 +3362,27 @@ fn dump_crate_summary(
                 })
                 .collect::<Vec<_>>()
                 .join(",");
+            let closure_facts = body
+                .closure_facts
+                .iter()
+                .map(|closure| {
+                    let captures = closure
+                        .captures
+                        .iter()
+                        .map(u32::to_string)
+                        .collect::<Vec<_>>()
+                        .join(",");
+                    format!(
+                        "{{\"destination\":{},\"body\":{},\"captures\":[{}],\"block\":{},\"statement\":{}}}",
+                        closure.destination,
+                        closure.body_def_id,
+                        captures,
+                        closure.block,
+                        closure.statement,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             let mut aliases = aliases_by_body
                 .get(&body.body_def_id)
                 .map(|aliases| aliases.iter().collect::<Vec<_>>())
@@ -2746,7 +3411,7 @@ fn dump_crate_summary(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"closures\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -2758,6 +3423,7 @@ fn dump_crate_summary(
                     .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                 body.role,
                 value_flows,
+                closure_facts,
                 aliases,
                 cyclic_blocks,
                 body.calls,
@@ -2962,8 +3628,30 @@ fn dump_crate_summary(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let cfa_constraints = summary
+        .cfa_constraints
+        .iter()
+        .map(|constraint| {
+            format!(
+                "{{\"body\":{},\"block\":{},\"statement\":{},\"kind\":\"{:?}\"}}",
+                constraint.body_def_id, constraint.block, constraint.statement, constraint.kind
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let cfa_solution = summary
+        .cfa_solution
+        .iter()
+        .map(|fact| {
+            format!(
+                "{{\"variable\":{},\"state\":\"{:?}\",\"value\":\"{:?}\"}}",
+                fact.variable, fact.state, fact.value
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"context\":{{\"depth\":{},\"transitions\":{},\"complete\":{},\"instances\":[{}]}},\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"context\":{{\"depth\":{},\"transitions\":{},\"complete\":{},\"instances\":[{}]}},\"definitions\":[{}],\"cfa_constraints\":[{}],\"cfa_solution\":[{}],\"cfa_steps\":{},\"cfa_complete\":{},\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
@@ -2974,6 +3662,10 @@ fn dump_crate_summary(
         summary.context.complete,
         context_instances,
         definitions,
+        cfa_constraints,
+        cfa_solution,
+        summary.cfa_steps,
+        summary.cfa_complete,
         summary.solver_steps,
         summary.complete,
     );
@@ -3370,14 +4062,52 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             Rvalue::Ref(_, _, source) | Rvalue::Reborrow(_, _, source) => {
                 (JoinValueFlowKind::Borrow, Some(source.local))
             }
-            Rvalue::Aggregate(_, operands) => {
-                // A closure/aggregate may capture an endpoint handle without
+            Rvalue::Aggregate(kind, operands) => {
+                // A closure/coroutine may capture an endpoint handle without
                 // moving the aggregate's final value directly at the call
-                // site. Record those typed captures before the ordinary
-                // value-flow summary widens the aggregate.
-                for operand in operands {
-                    if let Operand::Move(source) | Operand::Copy(source) = operand {
-                        self.record_moved_place(source, JoinEndpointEscapeKind::AggregateCapture);
+                // site. Record the *actual nested body owner* from the typed
+                // aggregate.  The previous implementation used the enclosing
+                // body id here, which made every aggregate look like a
+                // recursive closure of its creator and prevented CFA from
+                // instantiating the right body.  Ordinary tuples/ADTs are not
+                // callable closures and must not enter the closure domain.
+                let closure_body_def_id = match kind.as_ref() {
+                    AggregateKind::Closure(def_id, _)
+                    | AggregateKind::Coroutine(def_id, _)
+                    | AggregateKind::CoroutineClosure(def_id, _) => {
+                        def_id.as_local().map(|id| id.index() as u32)
+                    }
+                    _ => None,
+                };
+                let captures = operands
+                    .iter()
+                    .filter_map(|operand| match operand {
+                        Operand::Move(source) | Operand::Copy(source) => {
+                            Some(source.local.index() as u32)
+                        }
+                        _ => None,
+                    })
+                    .collect::<Vec<_>>();
+                if let Some(closure_body_def_id) = closure_body_def_id {
+                    self.closure_facts.push((
+                        destination.index() as u32,
+                        captures,
+                        closure_body_def_id,
+                        location.block.index() as u32,
+                        location.statement_index as u32,
+                    ));
+                }
+                // Constructing a closure is not itself an external escape.
+                // The closure may remain inside the join group; the typed
+                // `Closure` fact lets CFA mark its captures only if the
+                // closure later crosses a return/unknown-call boundary.  A
+                // previous eager `AggregateCapture` escape made all
+                // generated matcher adapters look externally owned.
+                if closure_body_def_id.is_none() {
+                    for operand in operands {
+                        if let Operand::Move(source) | Operand::Copy(source) = operand {
+                            self.record_moved_place(source, JoinEndpointEscapeKind::AggregateCapture);
+                        }
                     }
                 }
                 (JoinValueFlowKind::Aggregate, None)
@@ -4697,6 +5427,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 queue_bound: JoinQueueBound::Unknown,
                 operations: Vec::new(),
                 value_flows: Vec::new(),
+                closure_facts: Vec::new(),
                 call_edges: Vec::new(),
                 escapes: FxIndexSet::default(),
                 endpoint_escapes: FxIndexSet::default(),
@@ -4720,6 +5451,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             queue_bound,
             operations: Vec::new(),
             value_flows: Vec::new(),
+            closure_facts: Vec::new(),
             call_edges: Vec::new(),
             escapes: FxIndexSet::default(),
             endpoint_escapes: FxIndexSet::default(),
