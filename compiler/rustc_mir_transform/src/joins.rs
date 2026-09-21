@@ -5,8 +5,10 @@
 //! coroutine state transformation, and ties those bodies back to the resolved
 //! `JoinDefinitions` descriptor. It records a small, typed operation stream
 //! and conservative value-flow facts on the MIR body. The stream is the
-//! hand-off point for a future lowering/fusion pass; it deliberately does not
-//! infer semantics from generated method names or call into the library
+//! hand-off point for compiler-owned CFA and proof-consuming lowering. The
+//! narrow state-token storage pass consumes positive certificates here; wider
+//! claim/completion/fusion lowering remains future work. It deliberately does
+//! not infer semantics from generated method names or call into the library
 //! runtime.
 
 use rustc_data_structures::fx::{FxHashMap, FxHashSet, FxHasher, FxIndexSet};
@@ -15,6 +17,7 @@ use rustc_index::Idx;
 use rustc_middle::bug;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord, JoinCfaCrateSummary,
+    JoinCfaContextFrame, JoinCfaContextInstance, JoinCfaContextSummary, JoinCfaEffects,
     JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection, JoinCfaSummary, JoinFusionFact,
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinMirOperation, JoinChannelOccupancyFact,
@@ -32,7 +35,7 @@ use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::ty::{self, GenericArgsRef, Ty, TyCtxt};
 use rustc_session::config::JoinCfaMode;
 use rustc_span::Spanned;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::hash::{Hash, Hasher};
 
@@ -1277,6 +1280,378 @@ fn join_call_target_map(tcx: TyCtxt<'_>) -> FxHashMap<u32, JoinCallTarget> {
     targets
 }
 
+/// Join the effects introduced by two context paths.  This is the same
+/// monotone union used by the standalone Dovetail-shaped oracle: once an
+/// unknown call, suspension or escape is observed it cannot disappear when
+/// another path reaches the same bounded context.
+fn join_context_effects(left: JoinCfaEffects, right: JoinCfaEffects) -> JoinCfaEffects {
+    JoinCfaEffects {
+        may_suspend: left.may_suspend || right.may_suspend,
+        may_escape: left.may_escape || right.may_escape,
+        may_external: left.may_external || right.may_external,
+    }
+}
+
+fn context_effects_for_body(body: &JoinCfaBodyRecord) -> JoinCfaEffects {
+    let mut effects = JoinCfaEffects {
+        may_suspend: body.yields != 0,
+        // `unknown_effects` is a body-local extraction fallback.  It includes
+        // ordinary projection/rvalue shapes and calls which are unrelated to
+        // the join protocol, so treating the counter as an endpoint escape
+        // would make every real-world caller look open.  Endpoint ownership
+        // is represented by the typed escape records below; opaque calls are
+        // widened only when their extracted edge is associated with a join
+        // endpoint.
+        may_escape: !body.endpoint_escapes.is_empty(),
+        may_external: false,
+    };
+    // A statically unresolved edge is an opaque operation even if the MIR
+    // visitor did not need it to classify the body as a join reaction.  Keep
+    // the distinction in the graph so a context reached through an unknown
+    // callback cannot accidentally look private.
+    for edge in &body.call_edges {
+        // Generated endpoint/channel/reaction bodies contain calls into the
+        // runtime adapter whose symbols are intentionally outside the join
+        // declaration graph.  Treating those ABI calls as user-level
+        // escapes would reject every generated witness.  Ordinary source
+        // bodies, however, must be widened when they call through an unknown
+        // function pointer, trait object, or unavailable body.
+        if edge.endpoint_def_id.is_some()
+            && (edge.callee.is_none() || edge.target == JoinCallTargetKind::Unknown)
+        {
+            effects.may_external = true;
+            effects.may_escape = true;
+        }
+    }
+    effects
+}
+
+fn context_is_optimizable(
+    local: JoinCfaEffects,
+    inherited: JoinCfaEffects,
+    truncated: bool,
+) -> bool {
+    !truncated
+        && !local.may_suspend
+        && !local.may_escape
+        && !local.may_external
+        && !inherited.may_suspend
+        && !inherited.may_escape
+        && !inherited.may_external
+}
+
+/// Run a bounded, compiler-owned call-string CFA over the typed MIR graph.
+///
+/// The earlier instance pass follows aliases to a concrete constructor, but
+/// it has no notion of which call path reached a helper or reaction.  This
+/// solver is the natural next layer: it reuses the already extracted typed
+/// call edges/value-flow summaries, retains `k` MIR call-site frames, joins
+/// effects at merged states and terminates under the same explicit work
+/// budget used by the local analysis.  It deliberately does not ask LLVM to
+/// rediscover protocol facts; LLVM sees neither the source channel graph nor
+/// the dynamic instance identity after lowering.
+#[allow(rustc::potential_query_instability)]
+fn solve_context_cfa(
+    bodies: &[JoinCfaBodyRecord],
+    context_depth: usize,
+    budget: usize,
+) -> JoinCfaContextSummary {
+    let by_id = bodies
+        .iter()
+        .map(|body| (body.body_def_id, body))
+        .collect::<FxHashMap<_, _>>();
+    let local_effects = bodies
+        .iter()
+        .map(|body| (body.body_def_id, context_effects_for_body(body)))
+        .collect::<FxHashMap<_, _>>();
+
+    // A body with a known direct caller is not independently rooted.  Parent
+    // identities cover generated nested reaction bodies whose closure call is
+    // indirect in MIR; treating those as roots would lose the caller's
+    // escape/suspension effects and make the proof unsound.
+    let mut incoming = FxHashSet::default();
+    let mut children = FxHashMap::<u32, Vec<u32>>::default();
+    for body in bodies {
+        if let Some(parent) = body.parent_body_def_id
+            && by_id.contains_key(&parent)
+        {
+            incoming.insert(body.body_def_id);
+            children.entry(parent).or_default().push(body.body_def_id);
+        }
+        for edge in &body.call_edges {
+            if let Some(callee) = edge.callee {
+                if by_id.contains_key(&callee) {
+                    incoming.insert(callee);
+                }
+            }
+        }
+    }
+    for body_ids in children.values_mut() {
+        body_ids.sort_unstable();
+    }
+
+    type ContextKey = (u32, Vec<JoinCfaContextFrame>);
+    let mut keys = FxHashMap::<ContextKey, usize>::default();
+    let mut instances = Vec::<JoinCfaContextInstance>::new();
+    let mut work = VecDeque::<usize>::new();
+    let mut transitions = 0u32;
+    let mut complete = budget != 0;
+
+    let insert = |body_def_id: u32,
+                      context: Vec<JoinCfaContextFrame>,
+                      truncated: bool,
+                      inherited: JoinCfaEffects,
+                      keys: &mut FxHashMap<ContextKey, usize>,
+                      instances: &mut Vec<JoinCfaContextInstance>,
+                      work: &mut VecDeque<usize>,
+                      complete: &mut bool|
+     -> Option<usize> {
+        let Some(local) = local_effects.get(&body_def_id).copied() else {
+            *complete = false;
+            return None;
+        };
+        let key = (body_def_id, context.clone());
+        if let Some(&index) = keys.get(&key) {
+            let instance = &mut instances[index];
+            let joined = join_context_effects(instance.inherited_effects, inherited);
+            let became_truncated = truncated && !instance.truncated;
+            if joined != instance.inherited_effects || became_truncated {
+                instance.inherited_effects = joined;
+                instance.truncated |= truncated;
+                instance.closed = !local.may_suspend
+                    && !local.may_escape
+                    && !local.may_external
+                    && !joined.may_suspend
+                    && !joined.may_escape
+                    && !joined.may_external;
+                instance.optimization_safe = context_is_optimizable(
+                    local,
+                    joined,
+                    instance.truncated,
+                );
+                work.push_back(index);
+            }
+            return Some(index);
+        }
+        if instances.len() >= budget {
+            *complete = false;
+            return None;
+        }
+        let closed = !local.may_suspend
+            && !local.may_escape
+            && !local.may_external
+            && !inherited.may_suspend
+            && !inherited.may_escape
+            && !inherited.may_external;
+        let optimization_safe = context_is_optimizable(local, inherited, truncated);
+        let index = instances.len();
+        keys.insert(key, index);
+        instances.push(JoinCfaContextInstance {
+            body_def_id,
+            context,
+            truncated,
+            local_effects: local,
+            inherited_effects: inherited,
+            closed,
+            optimization_safe,
+        });
+        work.push_back(index);
+        Some(index)
+    };
+
+    let roots = bodies
+        .iter()
+        .filter(|body| !incoming.contains(&body.body_def_id))
+        .map(|body| body.body_def_id)
+        .collect::<Vec<_>>();
+    let roots_empty = roots.is_empty();
+    let root_ids = if roots_empty {
+        // A recursive-only graph has no top-level root.  Seed one abstract
+        // state per body with an unknown inherited effect rather than
+        // pretending the cycle is a private, stack-bounded computation.
+        bodies.iter().map(|body| body.body_def_id).collect::<Vec<_>>()
+    } else {
+        roots
+    };
+    for body_def_id in root_ids {
+        let inherited = if roots_empty {
+            JoinCfaEffects { may_suspend: false, may_escape: true, may_external: true }
+        } else {
+            JoinCfaEffects::default()
+        };
+        insert(
+            body_def_id,
+            Vec::new(),
+            false,
+            inherited,
+            &mut keys,
+            &mut instances,
+            &mut work,
+            &mut complete,
+        );
+    }
+
+    while let Some(index) = work.pop_front() {
+        let Some(instance) = instances.get(index).cloned() else { continue };
+        let Some(body) = by_id.get(&instance.body_def_id).copied() else {
+            complete = false;
+            continue;
+        };
+        let inherited = join_context_effects(instance.inherited_effects, instance.local_effects);
+        for edge in &body.call_edges {
+            if transitions as usize >= budget {
+                complete = false;
+                break;
+            }
+            transitions = transitions.saturating_add(1);
+            let Some(callee) = edge.callee else {
+                // The current state itself is not safe when it can execute an
+                // unresolved callback.  Widening the local instance records
+                // the negative fact even when there is no callee state to
+                // enqueue.
+                if body.role == JoinBodyRole::Ordinary
+                    && edge.endpoint_def_id.is_some()
+                    && let Some(current) = instances.get_mut(index)
+                {
+                    current.inherited_effects = join_context_effects(
+                        current.inherited_effects,
+                        JoinCfaEffects { may_suspend: false, may_escape: true, may_external: true },
+                    );
+                    current.closed = false;
+                    current.optimization_safe = false;
+                }
+                continue;
+            };
+            if !by_id.contains_key(&callee) {
+                if body.role == JoinBodyRole::Ordinary {
+                    complete = false;
+                }
+                if body.role == JoinBodyRole::Ordinary
+                    && edge.endpoint_def_id.is_some()
+                    && let Some(current) = instances.get_mut(index)
+                {
+                    current.inherited_effects = join_context_effects(
+                        current.inherited_effects,
+                        JoinCfaEffects { may_suspend: false, may_escape: true, may_external: true },
+                    );
+                    current.closed = false;
+                    current.optimization_safe = false;
+                }
+                continue;
+            }
+            // A join constructor/channel/dispatch/reaction edge is a typed
+            // protocol transition, not an ordinary helper call stack frame.
+            // Retaining those generated adapter edges would spend the whole
+            // bounded call-string budget on ABI plumbing and reject a
+            // genuinely closed reaction. Ordinary-local calls remain the
+            // context-sensitive part of this CFA.
+            let retain_frame = edge.target == JoinCallTargetKind::OrdinaryLocal;
+            let (context, truncated) = if !retain_frame {
+                (instance.context.clone(), instance.truncated)
+            } else {
+                let frame = JoinCfaContextFrame {
+                    caller_body_def_id: instance.body_def_id,
+                    block: edge.block,
+                    statement: edge.statement,
+                    callee_body_def_id: callee,
+                };
+                let mut context = instance.context.clone();
+                let mut truncated = instance.truncated;
+                if context_depth == 0 {
+                    truncated = true;
+                    context.clear();
+                } else {
+                    if context.len() == context_depth {
+                        context.remove(0);
+                        truncated = true;
+                    }
+                    context.push(frame);
+                }
+                (context, truncated)
+            };
+            if insert(
+                callee,
+                context,
+                truncated,
+                inherited,
+                &mut keys,
+                &mut instances,
+                &mut work,
+                &mut complete,
+            )
+            .is_none()
+                && !complete
+            {
+                break;
+            }
+        }
+        // Closure/nested MIR bodies carry a parent identity even when the
+        // closure construction is lowered without a direct typed call edge.
+        // Preserve that ownership boundary as a synthetic CFA transition so
+        // the child is not silently omitted from the graph.  It is not a
+        // semantic call site, so it does not consume one of the bounded
+        // source-level call-string frames.
+        if let Some(child_ids) = children.get(&instance.body_def_id) {
+            for &callee in child_ids {
+                if transitions as usize >= budget {
+                    complete = false;
+                    break;
+                }
+                transitions = transitions.saturating_add(1);
+                // Constructor/channel/dispatch shims are ABI adapters. Their
+                // endpoint receiver and reply plumbing are intentionally
+                // visible as escapes in the local MIR facts, but that does
+                // not mean a nested source reaction inherits an escaping
+                // application handle. Preserve suspension from a real body;
+                // discard adapter-only ownership effects at this synthetic
+                // parent edge.
+                let child_inherited = match body.role {
+                    JoinBodyRole::Constructor
+                    | JoinBodyRole::Channel
+                    | JoinBodyRole::Dispatch => JoinCfaEffects {
+                        may_suspend: inherited.may_suspend,
+                        may_escape: false,
+                        may_external: false,
+                    },
+                    JoinBodyRole::ReactionBody | JoinBodyRole::Ordinary => inherited,
+                };
+                if insert(
+                    callee,
+                    instance.context.clone(),
+                    instance.truncated,
+                    child_inherited,
+                    &mut keys,
+                    &mut instances,
+                    &mut work,
+                    &mut complete,
+                )
+                .is_none()
+                    && !complete
+                {
+                    break;
+                }
+            }
+        }
+        if !complete && transitions as usize >= budget {
+            break;
+        }
+    }
+
+    instances.sort_by_key(|instance| {
+        (
+            instance.body_def_id,
+            instance.context.len(),
+            instance.context.clone(),
+        )
+    });
+    JoinCfaContextSummary {
+        context_depth: context_depth.min(u32::MAX as usize) as u32,
+        instances,
+        transitions,
+        complete,
+    }
+}
+
 /// Build the first crate-level instance graph from the summaries attached to
 /// pre-cleanup MIR bodies. This deliberately starts with facts that can be
 /// proved without guessing through an unknown call: a constructor result is
@@ -1326,6 +1701,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 role: summary.role,
                 value_flows: summary.value_flows.clone(),
                 call_edges: summary.call_edges.clone(),
+                calls: summary.calls,
+                yields: summary.yields,
                 unknown_effects: summary.unknown_effects,
                 endpoint_escapes: summary.endpoint_escapes.clone(),
                 cyclic_blocks: cfg_cyclic_blocks(&body),
@@ -1397,6 +1774,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 role: JoinBodyRole::Ordinary,
                 value_flows: facts.value_flows,
                 call_edges: facts.call_edges,
+                calls: facts.calls,
+                yields: facts.yields,
                 unknown_effects: facts.unknown_effects,
                 endpoint_escapes: facts.endpoint_escapes.into_iter().collect(),
                 cyclic_blocks: cfg_cyclic_blocks(&body),
@@ -1726,7 +2105,12 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         )
     });
 
-    let state_tokens = prove_state_tokens(tcx, &bodies, &instances);
+    let context = solve_context_cfa(
+        &bodies,
+        tcx.sess.opts.unstable_opts.join_cfa_depth,
+        tcx.sess.opts.unstable_opts.join_cfa_budget,
+    );
+    let state_tokens = prove_state_tokens(tcx, &bodies, &instances, &context);
     // Do not let analysis mode change runtime representation.  Optimize mode
     // consumes only positive certificates and records the selected storage
     // contract for the later LowerJoins/MIR-to-LLVM step.
@@ -1778,6 +2162,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         instances,
         state_tokens,
         state_token_lowerings,
+        context,
         solver_steps,
         complete,
     };
@@ -1796,10 +2181,12 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
 /// there are competing rules, more than one seed, more than one re-emission,
 /// or no unique instance.  A later lowering pass may consume only
 /// `JoinStateTokenStatus::Proven` after validating the current MIR snapshots.
+#[allow(rustc::potential_query_instability)]
 fn prove_state_tokens<'tcx>(
     tcx: TyCtxt<'tcx>,
     bodies: &[JoinCfaBodyRecord],
     instances: &[JoinCfaInstanceFact],
+    context: &JoinCfaContextSummary,
 ) -> Vec<JoinStateTokenProof> {
     let mut proofs = Vec::new();
     for endpoint in &tcx.join_definitions(()).endpoints {
@@ -1947,6 +2334,23 @@ fn prove_state_tokens<'tcx>(
                 });
                 let endpoint_complete =
                     state_token_endpoint_complete(endpoint_def_id, rule_index as u32, bodies);
+                let context_bodies = transitions
+                    .iter()
+                    .filter(|transition| transition.body_def_id != u32::MAX)
+                    .map(|transition| transition.body_def_id)
+                    .collect::<FxHashSet<_>>();
+                let context_complete = context.complete
+                    && context_bodies.iter().copied().all(|body_def_id| {
+                            let instances = context
+                                .instances
+                                .iter()
+                                .filter(|instance| instance.body_def_id == body_def_id);
+                            let mut found = false;
+                            let all_safe = instances.inspect(|_| found = true).all(|instance| {
+                                instance.optimization_safe
+                            });
+                            found && all_safe
+                        });
                 let rejection = if competing_rules != 0 {
                     Some(JoinStateTokenRejection::CompetingRule)
                 } else if !endpoint_complete {
@@ -1969,6 +2373,8 @@ fn prove_state_tokens<'tcx>(
                     Some(JoinStateTokenRejection::MissingReemission)
                 } else if reemit_events != 1 {
                     Some(JoinStateTokenRejection::MultipleReemissions)
+                } else if !context_complete {
+                    Some(JoinStateTokenRejection::IncompleteAnalysis)
                 } else {
                     None
                 };
@@ -2194,7 +2600,7 @@ fn dump_crate_summary(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -2206,6 +2612,8 @@ fn dump_crate_summary(
                 value_flows,
                 aliases,
                 cyclic_blocks,
+                body.calls,
+                body.yields,
                 call_edges,
             )
         })
@@ -2281,6 +2689,42 @@ fn dump_crate_summary(
                 lowering.proven_bound,
                 lowering.strategy,
                 lowering.certificate_id,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let context_instances = summary
+        .context
+        .instances
+        .iter()
+        .map(|instance| {
+            let frames = instance
+                .context
+                .iter()
+                .map(|frame| {
+                    format!(
+                        "{{\"caller\":{},\"block\":{},\"statement\":{},\"callee\":{}}}",
+                        frame.caller_body_def_id,
+                        frame.block,
+                        frame.statement,
+                        frame.callee_body_def_id,
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"body\":{},\"frames\":[{}],\"truncated\":{},\"local_effects\":{{\"suspend\":{},\"escape\":{},\"external\":{}}},\"inherited_effects\":{{\"suspend\":{},\"escape\":{},\"external\":{}}},\"closed\":{},\"optimization_safe\":{}}}",
+                instance.body_def_id,
+                frames,
+                instance.truncated,
+                instance.local_effects.may_suspend,
+                instance.local_effects.may_escape,
+                instance.local_effects.may_external,
+                instance.inherited_effects.may_suspend,
+                instance.inherited_effects.may_escape,
+                instance.inherited_effects.may_external,
+                instance.closed,
+                instance.optimization_safe,
             )
         })
         .collect::<Vec<_>>()
@@ -2362,12 +2806,16 @@ fn dump_crate_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"context\":{{\"depth\":{},\"transitions\":{},\"complete\":{},\"instances\":[{}]}},\"definitions\":[{}],\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
         state_tokens,
         state_token_lowerings,
+        summary.context.context_depth,
+        summary.context.transitions,
+        summary.context.complete,
+        context_instances,
         definitions,
         summary.solver_steps,
         summary.complete,

@@ -622,12 +622,70 @@ pub struct JoinCfaBodyRecord {
     pub role: JoinBodyRole,
     pub value_flows: Vec<JoinValueFlow>,
     pub call_edges: Vec<JoinCallEdge>,
+    /// Number of MIR call and yield events in this body.  Keeping these
+    /// effects on the crate graph lets the context solver distinguish a
+    /// caller-driven, non-suspending path from a body that may schedule or
+    /// suspend when it is reached through another call site.
+    pub calls: u32,
+    pub yields: u32,
     pub unknown_effects: u32,
     pub endpoint_escapes: Vec<JoinEndpointEscape>,
     /// Basic blocks which are part of a control-flow cycle in this body.
     /// State-token proofs must reject a producer/re-emission edge located in
     /// one of these blocks until interprocedural multiplicity is modelled.
     pub cyclic_blocks: Vec<u32>,
+}
+
+/// Effects propagated by the compiler-owned bounded CFA.  This is deliberately
+/// smaller than MIR's complete effect system: it records exactly the facts
+/// that can invalidate a private/local join specialization.  A missing or
+/// unresolved dependency widens the corresponding bit instead of being
+/// treated as a proof of absence.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, Default)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaEffects {
+    pub may_suspend: bool,
+    pub may_escape: bool,
+    pub may_external: bool,
+}
+
+/// One retained call-string frame in the rustc-owned CFA.  The frame is a
+/// typed MIR edge, not a generated symbol name, so ordinary helpers and join
+/// adapters share the same context representation.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaContextFrame {
+    pub caller_body_def_id: u32,
+    pub block: u32,
+    pub statement: u32,
+    pub callee_body_def_id: u32,
+}
+
+/// A bounded context-sensitive instance of a MIR body.  Multiple concrete
+/// call paths merge only when their retained call strings are equal; effects
+/// are joined monotonically at the merged state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaContextInstance {
+    pub body_def_id: u32,
+    pub context: Vec<JoinCfaContextFrame>,
+    pub truncated: bool,
+    pub local_effects: JoinCfaEffects,
+    pub inherited_effects: JoinCfaEffects,
+    pub closed: bool,
+    pub optimization_safe: bool,
+}
+
+/// Result of the compiler-native bounded context analysis.  `complete` is the
+/// only authority for proof-consuming transforms: a partial graph is useful
+/// for diagnostics but must not enable a representation change.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaContextSummary {
+    pub context_depth: u32,
+    pub instances: Vec<JoinCfaContextInstance>,
+    pub transitions: u32,
+    pub complete: bool,
 }
 
 /// Result of the first compiler-owned instance/context propagation slice.
@@ -759,6 +817,7 @@ pub struct JoinCfaCrateSummary {
     pub instances: Vec<JoinCfaInstanceFact>,
     pub state_tokens: Vec<JoinStateTokenProof>,
     pub state_token_lowerings: Vec<JoinStateTokenLowering>,
+    pub context: JoinCfaContextSummary,
     pub solver_steps: u32,
     pub complete: bool,
 }

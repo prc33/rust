@@ -23,6 +23,24 @@ it is deliberately limited to attribution of the current unary lowering and
 does not claim a backend join transform. The inventory is
 [missing-optimisations.md](../../joins-library/docs/missing-optimisations.md).
 
+## 2026-09-21 CFA boundary checkpoint
+
+The compiler now implements a bounded call-string CFA before codegen. It
+retains typed endpoint/rule/body identities, ordinary helper call frames,
+parent-linked nested bodies, and monotone suspension/escape/external effects;
+the selected state-token lowering consumes only complete all-context-safe
+certificates. This is the information LLVM cannot recover after join metadata
+is erased. The optimize native gate produced a complete k=1 graph (230
+transitions, 76 contexts, three proven endpoints), while off/analyze selected
+no storage rewrite.
+
+This is intentionally complementary to LLVM rather than a second backend CFA:
+LLVM's call graph, alias analysis, MemorySSA, inliner, SROA and target atomic
+lowering operate on the ordinary MIR-derived IR emitted after the semantic
+proof. The next LLVM experiment must therefore be a small post-inlining
+cleanup witness; rebuilding channel/rule CFA in an LLVM pass would lose the
+dynamic instance and ownership facts and duplicate rustc work.
+
 ## Corrections to the preceding discussion
 
 1. **LLVM coroutine elision is not available merely by enabling a pass for Rust

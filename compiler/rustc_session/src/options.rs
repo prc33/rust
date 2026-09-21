@@ -2597,6 +2597,8 @@ options! {
         "control experimental compiler-owned join CFA (`off`, `analyze`, or `optimize`; default: `off`)"),
     join_cfa_budget: usize = (4096, parse_number, [TRACKED],
         "maximum intrabody propagation steps for experimental join CFA (default: 4096)"),
+    join_cfa_depth: usize = (1, parse_number, [TRACKED],
+        "maximum call-context depth for experimental join CFA (default: 1)"),
     join_cfa_dump: Option<PathBuf> = (None, parse_opt_pathbuf, [UNTRACKED],
         "write one deterministic JSON summary per join body into this directory"),
     instrument_mcount: InstrumentMcount = (InstrumentMcount::Disabled, parse_instrument_mcount, [TRACKED],

@@ -46,6 +46,42 @@ closed/bounded representations are useful reference implementations; do not
 assume the checkout automatically infers every attribute it consumes. The
 standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
+### Compiler-native bounded CFA — 2026-09-21
+
+The first compiler-owned call-string layer is now implemented in
+`rustc_mir_transform`. `JoinCfaBodyRecord` retains typed call edges, MIR call
+and yield counts, endpoint escapes, and parent identities. The solver keeps a
+bounded k-call context (`-Zjoin-cfa-depth`, default `1`), propagates monotone
+`suspend`/`escape`/`external` effects, follows ordinary helper calls, and
+connects nested MIR bodies through a non-consuming parent transition. Generated
+constructor/channel/dispatch edges are protocol transitions rather than
+ordinary call frames, so adapter plumbing cannot consume the call-string
+budget. A configured work budget makes partial graphs diagnostic-only.
+
+The JSON certificate records context frames, truncation, local and inherited
+effects, closedness, and `optimization_safe`. Proof consumers require the graph
+to be complete and require *every* context instance for each state-token
+transition to be safe; one safe path can no longer mask an unsafe path. The
+endpoint-wide fixed-slot/pair lowering consumes this certificate without
+looking at runtime lock implementations. The final native gate passes in
+optimize, analyze, and off modes; the optimize dump contains 230 transitions,
+76 merged contexts, and three proven state-token endpoints.
+
+This is deliberately split at the LLVM boundary. rustc must establish
+endpoint/rule/instance identity, ownership, protocol multiplicity, and
+coroutine-sensitive effects while those facts still exist in typed MIR. LLVM
+then receives ordinary calls, atomics, control flow, and layouts and can reuse
+its call graph, alias analysis, inliner, SROA, MemorySSA, and target lowering.
+LLVM cannot reconstruct erased channel matching or dynamic instance identity,
+so no duplicate high-level join CFA is added there. A future LLVM pass is
+justified only if a reduced witness shows a post-inlining opportunity that
+ordinary LLVM passes cannot realize from the rustc-selected representation.
+
+The layer is not the end of the thesis CFA: endpoint-specific instance/context
+sets, capture-sensitive escape transfer, coroutine output/drop edges, and
+context-qualified queue/reply bounds still need to feed fusion and completion
+lowering. Until those are present, the generic matcher remains the fallback.
+
 ## Current gate status — 2026-09-20
 
 ### Typed strategy carrier on real MIR calls — 2026-09-21

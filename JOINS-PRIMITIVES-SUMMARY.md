@@ -106,9 +106,12 @@ The implemented slice is useful but deliberately narrow:
   aggregates, escapes, yields and local occupancy.  Loop and helper
   multiplicity are rejected conservatively.
 * The crate-level query propagates endpoint aliases through a bounded set of
-  direct local helper arguments, returns and copy/move/borrow chains.  Unknown
-  calls, escaping handles, unsupported closures and wider control flow remain
-  open/unknown.
+  direct local helper arguments, returns and copy/move/borrow chains.  Its
+  compiler-native k-context layer (`-Zjoin-cfa-depth`, default 1) retains
+  ordinary helper call strings, connects nested MIR bodies without charging
+  generated adapters, and joins suspension/escape/external effects.  Unknown
+  calls, escaping handles, unsupported captures and wider control flow remain
+  open/unknown; every context for a consumed proof must be safe.
 * An endpoint-wide lowering certificate binds one allocation, compatible
   proofs, a channel mask and one storage strategy.  Optimized MIR carries the
   selected strategy and typed reply map; synchronous `CompleteReplies` is
@@ -139,11 +142,11 @@ metadata exists, but the proof is not yet consumed by generated code.
 
 ### CFA and representation work still missing
 
-1. **Instance-sensitive interprocedural CFA.**  Complete the bounded history /
-   foreground-background value analysis across closures, general callers and
-   returns, loops, recursion, aggregates and dynamically separated instances.
-   The current direct-helper slice is not an implementation of the thesis
-   analysis.
+1. **Complete endpoint-specific instance-sensitive CFA.**  The compiler now
+   has the first bounded call-string/effect layer, but it still needs to key
+   contexts by concrete endpoint instances, propagate captures and
+   foreground/background values, and model coroutine output/drop edges,
+   general callers, loops, recursion and dynamically separated instances.
 2. **Whole-instance closedness.**  Prove `Closed`, `Open` or `Unknown` for each
    concrete group instance, including participants, execution owner, demand,
    cancellation and lifetime.  A locally closed reaction body is not enough.
@@ -222,4 +225,3 @@ that have passed the corresponding semantic and benchmark gates.
 * [Compiler optimisation inventory](../joins-library/docs/missing-optimisations.md)
 * [Dovetail source audit](../joins-library/docs/dovetail-audit.md)
 * [Current next-step plan](docs/joins-next-plan.md)
-
