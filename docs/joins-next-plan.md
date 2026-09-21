@@ -210,6 +210,11 @@ removal alone is not a performance win here, and the next optimization should
 target typed reply completion/ownership rather than add another runtime
 identity mechanism.
 
+The current post-rebuild optimize-only snapshot is 173.560 ns/op median
+(100 samples, four workers, checksum `800020000`); it is directional because
+the handwritten control was not rerun in the same shuffled artifact. Details
+are in `../join-benchmarks/docs/typed-reply-map-current-20260921.md`.
+
 ## Next slice after the atomic gate
 
 1. **Commit a paired attribution artifact.** Re-run the mutex row with native,
