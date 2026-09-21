@@ -171,7 +171,7 @@ mutex-based fallback definition for targets without both atomic widths, while
 the compiler target gate prevents selecting this ABI there. This is generated
 join storage, not lock recognition.
 
-Verification is complete for this slice: 74 runtime tests pass, including a
+Verification is complete for this slice: 75 runtime tests pass, including a
 dispatch/cancellation race; the rebuilt stage-1 off/analyze/optimize native
 gates pass; and the untimed attribution counters show 40,000 generic
 fallbacks in off/analyze versus 40,000 successful atomic claims in optimize.
@@ -182,6 +182,20 @@ establishes that the compiler-selected atomic path is active and halves the
 optimized runtime relative to the generic path. The remaining work is not
 another lock tweak: attribute and lower the result-side FIFO, reply-cell
 completion/ownership, tracing and trampoline before broadening the CFA proof.
+
+### Pending-right allocation cleanup — 2026-09-21
+
+The atomic result-side admission no longer allocates an `Arc` identity token
+for every queued request. Each admission receives a monotonic `AtomicU64` ID;
+the reply withdrawal hook keeps a weak state reference and that ID, and queue
+removal still linearizes under the result FIFO mutex. This is deliberately a
+storage/ownership cleanup, not lock recognition or a semantic shortcut. It
+preserves FIFO order, dropped-request withdrawal, cancellation draining, and
+the target-width fallback. Runtime tests remain green (75/75). The clean
+optimize benchmark snapshot after the preceding clone cleanup was 174.5 ns/op
+median for the four-worker mutex row (50 samples); it is directional, so the
+next timing must compare the ID change against the same binary/configuration
+with a paired or shuffled run.
 
 ## Next slice after the atomic gate
 
