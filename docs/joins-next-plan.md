@@ -586,12 +586,14 @@ symbol, reaches generated code.
 
 ### Atomic fused-admission follow-up — 2026-09-21
 
-The runtime half of the exact-`u64` pair now carries an atomic pending-right
-count. A zero count lets the proof-selected fused admission claim the token
-without taking the result FIFO mutex; queued, withdrawn, cancelled, and
-contention paths still use the mutex and preserve FIFO semantics. This removes
-one known empty-queue lock from the hot path without recognizing or replacing
-any library lock. The runtime suite (75 tests) and optimize compiler gate pass.
+The runtime half of the exact-`u64` pair now carries atomic pending-right and
+admission-in-flight counts. When both are zero, the proof-selected fused
+admission can claim the token without taking the result FIFO mutex; queued,
+withdrawn, cancelled, and contention paths still use the mutex and preserve
+FIFO semantics. Updating the counts under the admission protocol prevents an
+older producer from being bypassed while it links its item. This removes one
+known empty-queue lock from the hot path without recognizing or replacing any
+library lock. The runtime suite (75 tests) and optimize compiler gate pass.
 The initial post-change 50-sample mutex snapshot is 200.31 ns/op optimized
 versus 34.29 ns/op handwritten; treat this as directional until a paired,
 shuffled attribution run is archived. The next performance gate should compare
