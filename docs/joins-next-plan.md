@@ -101,6 +101,8 @@ Async reactions deliberately do not receive an invented entry marker: their
 completion belongs at the coroutine output edge after ordinary coroutine
 lowering. This keeps the representation honest while leaving the existing
 runtime adapter unchanged.
+The per-body CFA JSON records the same map as `reply_channels:[…]`, so a dump
+can be checked without parsing pretty MIR or consulting generated method names.
 
 ### Runtime/compiler boundary consolidation — 2026-09-20
 

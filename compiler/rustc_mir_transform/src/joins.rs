@@ -2935,7 +2935,7 @@ fn dump_summary(
         .iter()
         .map(|operation| {
             format!(
-                "{{\"kind\":\"{:?}\",\"block\":{},\"statement\":{},\"group\":{},\"channel\":{},\"rule_index\":{},\"queue_bound\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
+                "{{\"kind\":\"{:?}\",\"block\":{},\"statement\":{},\"group\":{},\"channel\":{},\"rule_index\":{},\"reply_channels\":[{}],\"queue_bound\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}]}}",
                 operation.kind,
                 operation.block,
                 operation.statement,
@@ -2948,6 +2948,12 @@ fn dump_summary(
                 operation
                     .rule_index
                     .map_or_else(|| "null".to_string(), |id| id.to_string()),
+                operation
+                    .reply_channel_indices
+                    .iter()
+                    .map(u32::to_string)
+                    .collect::<Vec<_>>()
+                    .join(","),
                 operation.queue_bound,
                 operation
                     .endpoint_def_id
