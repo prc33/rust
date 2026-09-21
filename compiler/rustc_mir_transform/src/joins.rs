@@ -3172,6 +3172,7 @@ fn install_join_call_descriptors<'tcx>(
         }
         call_descriptors.entry((block.index(), statement)).or_insert(JoinCall {
             kind,
+            lowering: JoinLoweringStrategy::Generic,
             group_def_id: local_join_def_id(operation.group_def_id),
             channel_index: operation.channel_index,
             rule_index: operation.rule_index,
@@ -3775,7 +3776,15 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 } else {
                     None
                 };
-                planned.push((block, target, generic_args, span, Some(inline_mask)));
+                planned.push((
+                    block,
+                    target,
+                    generic_args,
+                    span,
+                    Some(inline_mask),
+                    JoinOperationKind::CreateGroup,
+                    None,
+                ));
                 continue;
             }
 
@@ -3846,7 +3855,20 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 // rejection, never a reason to mutate an earlier call.
                 return;
             };
-            planned.push((block, Some(target), generic_args, span, None));
+            let operation_kind = if item_name == "__join_dispatch_once_at" {
+                JoinOperationKind::Match
+            } else {
+                JoinOperationKind::Register
+            };
+            planned.push((
+                block,
+                Some(target),
+                generic_args,
+                span,
+                None,
+                operation_kind,
+                channel_index,
+            ));
         }
 
         if planned.is_empty() {
@@ -3856,9 +3878,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
         // The complete preflight succeeded.  Apply all planned changes in a
         // separate pass; no ABI lookup or shape validation remains on this
         // mutation path.
-        for (block, target, generic_args, span, mask) in planned {
+        for (block, target, generic_args, span, mask, kind, channel_index) in planned {
             let block_data = &mut body.basic_blocks_mut()[block];
-            let TerminatorKind::Call { func, args, .. } = &mut block_data.terminator_mut().kind
+            let TerminatorKind::Call { func, args, join, .. } = &mut block_data.terminator_mut().kind
             else {
                 // The body cannot change between the two passes, but retain a
                 // conservative guard if a future MIR pass invalidates that
@@ -3867,6 +3889,31 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             };
             if let Some(target) = target {
                 *func = Operand::function_handle(tcx, target, generic_args.as_slice(), span);
+            }
+            // The selected strategy is part of the compiler-owned MIR
+            // operation, not an inference that later passes should repeat
+            // from the rewritten runtime symbol.  The call remains an
+            // ordinary typed call; this field is the proof result that makes
+            // a future direct state-transition lowering possible.
+            if let Some(join) = join {
+                join.lowering = strategy;
+            } else {
+                // Runtime adapter calls are generated after the source-level
+                // channel/dispatch operation has been identified, so they do
+                // not always have a frontend descriptor of their own. Attach
+                // the proof result to the actual typed call rather than
+                // forcing later MIR passes to infer it from the selected
+                // helper symbol.
+                *join = Some(JoinCall {
+                    kind,
+                    lowering: strategy,
+                    group_def_id: endpoint.endpoint_def_id.map(|id| id.to_def_id()),
+                    channel_index,
+                    rule_index: None,
+                    queue_bound: frontend_queue_bound(endpoint.frontend_queue_bound),
+                    endpoint_def_id: endpoint.endpoint_def_id.map(|id| id.to_def_id()),
+                    rule_def_id: None,
+                });
             }
             if let Some(inline_mask) = mask {
                 // Both the generic and fixed constructors receive the proven

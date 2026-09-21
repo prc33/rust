@@ -48,6 +48,28 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
 ## Current gate status — 2026-09-20
 
+### Typed strategy carrier on real MIR calls — 2026-09-21
+
+The selected storage strategy is now carried by the actual typed MIR call,
+not only by a side-table record or the name of a rewritten runtime helper.
+`JoinCall.lowering` starts as `Generic` during frontend classification and is
+upgraded to `FixedPairMatcher`, `FixedAtomicU64Pair`, or another proven
+strategy only after `JoinStorageLowering` consumes the interprocedural CFA
+certificate. Runtime adapter calls which were not themselves present in the
+frontend descriptor receive a compiler-owned `JoinCall` at the same point;
+their ordinary receiver, payload, destination, unwind edge and call operands
+remain unchanged.
+
+Optimized runtime MIR therefore shows, for example,
+`PairMatcher::submit_right_fixed_and_dispatch_at(...) [join::Register
+lowering=FixedPairMatcher ...]` and the atomic equivalent. The MIR pretty
+printer exposes the strategy, while the LLVM boundary still strips metadata
+without emitting a second operation. This is the intended async-style split:
+rustc owns typed protocol/state selection and CFA, while the runtime owns
+future, waker, executor and scope services. The next step is to consume this
+strategy carrier in a dedicated typed claim/completion lowering; no runtime
+helper should be added merely to carry the field.
+
 ### Runtime/compiler boundary consolidation — 2026-09-20
 
 The compiler-facing fixed-pair boundary has been narrowed without changing

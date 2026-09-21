@@ -5,6 +5,21 @@ source/evidence review, not a full soundness audit. No benchmarks were rerun.
 
 ## Assessment
 
+### 2026-09-21 MIR strategy-carrier follow-up
+
+The proof result is now explicit on the real MIR call. `JoinCall.lowering`
+defaults to `Generic` during descriptor installation and is set only by the
+proof-consuming storage pass. Calls to generated runtime adapters that lacked
+a frontend descriptor receive one with the endpoint and channel identity;
+their typed operands and unwind edges are still the ordinary `Call`
+terminator. The optimized MIR gate checks both the fixed-pair and atomic
+strategies on those calls, while off/analyze reject any fixed strategy.
+
+This is a structural IR step, not yet direct claim/completion code generation:
+the call still targets the existing runtime ABI, and the backend continues to
+discard metadata. It gives the next lowering pass a stable typed input and
+prevents it from pattern-matching helper names.
+
 ### Follow-up implementation slice
 
 The runtime/compiler boundary has since been consolidated for the ordinary

@@ -221,6 +221,13 @@ pub enum JoinOperationKind {
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinCall {
     pub kind: JoinOperationKind,
+    /// Representation selected by the compiler for this call site.  The
+    /// descriptor is initialized to `Generic` while the frontend operation
+    /// is being classified, then upgraded only after the interprocedural CFA
+    /// certificate has been consumed by the MIR lowering pass.  Keeping this
+    /// on the real call makes the selected state visible to later MIR passes
+    /// without asking them to infer it from a runtime symbol name.
+    pub lowering: JoinLoweringStrategy,
     /// Typed group identity. For local definitions this is the endpoint
     /// `DefId`; when metadata is imported the crate number remains part of the
     /// identity rather than being reconstructed from a local index.

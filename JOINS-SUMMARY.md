@@ -17,6 +17,19 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
+### Typed strategy carrier in MIR — 2026-09-21
+
+The proof-selected representation is now recorded on the actual typed MIR
+call as `JoinCall.lowering`. Frontend classification initializes it to
+`Generic`; the optimize-only storage pass upgrades it after a positive CFA
+certificate and also annotates generated runtime adapter calls that had no
+frontend descriptor. MIR retains the normal operands, destination and unwind
+edges, and the pretty-printer exposes the strategy without requiring later
+passes to infer it from a runtime symbol. The optimize MIR gate now verifies
+`FixedPairMatcher` and `FixedAtomicU64Pair` on their real registration/match
+calls, while off/analyze retain generic calls. This is the carrier for the
+next typed claim/completion lowering; it does not yet change backend codegen.
+
 ### Proof-selected atomic pair lowering — 2026-09-20
 
 The current compiler/runtime slice consumes a narrow CFA certificate for the
