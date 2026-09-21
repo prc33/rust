@@ -94,10 +94,13 @@ calls carry `certificate=Some(...)`; off/analyze still emit no fixed calls.
 `Return` terminator of a synchronous reaction body, rather than at body entry.
 The marker is still erased before backend code generation, but its MIR
 location now matches the ownership/lifetime boundary where a typed completion
-lowering can publish every reply. Async reactions deliberately do not receive
-an invented entry marker: their completion belongs at the coroutine output
-edge after ordinary coroutine lowering. This keeps the representation honest
-while leaving the existing runtime adapter unchanged.
+lowering can publish every reply. The marker now carries the compiler-resolved
+`reply_channel_indices` map as well; a two-result rule is visible as
+`replies=[0, 1]` in optimized MIR. One-way reactions have no completion marker.
+Async reactions deliberately do not receive an invented entry marker: their
+completion belongs at the coroutine output edge after ordinary coroutine
+lowering. This keeps the representation honest while leaving the existing
+runtime adapter unchanged.
 
 ### Runtime/compiler boundary consolidation — 2026-09-20
 
