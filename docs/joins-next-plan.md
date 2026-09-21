@@ -48,24 +48,31 @@ standalone `joins-cfa` library is an oracle, not rustc's optimization authority.
 
 ### Compiler-native bounded CFA — 2026-09-21
 
-The first compiler-owned call-string layer is now implemented in
+The first compiler-owned semantic-history layer is now implemented in
 `rustc_mir_transform`. `JoinCfaBodyRecord` retains typed call edges, MIR call
 and yield counts, endpoint escapes, and parent identities. The solver keeps a
-bounded k-call context (`-Zjoin-cfa-depth`, default `1`), propagates monotone
+bounded k-history (`-Zjoin-cfa-depth`, default `1`), propagates monotone
 `suspend`/`escape`/`external` effects, follows ordinary helper calls, and
-connects nested MIR bodies through a non-consuming parent transition. Generated
-constructor/channel/dispatch edges are protocol transitions rather than
-ordinary call frames, so adapter plumbing cannot consume the call-string
-budget. A configured work budget makes partial graphs diagnostic-only.
+connects nested MIR bodies through a non-consuming parent transition. Source
+`CreateGroup` and channel `Register` events contribute tagged JCAM-style
+history frames; generated dispatch and reaction adapters remain transparent
+so one semantic event is not counted once per ABI wrapper. A configured work
+budget makes partial graphs diagnostic-only.
 
 The JSON certificate records context frames, truncation, local and inherited
 effects, closedness, and `optimization_safe`. Proof consumers require the graph
-to be complete and require *every* context instance for each state-token
-transition to be safe; one safe path can no longer mask an unsafe path. The
-endpoint-wide fixed-slot/pair lowering consumes this certificate without
-looking at runtime lock implementations. The final native gate passes in
-optimize, analyze, and off modes; the optimize dump contains 230 transitions,
-76 merged contexts, and three proven state-token endpoints.
+to be complete and require every context instance to be safe, except for the
+narrow closed re-emission cycle that the state-token proof itself certifies:
+truncation must occur in a selected reaction body, carry no suspend/escape/
+external effect, and end at the candidate token's typed registration. An
+ordinary/helper/external truncation remains a rejection. The endpoint-wide
+fixed-slot/pair lowering consumes this certificate without looking at runtime
+lock implementations. The native gate passes in optimize, analyze, and off
+modes; the current optimize run proves three state-token endpoints
+(`FixedUnarySlot`, `FixedPairMatcher`, and `FixedAtomicU64Pair`). The dedicated
+semantic-history fixture reports 46 transitions and 23 contexts at k=1, and
+32 transitions and 14 contexts at k=0, with zero retained semantic frames in
+the latter mode.
 
 This is deliberately split at the LLVM boundary. rustc must establish
 endpoint/rule/instance identity, ownership, protocol multiplicity, and

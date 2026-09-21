@@ -25,14 +25,18 @@ does not claim a backend join transform. The inventory is
 
 ## 2026-09-21 CFA boundary checkpoint
 
-The compiler now implements a bounded call-string CFA before codegen. It
-retains typed endpoint/rule/body identities, ordinary helper call frames,
-parent-linked nested bodies, and monotone suspension/escape/external effects;
-the selected state-token lowering consumes only complete all-context-safe
-certificates. This is the information LLVM cannot recover after join metadata
-is erased. The optimize native gate produced a complete k=1 graph (230
-transitions, 76 contexts, three proven endpoints), while off/analyze selected
-no storage rewrite.
+The compiler now implements a bounded semantic-history CFA before codegen. It
+retains typed endpoint/rule/body identities, source `CreateGroup`/
+`Register` frames, ordinary helper call frames, parent-linked nested bodies,
+and monotone suspension/escape/external effects; generated dispatch/reaction
+adapters do not add duplicate frames. The selected state-token lowering
+consumes only complete certificates whose contexts are safe, apart from the
+narrow effect-free closed re-emission cycle explicitly covered by the token
+proof. This is the information LLVM cannot recover after join metadata is
+erased. The optimize native gate currently proves three endpoints
+(`FixedUnarySlot`, `FixedPairMatcher`, and `FixedAtomicU64Pair`), while
+off/analyze select no storage rewrite. The isolated CFA fixture reports 46
+transitions/23 contexts at k=1 and 32 transitions/14 contexts at k=0.
 
 This is intentionally complementary to LLVM rather than a second backend CFA:
 LLVM's call graph, alias analysis, MemorySSA, inliner, SROA and target atomic

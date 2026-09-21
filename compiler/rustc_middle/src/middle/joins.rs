@@ -615,6 +615,11 @@ pub struct JoinCfaBodyRecord {
     pub body_def_id: u32,
     pub parent_body_def_id: Option<u32>,
     pub endpoint_def_id: Option<u32>,
+    /// Source channel identity for a generated channel body. This lets the
+    /// solver recover the semantic registration event when the frontend call
+    /// is represented by a shared dispatch method rather than a
+    /// channel-specific DefId.
+    pub channel_index: Option<u32>,
     /// Source-rule coordinate for reaction bodies.  The generated dynamic
     /// endpoint has one shared dispatch owner, so the method DefId alone is
     /// not enough to relate a re-emission to the rule that consumed it.
@@ -649,16 +654,38 @@ pub struct JoinCfaEffects {
     pub may_external: bool,
 }
 
-/// One retained call-string frame in the rustc-owned CFA.  The frame is a
-/// typed MIR edge, not a generated symbol name, so ordinary helpers and join
-/// adapters share the same context representation.
+/// The kind of source-level event represented by a bounded CFA frame.
+///
+/// JCAM's history contains join construction/emission events because it has
+/// no ordinary function-call graph. Rust has both kinds of edges, so the
+/// compiler keeps them tagged in one history. Generated dispatch/reaction
+/// adapters are not frames: the semantic event is recorded once at the
+/// source-level constructor or channel registration and then propagated
+/// through those adapters.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub enum JoinCfaContextFrameKind {
+    RustCall,
+    JoinCreate,
+    JoinRegister,
+}
+
+/// One retained semantic call/history frame in the rustc-owned CFA. The
+/// source location and resolved identities are retained so the frame remains
+/// meaningful after generated method bodies are introduced or remapped.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub struct JoinCfaContextFrame {
+    pub kind: JoinCfaContextFrameKind,
     pub caller_body_def_id: u32,
     pub block: u32,
     pub statement: u32,
     pub callee_body_def_id: u32,
+    /// Endpoint/group identity for semantic join frames. Ordinary Rust call
+    /// frames leave these coordinates absent.
+    pub group_def_id: Option<u32>,
+    pub channel_index: Option<u32>,
+    pub rule_index: Option<u32>,
 }
 
 /// A bounded context-sensitive instance of a MIR body.  Multiple concrete
