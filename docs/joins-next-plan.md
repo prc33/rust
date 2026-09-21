@@ -183,19 +183,18 @@ optimized runtime relative to the generic path. The remaining work is not
 another lock tweak: attribute and lower the result-side FIFO, reply-cell
 completion/ownership, tracing and trampoline before broadening the CFA proof.
 
-### Pending-right allocation cleanup — 2026-09-21
+### Pending-right allocation experiment — 2026-09-21
 
-The atomic result-side admission no longer allocates an `Arc` identity token
-for every queued request. Each admission receives a monotonic `AtomicU64` ID;
-the reply withdrawal hook keeps a weak state reference and that ID, and queue
-removal still linearizes under the result FIFO mutex. This is deliberately a
-storage/ownership cleanup, not lock recognition or a semantic shortcut. It
-preserves FIFO order, dropped-request withdrawal, cancellation draining, and
-the target-width fallback. Runtime tests remain green (75/75). The clean
-optimize benchmark snapshot after the preceding clone cleanup was 174.5 ns/op
-median for the four-worker mutex row (50 samples); it is directional, so the
-next timing must compare the ID change against the same binary/configuration
-with a paired or shuffled run.
+A candidate cleanup replaced the per-request atomic-path identity `Arc` with
+a monotonic `AtomicU64` ID while retaining weak-state withdrawal and FIFO
+linearization. It passed the 75-test runtime suite, but a same-configuration
+serial comparison did not justify keeping it: 100 samples of the four-worker
+mutex row measured 207.1 ns/op median (ID) versus 182.7 ns/op with the
+preceding `Arc` implementation, with a substantially higher mean as well.
+The candidate was reverted. This is useful negative evidence: allocation
+removal alone is not a performance win here, and the next optimization should
+target typed reply completion/ownership rather than add another runtime
+identity mechanism.
 
 ## Next slice after the atomic gate
 
