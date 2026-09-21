@@ -295,6 +295,21 @@ impl JoinBodyFacts {
         location: Location,
         reply_channel_indices: impl IntoIterator<Item = u32>,
     ) {
+        self.operation_with_reply_channels_and_destination(
+            kind,
+            location,
+            reply_channel_indices,
+            None,
+        );
+    }
+
+    fn operation_with_reply_channels_and_destination(
+        &mut self,
+        kind: JoinOperationKind,
+        location: Location,
+        reply_channel_indices: impl IntoIterator<Item = u32>,
+        destination_local: Option<u32>,
+    ) {
         self.operations.push(JoinMirOperation {
             kind,
             block: location.block.index() as u32,
@@ -307,7 +322,7 @@ impl JoinBodyFacts {
             endpoint_def_id: self.endpoint_def_id,
             rule_def_id: self.rule_def_id,
             receiver_local: None,
-            destination_local: None,
+            destination_local,
             argument_locals: Box::new([]),
         });
     }
@@ -3291,7 +3306,9 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
             endpoint_def_id: operation.endpoint_def_id,
             rule_def_id: operation.rule_def_id,
             receiver: None,
-            destination: None,
+            destination: operation
+                .destination_local
+                .map(|local| Place::from(mir::Local::from_usize(local as usize))),
             arguments: Box::new([]),
         };
         pending.push((block, statement.min(block_data.statements.len()), source_info, marker));
@@ -4182,13 +4199,14 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 if !is_async && facts.yields == 0 && !reply_channel_indices.is_empty() {
                     for (block, block_data) in body.basic_blocks.iter_enumerated() {
                         if matches!(block_data.terminator().kind, TerminatorKind::Return) {
-                            facts.operation_with_reply_channels(
+                            facts.operation_with_reply_channels_and_destination(
                                 JoinOperationKind::CompleteReplies,
                                 Location {
                                     block,
                                     statement_index: block_data.statements.len(),
                                 },
                                 reply_channel_indices.iter().copied(),
+                                Some(RETURN_PLACE.index() as u32),
                             );
                         }
                     }

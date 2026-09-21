@@ -44,12 +44,12 @@ runtime symbols. This is still metadata plus existing fixed-symbol retargeting;
 direct claim/completion MIR generation remains the next optimization step.
 
 Synchronous reaction bodies now carry `CompleteReplies` at their actual MIR
-`Return` boundary, with the typed source reply map preserved as
-`replies=[…]` (the two-result witness emits `replies=[0, 1]`). One-way rules
-have no completion marker, and async reactions wait for coroutine-output
-lowering. The native dump gate checks both the return placement and the
-multi-reply map; codegen still erases the marker until a typed completion
-lowering consumes it.
+`Return` boundary, with the typed source reply map and return place preserved as
+`replies=[…], destination=_0` (the two-result witness emits
+`replies=[0, 1], destination=_0`). One-way rules have no completion marker, and
+async reactions wait for coroutine-output lowering. The native dump gate checks
+the return placement and multi-reply map; codegen still erases the marker until
+a typed completion lowering consumes it.
 
 ### Proof-selected atomic pair lowering — 2026-09-20
 
