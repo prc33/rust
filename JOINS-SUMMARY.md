@@ -1,5 +1,8 @@
 # Joins research checkpoint — 2026-09-18
 
+For the complete primitive-by-primitive matrix and the thesis/Dovetail gap
+list, see [JOINS-PRIMITIVES-SUMMARY.md](JOINS-PRIMITIVES-SUMMARY.md).
+
 Current review and immediate sequencing: [2026-09-20 assessment](docs/joins-review-20260920.md).
 It supersedes the next-step/completion claims below: validate one endpoint-wide
 lowering plan and ABI contract, resolve cancellation ownership, then archive clean
