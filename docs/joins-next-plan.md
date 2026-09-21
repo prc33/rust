@@ -584,6 +584,21 @@ generalization until the fixed body has a sound fallback and a direct-source
 gate demonstrates that the specialized representation, rather than only its
 symbol, reaches generated code.
 
+### Atomic fused-admission follow-up — 2026-09-21
+
+The runtime half of the exact-`u64` pair now carries an atomic pending-right
+count. A zero count lets the proof-selected fused admission claim the token
+without taking the result FIFO mutex; queued, withdrawn, cancelled, and
+contention paths still use the mutex and preserve FIFO semantics. This removes
+one known empty-queue lock from the hot path without recognizing or replacing
+any library lock. The runtime suite (75 tests) and optimize compiler gate pass.
+The initial post-change 50-sample mutex snapshot is 200.31 ns/op optimized
+versus 34.29 ns/op handwritten; treat this as directional until a paired,
+shuffled attribution run is archived. The next performance gate should compare
+queue-lock counts and generated assembly before and after this guard, then
+move the typed token claim/reply completion into MIR rather than adding more
+runtime entry points.
+
 ## 7. Measure, generalize, then migrate DataFusion
 
 After correctness gates, run the focused counter benchmark against the native
