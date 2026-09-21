@@ -922,11 +922,12 @@ impl Display for NonDivergingIntrinsic<'_> {
             }
             Self::Join(join) => write!(
                 f,
-                "join::{:?}(group={:?}, channel={:?}, rule_index={:?}, queue_bound={:?}, {:?})",
+                "join::{:?}(group={:?}, channel={:?}, rule_index={:?}, replies={:?}, queue_bound={:?}, {:?})",
                 join.kind,
                 join.group_def_id,
                 join.channel_index,
                 join.rule_index,
+                join.reply_channel_indices,
                 join.queue_bound,
                 join.arguments,
             ),

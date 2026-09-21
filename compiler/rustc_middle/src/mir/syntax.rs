@@ -511,6 +511,9 @@ pub struct JoinIntrinsic<'tcx> {
     pub group_def_id: Option<u32>,
     pub channel_index: Option<u32>,
     pub rule_index: Option<u32>,
+    /// Source reply channels completed by this reaction. The list is typed
+    /// metadata for `CompleteReplies`; it is empty for other markers.
+    pub reply_channel_indices: Box<[u32]>,
     pub queue_bound: JoinQueueBound,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,

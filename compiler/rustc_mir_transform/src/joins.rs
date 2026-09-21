@@ -286,6 +286,15 @@ struct JoinBodyFacts {
 
 impl JoinBodyFacts {
     fn operation(&mut self, kind: JoinOperationKind, location: Location) {
+        self.operation_with_reply_channels(kind, location, std::iter::empty());
+    }
+
+    fn operation_with_reply_channels(
+        &mut self,
+        kind: JoinOperationKind,
+        location: Location,
+        reply_channel_indices: impl IntoIterator<Item = u32>,
+    ) {
         self.operations.push(JoinMirOperation {
             kind,
             block: location.block.index() as u32,
@@ -293,6 +302,7 @@ impl JoinBodyFacts {
             group_def_id: self.endpoint_def_id,
             channel_index: self.channel_index,
             rule_index: self.rule_index,
+            reply_channel_indices: reply_channel_indices.into_iter().collect(),
             queue_bound: self.queue_bound,
             endpoint_def_id: self.endpoint_def_id,
             rule_def_id: self.rule_def_id,
@@ -322,6 +332,7 @@ impl JoinBodyFacts {
             group_def_id: endpoint_def_id,
             channel_index,
             rule_index,
+            reply_channel_indices: Box::new([]),
             queue_bound,
             endpoint_def_id,
             rule_def_id,
@@ -3269,6 +3280,7 @@ fn install_join_intrinsics<'tcx>(body: &mut Body<'tcx>, summary: &JoinCfaSummary
             group_def_id: operation.group_def_id,
             channel_index: operation.channel_index,
             rule_index: operation.rule_index,
+            reply_channel_indices: operation.reply_channel_indices.clone(),
             queue_bound: operation.queue_bound,
             endpoint_def_id: operation.endpoint_def_id,
             rule_def_id: operation.rule_def_id,
@@ -4099,6 +4111,26 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
         };
         facts.visit_body(body);
 
+        // Resolve the source rule's reply map once from the typed endpoint
+        // descriptor. Completion metadata must carry these channel indices
+        // through MIR; a later lowering pass should not reconstruct them from
+        // the generated reaction helper's name or tuple layout.
+        let reply_channel_indices = if role == JoinBodyRole::ReactionBody {
+            endpoint_def_id_local
+                .and_then(|endpoint_id| {
+                    tcx.join_definitions(()).endpoints.iter().find(|endpoint| {
+                        endpoint.endpoint_def_id == Some(endpoint_id)
+                    })
+                })
+                .and_then(|endpoint| {
+                    rule_index.and_then(|index| endpoint.rules.get(index as usize))
+                })
+                .map(|rule| rule.reply_channel_indices.clone())
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+
         // Add the semantic operation at the boundary that generated methods
         // currently represent. These entries are typed and descriptor-backed;
         // they are not a claim that the runtime helper itself is the semantic
@@ -4141,15 +4173,16 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 // that coroutine's output is delivered by the executor. Do
                 // not invent an entry-point completion marker for them; the
                 // coroutine lowering slice will add it at the output edge.
-                if !is_async && facts.yields == 0 {
+                if !is_async && facts.yields == 0 && !reply_channel_indices.is_empty() {
                     for (block, block_data) in body.basic_blocks.iter_enumerated() {
                         if matches!(block_data.terminator().kind, TerminatorKind::Return) {
-                            facts.operation(
+                            facts.operation_with_reply_channels(
                                 JoinOperationKind::CompleteReplies,
                                 Location {
                                     block,
                                     statement_index: block_data.statements.len(),
                                 },
+                                reply_channel_indices.iter().copied(),
                             );
                         }
                     }
@@ -4166,6 +4199,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 group_def_id: Some(endpoint_def_id),
                 channel_index: None,
                 rule_index: None,
+                reply_channel_indices: Box::new([]),
                 queue_bound,
                 endpoint_def_id: Some(endpoint_def_id),
                 rule_def_id: Some(rule_def_id),

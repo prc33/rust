@@ -276,6 +276,11 @@ pub struct JoinMirOperation {
     pub group_def_id: Option<u32>,
     pub channel_index: Option<u32>,
     pub rule_index: Option<u32>,
+    /// Source channels whose result slots are completed by this reaction.
+    /// This is populated for `CompleteReplies`; other operations keep it
+    /// empty rather than making later passes rediscover the reply map from a
+    /// generated helper name.
+    pub reply_channel_indices: Box<[u32]>,
     pub queue_bound: JoinQueueBound,
     pub endpoint_def_id: Option<u32>,
     pub rule_def_id: Option<u32>,
