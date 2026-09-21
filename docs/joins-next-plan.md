@@ -89,6 +89,29 @@ sets, capture-sensitive escape transfer, coroutine output/drop edges, and
 context-qualified queue/reply bounds still need to feed fusion and completion
 lowering. Until those are present, the generic matcher remains the fallback.
 
+### JCAM value-CFA correction — 2026-09-21
+
+The previous implementation failure was specific and now has a regression
+test. MIR had recorded every aggregate as if it were a primitive and labelled
+the closure with its enclosing body. That made the generated adapter look like
+an escaping opaque operation, so a context fixed point did not mean that a
+reaction body was ever analysed. `AggregateKind::Closure`, `Coroutine`, and
+`CoroutineClosure` now provide the actual nested `DefId`; captures are retained
+as a typed `Closure` constraint, and a channel `Emit` seeds/enters the matching
+dispatch body. Closure construction is not itself an external escape; only a
+later return or unknown boundary widens its captures. The 19 thesis/Dovetail
+ports now all pass `context.complete` and `cfa_complete`, and the corpus gate
+checks that closure bodies exist in the graph and closure values occur in the
+solution.
+
+This fixes the “opaque stand-in” failure, but it is not a claim of exact
+Dovetail parity yet. The remaining implementation is explicit: replace the
+current merged static-body propagation with fresh context-qualified variables
+and substitutions for each retained `Emit` history (including `JoinCreate` and
+`JoinRegister`), then compare `Foreground`/`Background` and inner/outer escape
+sets against the original JCAM solver on the 19 ports. Only after that gate may
+the value solution drive fusion, queue bounds, or LLVM-visible lowering.
+
 ## Current gate status — 2026-09-20
 
 ### Typed strategy carrier on real MIR calls — 2026-09-21
