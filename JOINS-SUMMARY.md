@@ -87,6 +87,13 @@ trampoline; a paired/shuffled committed artifact is still required before
 using this row in the broad matrix. See
 `../join-benchmarks/docs/attribution-fixed-pair-20260920.md`.
 
+A current post-rebuild optimize-only smoke row (100 samples, same 10,000
+iterations and four workers, checksum `800020000`) measured 173.560 ns/op
+median and 178.939 ns/op mean. It is recorded in
+`../join-benchmarks/docs/typed-reply-map-current-20260921.md`; because the
+handwritten control was not rerun in the same shuffled artifact, this is a
+regression snapshot rather than a new effect-size claim.
+
 ### Private storage fusion — validated September 18
 
 The patch implements paired private-constructor/result-call selection, an empty
