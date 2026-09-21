@@ -217,6 +217,28 @@ The current post-rebuild optimize-only snapshot is 173.560 ns/op median
 the handwritten control was not rerun in the same shuffled artifact. Details
 are in `../join-benchmarks/docs/typed-reply-map-current-20260921.md`.
 
+### Perf attribution checkpoint — 2026-09-21
+
+With perf access restored, a serial 200,000-operation, four-worker optimize
+run captured 601 cycle samples with zero loss. The largest local symbols were
+the generated `JoinMutex::available` (13.78%), atomic fused admission (11.09%),
+atomic dispatch (11.05%), generated `acquire` (10.91%), and `PairMatcher` drop
+glue (10.26%). Reply demand was 3.69%, allocator samples were 3.86%/3.66%,
+and kernel futex wakeup was 3.33%. Annotation put 89.30% of the `available`
+symbol's local samples on an atomic increment immediately before generated
+dispatch-closure construction. The binary lacks usable source lines for that
+instruction, so the evidence is recorded as endpoint/closure setup rather than
+asserting which counter it updates. The generated source does currently clone
+the endpoint for every owned reaction closure. Full command and output are in
+`../join-benchmarks/docs/perf-atomic-mutex-20260921.md`.
+
+This changes the next optimization priority: test a compiler-visible
+borrowed/local claim boundary for proven unscoped synchronous reactions, or an
+equivalent ordinary-MIR lowering, before changing queue storage again. Scoped,
+async, and shared/executor-owned reactions must retain their owned boundary.
+The experiment is successful only if it preserves cancellation, unwind/drop,
+and checksum gates while removing the setup/drop symbols from the profile.
+
 ## Next slice after the atomic gate
 
 1. **Commit a paired attribution artifact.** Re-run the mutex row with native,

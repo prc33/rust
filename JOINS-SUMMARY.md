@@ -94,6 +94,19 @@ median and 178.939 ns/op mean. It is recorded in
 handwritten control was not rerun in the same shuffled artifact, this is a
 regression snapshot rather than a new effect-size claim.
 
+Perf attribution is now available for the same optimized shape: a serial
+200,000-operation, four-worker run captured 601 cycle samples with zero loss.
+The largest local symbols were generated `available` (13.78%), atomic fused
+admission (11.09%), atomic dispatch (11.05%), generated `acquire` (10.91%), and
+`PairMatcher` drop glue (10.26%). Annotation placed 89.30% of the `available`
+symbol's local samples on an atomic increment immediately before generated
+dispatch-closure construction. The instruction has no usable source line, so
+the report does not claim a particular counter; the generated source does show
+an endpoint clone for every owned reaction closure. This makes local/borrowed
+claim lowering the next high-value experiment, ahead of another queue heuristic.
+See `../join-benchmarks/docs/perf-atomic-mutex-20260921.md` for the command and
+limits of the attribution.
+
 ### Private storage fusion — validated September 18
 
 The patch implements paired private-constructor/result-call selection, an empty
