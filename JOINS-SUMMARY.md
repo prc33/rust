@@ -30,6 +30,19 @@ passes to infer it from a runtime symbol. The optimize MIR gate now verifies
 calls, while off/analyze retain generic calls. This is the carrier for the
 next typed claim/completion lowering; it does not yet change backend codegen.
 
+### Endpoint-wide lowering certificate — 2026-09-21
+
+`JoinStorageLowering` now validates one immutable plan for the whole proven
+endpoint instance before touching constructor, channel, or dispatch MIR. The
+plan binds the unique allocation, all positive `AtMost(1)` state-token proofs,
+one compatible strategy, and the inline channel mask. Mismatched proof origins,
+multiple/escaped instances, mixed strategies, duplicate proofs, or unsupported
+bounds conservatively retain the generic matcher. A deterministic certificate
+ID is carried both in the CFA dump and on optimized `JoinCall` metadata, so a
+future transition pass can reject stale or foreign evidence without inspecting
+runtime symbols. This is still metadata plus existing fixed-symbol retargeting;
+direct claim/completion MIR generation remains the next optimization step.
+
 ### Proof-selected atomic pair lowering — 2026-09-20
 
 The current compiler/runtime slice consumes a narrow CFA certificate for the

@@ -1727,18 +1727,20 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 let exact_atomic_pair = canonical_pair
                     && proof.channel_index == 0
                     && is_exact_atomic_u64_pair(tcx, endpoint, rule);
+                let strategy = if exact_atomic_pair {
+                    JoinLoweringStrategy::FixedAtomicU64Pair
+                } else if canonical_pair {
+                    JoinLoweringStrategy::FixedPairMatcher
+                } else {
+                    JoinLoweringStrategy::FixedUnarySlot
+                };
                 Some(JoinStateTokenLowering {
                     endpoint_def_id: proof.endpoint_def_id,
                     rule_index: proof.rule_index,
                     channel_index: proof.channel_index,
                     proven_bound: proof.proven_bound,
-                    strategy: if exact_atomic_pair {
-                        JoinLoweringStrategy::FixedAtomicU64Pair
-                    } else if canonical_pair {
-                        JoinLoweringStrategy::FixedPairMatcher
-                    } else {
-                        JoinLoweringStrategy::FixedUnarySlot
-                    },
+                    strategy,
+                    certificate_id: state_token_certificate_id(proof, strategy),
                 })
             })
             .collect()
@@ -2246,12 +2248,13 @@ fn dump_crate_summary(
         .iter()
         .map(|lowering| {
             format!(
-                "{{\"endpoint\":{},\"rule_index\":{},\"channel\":{},\"bound\":\"{:?}\",\"strategy\":\"{:?}\"}}",
+                "{{\"endpoint\":{},\"rule_index\":{},\"channel\":{},\"bound\":\"{:?}\",\"strategy\":\"{:?}\",\"certificate\":{}}}",
                 lowering.endpoint_def_id,
                 lowering.rule_index,
                 lowering.channel_index,
                 lowering.proven_bound,
                 lowering.strategy,
+                lowering.certificate_id,
             )
         })
         .collect::<Vec<_>>()
@@ -3173,6 +3176,7 @@ fn install_join_call_descriptors<'tcx>(
         call_descriptors.entry((block.index(), statement)).or_insert(JoinCall {
             kind,
             lowering: JoinLoweringStrategy::Generic,
+            certificate_id: None,
             group_def_id: local_join_def_id(operation.group_def_id),
             channel_index: operation.channel_index,
             rule_index: operation.rule_index,
@@ -3318,35 +3322,71 @@ fn is_exact_atomic_u64_pair<'tcx>(
         && signature.output() == tcx.types.unit
 }
 
-/// Return the source rule/channel lowering which is safe to apply to one
-/// concrete generated endpoint constructor.  A lowering record is not enough
-/// by itself: the proof must also identify exactly one unscoped constructor
-/// allocation and the current constructor body must still contain the
-/// compiler-emitted policy call with its conservative literals.
-fn state_token_constructor_lowering<'tcx>(
-    tcx: TyCtxt<'tcx>,
-    body: &Body<'tcx>,
-    endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
+/// Give each positive state-token proof a deterministic identity which can be
+/// carried through MIR.  This deliberately hashes compiler-owned coordinates
+/// and transition evidence only; source spans, generated names, and runtime
+/// implementation details are excluded so the identity remains useful after
+/// lowering and across equivalent generated bodies.
+fn state_token_certificate_id(
+    proof: &JoinStateTokenProof,
+    strategy: JoinLoweringStrategy,
+) -> u64 {
+    let mut hasher = FxHasher::default();
+    proof.endpoint_def_id.hash(&mut hasher);
+    proof.instance_body_def_id.hash(&mut hasher);
+    proof.allocation_block.hash(&mut hasher);
+    proof.allocation_statement.hash(&mut hasher);
+    proof.rule_index.hash(&mut hasher);
+    proof.channel_index.hash(&mut hasher);
+    proof.seed_events.hash(&mut hasher);
+    proof.claim_events.hash(&mut hasher);
+    proof.reemit_events.hash(&mut hasher);
+    proof.proven_bound.hash(&mut hasher);
+    proof.status.hash(&mut hasher);
+    proof.rejection.hash(&mut hasher);
+    for transition in &proof.transitions {
+        transition.body_def_id.hash(&mut hasher);
+        transition.role.hash(&mut hasher);
+        transition.kind.hash(&mut hasher);
+        transition.block.hash(&mut hasher);
+        transition.statement.hash(&mut hasher);
+    }
+    strategy.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// One endpoint-wide lowering decision.  Every generated constructor,
+/// channel adapter, and dispatch body for an endpoint consumes this same
+/// plan; a body-local pass must not independently decide that only one part
+/// of a shared instance can use the fixed representation.
+#[derive(Copy, Clone, Debug)]
+struct JoinEndpointLoweringPlan {
+    endpoint_def_id: u32,
+    inline_mask: u64,
+    strategy: JoinLoweringStrategy,
+    certificate_id: u64,
+}
+
+/// Validate and combine all positive state-token records for one concrete
+/// endpoint instance.  The returned certificate binds the endpoint identity,
+/// unique allocation, proof identities, mask, and selected strategy.  Any
+/// ambiguity (multiple instances, mismatched proof origins, mixed strategies,
+/// or an unsupported bound) retains the generic representation.
+fn validated_endpoint_lowering_plan(
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'_>,
     summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
-) -> Option<(u64, JoinLoweringStrategy)> {
+) -> Option<JoinEndpointLoweringPlan> {
     let endpoint_def_id = endpoint.endpoint_def_id?.index() as u32;
-    let constructor_def_id = endpoint.constructor_def_id?;
-    let constructor_u32 = constructor_def_id.index() as u32;
-    if summary
+    let mut instances = summary
         .instances
         .iter()
-        .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
-        .count()
-        != 1
-    {
-        // Rewriting the generated constructor body affects every call to that
-        // function.  The one-allocation requirement is therefore essential:
-        // a second instance could need generic queues even when one instance
-        // has a one-token witness.
+        .filter(|instance| instance.endpoint_def_id == endpoint_def_id);
+    let instance = instances.next()?;
+    if instances.next().is_some() || instance.status != JoinCfaInstanceStatus::Unique {
         return None;
     }
 
-    let lowerings = summary
+    let mut lowerings = summary
         .state_token_lowerings
         .iter()
         .filter(|lowering| {
@@ -3363,27 +3403,89 @@ fn state_token_constructor_lowering<'tcx>(
     if lowerings.is_empty() {
         return None;
     }
-    // A constructor may not combine two different proof contracts.  In
-    // particular, the pair entry point below is only selected for an entire
-    // canonical pair endpoint; an unrelated unary token must remain on the
-    // ordinary mask bridge.
+    lowerings.sort_by_key(|lowering| (lowering.rule_index, lowering.channel_index));
     let strategy = lowerings[0].strategy;
     if lowerings.iter().any(|lowering| lowering.strategy != strategy) {
         return None;
     }
+
     let mut inline_mask = 0u64;
+    let mut certificate = FxHasher::default();
+    endpoint_def_id.hash(&mut certificate);
+    instance.body_def_id.hash(&mut certificate);
+    instance.allocation_block.hash(&mut certificate);
+    instance.allocation_statement.hash(&mut certificate);
+    strategy.hash(&mut certificate);
     for lowering in lowerings {
         if lowering.channel_index >= u64::BITS as u32 {
             return None;
         }
+        let mut proofs = summary.state_tokens.iter().filter(|proof| {
+            proof.endpoint_def_id == endpoint_def_id
+                && proof.rule_index == lowering.rule_index
+                && proof.channel_index == lowering.channel_index
+                && proof.status == JoinStateTokenStatus::Proven
+                && proof.proven_bound == JoinQueueBound::AtMost(1)
+                && proof.instance_body_def_id == Some(instance.body_def_id)
+                && proof.allocation_block == Some(instance.allocation_block)
+                && proof.allocation_statement == Some(instance.allocation_statement)
+        });
+        let proof = proofs.next()?;
+        if proofs.next().is_some() {
+            return None;
+        }
+        // The per-channel certificate is part of the endpoint certificate;
+        // later MIR consumers can use either identity when diagnosing a
+        // rejected or stale rewrite.
+        lowering.certificate_id.hash(&mut certificate);
+        proof.rule_index.hash(&mut certificate);
+        proof.channel_index.hash(&mut certificate);
+        inline_mask |= 1u64 << lowering.channel_index;
+    }
+    inline_mask.hash(&mut certificate);
+    Some(JoinEndpointLoweringPlan {
+        endpoint_def_id,
+        inline_mask,
+        strategy,
+        certificate_id: certificate.finish(),
+    })
+}
+
+/// Return the source rule/channel lowering which is safe to apply to one
+/// concrete generated endpoint constructor.  A lowering record is not enough
+/// by itself: the proof must also identify exactly one unscoped constructor
+/// allocation and the current constructor body must still contain the
+/// compiler-emitted policy call with its conservative literals.
+fn state_token_constructor_lowering<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    body: &Body<'tcx>,
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
+    summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
+) -> Option<JoinEndpointLoweringPlan> {
+    let plan = validated_endpoint_lowering_plan(endpoint, summary)?;
+    let endpoint_def_id = plan.endpoint_def_id;
+    let constructor_def_id = endpoint.constructor_def_id?;
+    let constructor_u32 = constructor_def_id.index() as u32;
+    let lowerings = summary
+        .state_token_lowerings
+        .iter()
+        .filter(|lowering| {
+            lowering.endpoint_def_id == endpoint_def_id
+                && matches!(
+                    lowering.strategy,
+                    JoinLoweringStrategy::FixedUnarySlot
+                        | JoinLoweringStrategy::FixedPairMatcher
+                        | JoinLoweringStrategy::FixedAtomicU64Pair
+                )
+                && lowering.proven_bound == JoinQueueBound::AtMost(1)
+        })
+        .collect::<Vec<_>>();
+    for lowering in lowerings {
         let proof = summary.state_tokens.iter().find(|proof| {
             proof.endpoint_def_id == endpoint_def_id
                 && proof.rule_index == lowering.rule_index
                 && proof.channel_index == lowering.channel_index
                 && proof.status == JoinStateTokenStatus::Proven
-                && proof.instance_body_def_id.is_some()
-                && proof.allocation_block.is_some()
-                && proof.allocation_statement.is_some()
         })?;
         let allocation_block = proof.allocation_block?;
         let allocation_statement = proof.allocation_statement?;
@@ -3400,7 +3502,6 @@ fn state_token_constructor_lowering<'tcx>(
                 && edge.statement == allocation_statement
         })?;
         let _ = allocation;
-        inline_mask |= 1u64 << lowering.channel_index;
     }
     // A scoped constructor has different cancellation/tracing ownership and
     // cannot be replaced by the unscoped per-channel policy constructor.
@@ -3448,7 +3549,7 @@ fn state_token_constructor_lowering<'tcx>(
         }
     }
     if matches.len() == 1 {
-        Some((inline_mask, strategy))
+        Some(plan)
     } else {
         None
     }
@@ -3604,63 +3705,15 @@ fn fixed_pair_method<'tcx>(
     })
 }
 
-/// Return the proven representation selected for an endpoint without
-/// requiring the caller to be its constructor body. Constructor lowering adds
-/// the stricter literal/unique-call-site checks; generated channel and
-/// dispatch methods use this same certificate only after their endpoint and
-/// method identities have been resolved from the typed descriptor.
+/// Return the single endpoint-wide representation selected for a generated
+/// channel or dispatch body. Constructor lowering adds the stricter
+/// literal/unique-call-site checks; all other endpoint methods consume this
+/// same validated plan.
 fn proven_endpoint_lowering<'tcx>(
     endpoint: &rustc_middle::middle::joins::JoinDefinition<'tcx>,
     summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
-) -> Option<(u64, JoinLoweringStrategy)> {
-    let endpoint_def_id = endpoint.endpoint_def_id?.index() as u32;
-    if summary
-        .instances
-        .iter()
-        .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
-        .count()
-        != 1
-    {
-        return None;
-    }
-    let lowerings = summary
-        .state_token_lowerings
-        .iter()
-        .filter(|lowering| {
-            lowering.endpoint_def_id == endpoint_def_id
-                && matches!(
-                    lowering.strategy,
-                    JoinLoweringStrategy::FixedUnarySlot
-                        | JoinLoweringStrategy::FixedPairMatcher
-                        | JoinLoweringStrategy::FixedAtomicU64Pair
-                )
-                && lowering.proven_bound == JoinQueueBound::AtMost(1)
-        })
-        .collect::<Vec<_>>();
-    if lowerings.is_empty() {
-        return None;
-    }
-    let strategy = lowerings[0].strategy;
-    if lowerings.iter().any(|lowering| lowering.strategy != strategy) {
-        return None;
-    }
-    let mut mask = 0u64;
-    for lowering in lowerings {
-        if lowering.channel_index >= u64::BITS as u32 {
-            return None;
-        }
-        let proven = summary.state_tokens.iter().find(|proof| {
-            proof.endpoint_def_id == endpoint_def_id
-                && proof.rule_index == lowering.rule_index
-                && proof.channel_index == lowering.channel_index
-                && proof.status == JoinStateTokenStatus::Proven
-        })?;
-        if proven.proven_bound != JoinQueueBound::AtMost(1) {
-            return None;
-        }
-        mask |= 1u64 << lowering.channel_index;
-    }
-    Some((mask, strategy))
+) -> Option<JoinEndpointLoweringPlan> {
+    validated_endpoint_lowering_plan(endpoint, summary)
 }
 
 /// Proof-consuming bridge from the compiler's per-channel state-token record
@@ -3700,7 +3753,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
         } else {
             proven_endpoint_lowering(endpoint, summary)
         };
-        let Some((inline_mask, strategy)) = lowering else { return };
+        let Some(plan) = lowering else { return };
+        let inline_mask = plan.inline_mask;
+        let strategy = plan.strategy;
         let pair_strategy = matches!(
             strategy,
             JoinLoweringStrategy::FixedPairMatcher | JoinLoweringStrategy::FixedAtomicU64Pair
@@ -3897,6 +3952,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             // a future direct state-transition lowering possible.
             if let Some(join) = join {
                 join.lowering = strategy;
+                join.certificate_id = Some(plan.certificate_id);
             } else {
                 // Runtime adapter calls are generated after the source-level
                 // channel/dispatch operation has been identified, so they do
@@ -3907,6 +3963,7 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 *join = Some(JoinCall {
                     kind,
                     lowering: strategy,
+                    certificate_id: Some(plan.certificate_id),
                     group_def_id: endpoint.endpoint_def_id.map(|id| id.to_def_id()),
                     channel_index,
                     rule_index: None,

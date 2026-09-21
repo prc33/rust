@@ -228,6 +228,12 @@ pub struct JoinCall {
     /// on the real call makes the selected state visible to later MIR passes
     /// without asking them to infer it from a runtime symbol name.
     pub lowering: JoinLoweringStrategy,
+    /// Stable identity of the whole-instance CFA certificate consumed at
+    /// this call. `None` means that the call is only classified by the
+    /// frontend; an optimized call must carry the certificate which selected
+    /// its representation so later MIR/LLVM passes never have to infer proof
+    /// provenance from a runtime symbol.
+    pub certificate_id: Option<u64>,
     /// Typed group identity. For local definitions this is the endpoint
     /// `DefId`; when metadata is imported the crate number remains part of the
     /// identity rather than being reconstructed from a local index.
@@ -725,6 +731,10 @@ pub struct JoinStateTokenLowering {
     pub channel_index: u32,
     pub proven_bound: JoinQueueBound,
     pub strategy: JoinLoweringStrategy,
+    /// Deterministic identity of the positive proof record which selected
+    /// this lowering. This is evidence identity, not a runtime pointer or a
+    /// user-visible token.
+    pub certificate_id: u64,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]

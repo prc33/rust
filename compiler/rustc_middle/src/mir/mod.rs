@@ -1746,11 +1746,11 @@ mod size_asserts {
 
     use super::*;
     // tidy-alphabetical-start
-    static_assert_size!(BasicBlockData<'_>, 200);
+    static_assert_size!(BasicBlockData<'_>, 216);
     static_assert_size!(LocalDecl<'_>, 40);
     static_assert_size!(SourceScopeData<'_>, 64);
     static_assert_size!(Statement<'_>, 40);
-    static_assert_size!(Terminator<'_>, 160);
+    static_assert_size!(Terminator<'_>, 176);
     static_assert_size!(VarDebugInfo<'_>, 88);
     // tidy-alphabetical-end
 }

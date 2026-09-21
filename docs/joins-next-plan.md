@@ -70,6 +70,24 @@ future, waker, executor and scope services. The next step is to consume this
 strategy carrier in a dedicated typed claim/completion lowering; no runtime
 helper should be added merely to carry the field.
 
+### Endpoint-wide certificate carrier — 2026-09-21
+
+The storage pass now builds one `JoinEndpointLoweringPlan` per proven endpoint
+instance before rewriting any generated body. It requires one unique CFA
+allocation, `AtMost(1)` positive state-token proofs with matching origins, one
+strategy for the complete endpoint, and a mask derived from those proofs. The
+constructor adds its extra literal/allocation-edge checks, but channel and
+dispatch bodies consume the same plan rather than recomputing a body-local
+decision. Any ambiguity leaves the complete endpoint on the generic path.
+
+Each positive state-token lowering has a deterministic certificate ID derived
+from its compiler-owned transition evidence. The endpoint plan combines those
+IDs with the allocation, mask and strategy; optimized `JoinCall` metadata now
+carries that endpoint certificate on the real MIR call. This is provenance for
+later typed MIR/LLVM lowering, not a runtime handle and not permission to infer
+semantics from helper names. The native gate checks that fixed pair and atomic
+calls carry `certificate=Some(...)`; off/analyze still emit no fixed calls.
+
 ### Runtime/compiler boundary consolidation — 2026-09-20
 
 The compiler-facing fixed-pair boundary has been narrowed without changing
