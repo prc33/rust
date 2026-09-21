@@ -43,6 +43,14 @@ future transition pass can reject stale or foreign evidence without inspecting
 runtime symbols. This is still metadata plus existing fixed-symbol retargeting;
 direct claim/completion MIR generation remains the next optimization step.
 
+Synchronous reaction bodies now carry `CompleteReplies` at their actual MIR
+`Return` boundary, with the typed source reply map preserved as
+`replies=[…]` (the two-result witness emits `replies=[0, 1]`). One-way rules
+have no completion marker, and async reactions wait for coroutine-output
+lowering. The native dump gate checks both the return placement and the
+multi-reply map; codegen still erases the marker until a typed completion
+lowering consumes it.
+
 ### Proof-selected atomic pair lowering — 2026-09-20
 
 The current compiler/runtime slice consumes a narrow CFA certificate for the
@@ -59,7 +67,7 @@ recognition or a dependency on a library lock implementation. Unsupported
 targets retain the ordinary path.
 
 The rebuilt stage-1 compiler passes the off/analyze/optimize native fixture
-gates. The runtime suite passes 74 tests, including FIFO and duplicate-token
+gates. The runtime suite passes 75 tests, including FIFO and duplicate-token
 checks, cancellation and withdrawal, and a dispatch/cancellation race. An
 untimed attribution window over 40,000 mutex operations reports:
 
