@@ -88,6 +88,17 @@ later typed MIR/LLVM lowering, not a runtime handle and not permission to infer
 semantics from helper names. The native gate checks that fixed pair and atomic
 calls carry `certificate=Some(...)`; off/analyze still emit no fixed calls.
 
+### Synchronous completion boundary in MIR — 2026-09-21
+
+`JoinSemanticOps` now places `CompleteReplies` metadata at each actual
+`Return` terminator of a synchronous reaction body, rather than at body entry.
+The marker is still erased before backend code generation, but its MIR
+location now matches the ownership/lifetime boundary where a typed completion
+lowering can publish every reply. Async reactions deliberately do not receive
+an invented entry marker: their completion belongs at the coroutine output
+edge after ordinary coroutine lowering. This keeps the representation honest
+while leaving the existing runtime adapter unchanged.
+
 ### Runtime/compiler boundary consolidation — 2026-09-20
 
 The compiler-facing fixed-pair boundary has been narrowed without changing

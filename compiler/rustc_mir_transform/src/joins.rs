@@ -4132,10 +4132,28 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                         Location { block: mir::START_BLOCK, statement_index: 0 },
                     );
                 }
-                facts.operation(
-                    JoinOperationKind::CompleteReplies,
-                    Location { block: mir::START_BLOCK, statement_index: 0 },
-                );
+                // A synchronous reaction completes its replies at each real
+                // return edge. Keeping the operation at that boundary makes
+                // the marker useful to later typed MIR lowering without
+                // claiming that completion happened before the body ran.
+                // Async reactions are different: their generated body first
+                // returns a coroutine and the reply is completed only when
+                // that coroutine's output is delivered by the executor. Do
+                // not invent an entry-point completion marker for them; the
+                // coroutine lowering slice will add it at the output edge.
+                if !is_async && facts.yields == 0 {
+                    for (block, block_data) in body.basic_blocks.iter_enumerated() {
+                        if matches!(block_data.terminator().kind, TerminatorKind::Return) {
+                            facts.operation(
+                                JoinOperationKind::CompleteReplies,
+                                Location {
+                                    block,
+                                    statement_index: block_data.statements.len(),
+                                },
+                            );
+                        }
+                    }
+                }
             }
             JoinBodyRole::Ordinary => {}
         }
