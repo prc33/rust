@@ -642,6 +642,11 @@ pub struct JoinCfaBodyRecord {
     /// not enough to relate a re-emission to the rule that consumed it.
     pub rule_index: Option<u32>,
     pub role: JoinBodyRole,
+    /// Locals whose MIR type is a scalar/primitive value.  Unknown calls may
+    /// return such values without introducing a JCAM `Outer` closure fact;
+    /// retaining this small type projection avoids widening the channel/value
+    /// domain with arithmetic and bookkeeping results.
+    pub primitive_locals: Vec<u32>,
     pub value_flows: Vec<JoinValueFlow>,
     pub closure_facts: Vec<JoinCfaClosureFact>,
     pub call_edges: Vec<JoinCallEdge>,

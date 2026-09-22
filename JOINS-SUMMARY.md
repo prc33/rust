@@ -20,6 +20,32 @@ then applies that work to DataFusion.
 
 ## Implemented and measured
 
+### CFA precision corrections — 2026-09-22
+
+The compiler-owned CFA no longer marks an endpoint incomplete merely because a
+known local helper has no join-relevant facts: such helpers are retained as
+explicit empty leaves. Generated constructor/channel/dispatch/reaction
+wrappers are excluded from the source-level constructor/use alias proof, so
+their ABI receiver temporaries cannot manufacture a second instance or reject
+an otherwise private unary endpoint. Direct unary calls routed through the
+shared `Dispatch` identity recover the generated `Channel` body's concrete
+channel index in the value, history, and background gamma facts. Local emit
+targets are context-substituted too.
+
+The 19 thesis/Dovetail fixtures now pass both bounded-history and typed-value
+fixed points, and 18/19 pass the strict constructor/use/value proof. The sole
+negative is `nqueens`, which has two source constructor allocations and is
+correctly non-unique. This is a precision correction, not a runtime benchmark
+claim: the richer certificate is not yet consumed by general queue/fusion or
+LLVM lowering.
+
+The remaining difference from Dovetail is explicit: Rust does not yet export
+first-class `inner_escape`/`outer_escape` sets, source constructor/rule
+identities are reconstructed from generated MIR, and unknown non-scalar values
+at indirect/opaque/unsafe boundaries remain conservative `Outer` facts. Those
+cases need typed source metadata or a sound ownership proof; guessing would be
+unsound.
+
 ### Typed strategy carrier in MIR — 2026-09-21
 
 The proof-selected representation is now recorded on the actual typed MIR

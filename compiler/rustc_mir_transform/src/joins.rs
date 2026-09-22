@@ -515,6 +515,19 @@ fn is_endpoint_type<'tcx>(endpoint_def_id: LocalDefId, ty: Ty<'tcx>) -> bool {
     matches!(ty.kind(), ty::Adt(adt, _) if adt.did().as_local() == Some(endpoint_def_id))
 }
 
+/// Return whether a local can only carry a scalar value in the abstract
+/// join domain.  Unknown Rust calls are common in lowered arithmetic and
+/// bookkeeping paths; treating every result as an escaping closure is much
+/// less precise than JCAM's `Prim` wildcard.  References, ADTs, tuples and
+/// aggregates deliberately stay non-primitive until a richer typed projection
+/// is available.
+fn join_cfa_is_primitive_type<'tcx>(ty: Ty<'tcx>) -> bool {
+    matches!(
+        ty.kind(),
+        ty::Bool | ty::Char | ty::Int(..) | ty::Uint(..) | ty::Float(..) | ty::Never
+    )
+}
+
 fn classify_instance_closedness(
     frontend_direct_unary: bool,
     endpoint_escapes: &[JoinEndpointEscape],
@@ -1326,7 +1339,8 @@ fn context_effects_for_body(body: &JoinCfaBodyRecord) -> JoinCfaEffects {
         // escapes would reject every generated witness.  Ordinary source
         // bodies, however, must be widened when they call through an unknown
         // function pointer, trait object, or unavailable body.
-        if edge.endpoint_def_id.is_some()
+        if body.role == JoinBodyRole::Ordinary
+            && edge.endpoint_def_id.is_some()
             && (edge.callee.is_none() || edge.target == JoinCallTargetKind::Unknown)
         {
             effects.may_external = true;
@@ -1776,6 +1790,7 @@ fn build_join_cfa_constraints(
 
     for record in bodies {
         let variable = |local| join_cfa_local_variable(record.body_def_id, local);
+        let primitive_local = |local: u32| record.primitive_locals.binary_search(&local).is_ok();
         let closure_destinations = record
             .closure_facts
             .iter()
@@ -1825,7 +1840,11 @@ fn build_join_cfa_constraints(
                         kind: JoinCfaConstraintKind::In {
                             destination,
                             state: JoinCfaFlowState::Foreground,
-                            value: JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+                            value: JoinCfaValue::Wildcard(if primitive_local(flow.destination) {
+                                JoinCfaSide::Primitive
+                            } else {
+                                JoinCfaSide::Outer
+                            }),
                         },
                     });
                 }
@@ -1862,6 +1881,20 @@ fn build_join_cfa_constraints(
 
         for edge in &record.call_edges {
             let destination = edge.destination_local.map(variable);
+            let dispatch_channel_index = edge.callee.and_then(|callee| {
+                bodies
+                    .iter()
+                    .find(|body| body.body_def_id == callee)
+                    .filter(|body| body.role == JoinBodyRole::Channel)
+                    .and_then(|body| body.channel_index)
+            });
+            // The direct-unary lowering can call the generated channel body
+            // through the shared dispatch identity.  In an ordinary source
+            // body that is still one semantic registration; in a generated
+            // Channel body it is only the ABI hand-off to the matcher.
+            let source_dispatch = edge.target == JoinCallTargetKind::Dispatch
+                && record.role == JoinBodyRole::Ordinary
+                && dispatch_channel_index.is_some();
             match edge.target {
                 JoinCallTargetKind::Constructor => {
                     if let (Some(destination), Some(endpoint)) = (destination, edge.endpoint_def_id)
@@ -1881,11 +1914,16 @@ fn build_join_cfa_constraints(
                         });
                     }
                 }
-                JoinCallTargetKind::Channel
-                | JoinCallTargetKind::Dispatch
-                | JoinCallTargetKind::ReactionBody => {
+                JoinCallTargetKind::Channel | JoinCallTargetKind::Dispatch
+                    if edge.target == JoinCallTargetKind::Channel || source_dispatch =>
+                {
                     let Some(endpoint) = edge.endpoint_def_id else { continue };
-                    let target = join_cfa_channel_variable(endpoint, edge.channel_index);
+                    let channel_index = if source_dispatch {
+                        dispatch_channel_index
+                    } else {
+                        edge.channel_index
+                    };
+                    let target = join_cfa_channel_variable(endpoint, channel_index);
                     if seeded_channels.insert(target) {
                         constraints.push(JoinCfaConstraint {
                             body_def_id: record.body_def_id,
@@ -1896,7 +1934,16 @@ fn build_join_cfa_constraints(
                                 state: JoinCfaFlowState::Foreground,
                                 value: JoinCfaValue::Channel {
                                     endpoint_def_id: endpoint,
-                                    channel_index: edge.channel_index,
+                                    // A direct unary registration is often
+                                    // classified as `Dispatch` by the call
+                                    // target table even though its concrete
+                                    // callee is the generated Channel body.
+                                    // Preserve the recovered source channel
+                                    // coordinate in the value as well as in
+                                    // the target/history; leaving this as
+                                    // `None` merges background gamma facts
+                                    // from distinct channels.
+                                    channel_index: channel_index,
                                 },
                             },
                         });
@@ -1910,6 +1957,15 @@ fn build_join_cfa_constraints(
                         .map(|local| variable(*local))
                         .collect::<Vec<_>>()
                         .into_boxed_slice();
+                    let history = if source_dispatch {
+                        let mut history = join_cfa_history(record, edge, context_depth).into_vec();
+                        if let Some(frame) = history.first_mut() {
+                            frame.channel_index = channel_index;
+                        }
+                        history.into_boxed_slice()
+                    } else {
+                        join_cfa_history(record, edge, context_depth)
+                    };
                     constraints.push(JoinCfaConstraint {
                         body_def_id: record.body_def_id,
                         block: edge.block,
@@ -1917,7 +1973,7 @@ fn build_join_cfa_constraints(
                         kind: JoinCfaConstraintKind::Emit {
                             inputs,
                             target,
-                            history: join_cfa_history(record, edge, context_depth),
+                            history,
                         },
                     });
                     if let Some(destination) = destination {
@@ -1933,6 +1989,14 @@ fn build_join_cfa_constraints(
                         });
                     }
                 }
+                JoinCallTargetKind::Channel => unreachable!("guarded channel edge was not handled"),
+                // A generated dispatch call selects a closure that was
+                // already reached from the source channel emission.  A
+                // reaction-body call executes that selected transition.
+                // Neither is a second JCAM `Emit`; recording either one as
+                // such duplicates registration histories and can make the
+                // same payload appear to escape through an unrelated rule.
+                JoinCallTargetKind::Dispatch | JoinCallTargetKind::ReactionBody => {}
                 JoinCallTargetKind::OrdinaryLocal => {
                     let Some(callee) = edge.callee else { continue };
                     for (position, source) in edge.argument_locals.iter().enumerate() {
@@ -1963,6 +2027,9 @@ fn build_join_cfa_constraints(
                 }
                 JoinCallTargetKind::Unknown => {
                     for source in edge.argument_locals.iter().flatten() {
+                        if primitive_local(*source) {
+                            continue;
+                        }
                         constraints.push(JoinCfaConstraint {
                             body_def_id: record.body_def_id,
                             block: edge.block,
@@ -1971,6 +2038,14 @@ fn build_join_cfa_constraints(
                         });
                     }
                     if let Some(destination) = destination {
+                        let value = if edge
+                            .destination_local
+                            .is_some_and(primitive_local)
+                        {
+                            JoinCfaValue::Wildcard(JoinCfaSide::Primitive)
+                        } else {
+                            JoinCfaValue::Wildcard(JoinCfaSide::Outer)
+                        };
                         constraints.push(JoinCfaConstraint {
                             body_def_id: record.body_def_id,
                             block: edge.block,
@@ -1978,7 +2053,7 @@ fn build_join_cfa_constraints(
                             kind: JoinCfaConstraintKind::In {
                                 destination,
                                 state: JoinCfaFlowState::Foreground,
-                                value: JoinCfaValue::Wildcard(JoinCfaSide::Outer),
+                            value,
                             },
                         });
                     }
@@ -2064,6 +2139,7 @@ enum JoinCfaDynamicConstraint {
 /// room for a bounded compiler analysis and avoid pointer/address-derived
 /// identities in the certificate.
 const JOIN_CFA_CONTEXT_TAG: u64 = 1 << 62;
+const JOIN_CFA_CHANNEL_ARGUMENT_TAG: u64 = 1 << 61;
 
 fn join_cfa_context_variable(instance: u32, local: u32) -> u64 {
     JOIN_CFA_CONTEXT_TAG | ((instance as u64) << 32) | local as u64
@@ -2077,8 +2153,15 @@ fn join_cfa_is_context_variable(variable: u64) -> bool {
     variable & JOIN_CFA_CONTEXT_TAG != 0
 }
 
+fn join_cfa_is_channel_argument_variable(variable: u64) -> bool {
+    variable & JOIN_CFA_CHANNEL_ARGUMENT_TAG != 0
+}
+
 fn join_cfa_static_parts(variable: u64) -> Option<(u32, u32)> {
-    if join_cfa_is_channel_variable(variable) || join_cfa_is_context_variable(variable) {
+    if join_cfa_is_channel_variable(variable)
+        || join_cfa_is_context_variable(variable)
+        || join_cfa_is_channel_argument_variable(variable)
+    {
         None
     } else {
         Some(((variable >> 32) as u32, variable as u32))
@@ -2126,6 +2209,14 @@ struct JoinCfaContextualSolver {
     budget: u32,
     facts: FxHashMap<u64, FxHashSet<(JoinCfaFlowState, JoinCfaValue)>>,
     closure_captures: FxHashMap<u64, Vec<u64>>,
+    /// Variables which crossed an opaque boundary before their concrete
+    /// values were available.  Keeping this marker separate from the value
+    /// set lets the solver widen a later channel/closure value, while a
+    /// primitive-only argument remains `Primitive` instead of acquiring a
+    /// spurious `Outer` wildcard.
+    escaped_variables: FxHashSet<u64>,
+    channel_arguments: FxHashMap<(u32, Option<u32>, u32), u64>,
+    next_channel_argument: u64,
     dynamic_constraints: Vec<JoinCfaDynamicConstraint>,
     instances: Vec<JoinCfaDynamicInstance>,
     instance_keys: FxHashMap<JoinCfaInstanceKey, u32>,
@@ -2162,6 +2253,9 @@ impl JoinCfaContextualSolver {
             budget,
             facts: FxHashMap::default(),
             closure_captures: FxHashMap::default(),
+            escaped_variables: FxHashSet::default(),
+            channel_arguments: FxHashMap::default(),
+            next_channel_argument: 1,
             dynamic_constraints: Vec::new(),
             instances: Vec::new(),
             instance_keys: FxHashMap::default(),
@@ -2196,13 +2290,39 @@ impl JoinCfaContextualSolver {
         // no discoverable root, seed it as an external entry; that is safe
         // (it only widens facts) and keeps the fixed-point gate honest.
         let incoming = self.incoming_bodies();
-        let roots = self
+        // JCAM starts at constructor/channel transitions, not at every
+        // unrelated Rust function in the crate.  Seeding all MIR roots made
+        // test harnesses and runtime helpers inject opaque `Outer` facts into
+        // an otherwise closed join graph.  Restrict roots to ordinary bodies
+        // which contain a semantic channel seed or registration; generated
+        // adapters are entered through their typed closure/channel edges.
+        let semantic_roots = self
             .body_ids
             .iter()
             .copied()
+            .filter(|body| self.body_roles.get(body) == Some(&JoinBodyRole::Ordinary))
+            .filter(|body| {
+                self.by_body.get(body).is_some_and(|constraints| {
+                    constraints.iter().any(|constraint| match &constraint.kind {
+                        JoinCfaConstraintKind::In { destination, .. } => {
+                            join_cfa_is_channel_variable(*destination)
+                        }
+                        JoinCfaConstraintKind::Emit { .. } => true,
+                        _ => false,
+                    })
+                })
+            })
             .filter(|body| !incoming.contains(body))
             .collect::<Vec<_>>();
-        let roots = if roots.is_empty() { self.body_ids.clone() } else { roots };
+        let roots = if semantic_roots.is_empty() {
+            self.body_ids
+                .iter()
+                .copied()
+                .filter(|body| !incoming.contains(body))
+                .collect::<Vec<_>>()
+        } else {
+            semantic_roots
+        };
         for body in roots {
             self.ensure_instance(body, Vec::new().into_boxed_slice(), 0);
         }
@@ -2214,12 +2334,7 @@ impl JoinCfaContextualSolver {
             }
             self.steps = self.steps.saturating_add(1);
 
-            let variable_escaped = self.facts.get(&changed_variable).is_some_and(|values| {
-                values
-                    .iter()
-                    .any(|(_, value)| matches!(value, JoinCfaValue::Wildcard(JoinCfaSide::Outer)))
-            });
-            if variable_escaped {
+            if self.escaped_variables.contains(&changed_variable) {
                 self.escape_variable(changed_variable);
             }
 
@@ -2306,13 +2421,16 @@ impl JoinCfaContextualSolver {
     }
 
     fn add_fact(&mut self, variable: u64, state: JoinCfaFlowState, value: JoinCfaValue) -> bool {
-        let values = self.facts.entry(variable).or_default();
-        if values.insert((state, value)) {
+        let inserted = self.facts.entry(variable).or_default().insert((state, value.clone()));
+        if inserted {
             self.work.push_back(variable);
-            true
-        } else {
-            false
         }
+        if self.escaped_variables.contains(&variable)
+            && !matches!(value, JoinCfaValue::Primitive | JoinCfaValue::Wildcard(JoinCfaSide::Primitive))
+        {
+            self.widen_escaped_variable(variable);
+        }
+        inserted
     }
 
     fn contextualize_value(&self, value: JoinCfaValue, destination: u64) -> JoinCfaValue {
@@ -2326,13 +2444,44 @@ impl JoinCfaContextualSolver {
         }
     }
 
+    fn channel_argument_variable(
+        &mut self,
+        endpoint_def_id: u32,
+        channel_index: Option<u32>,
+        position: u32,
+    ) -> u64 {
+        let key = (endpoint_def_id, channel_index, position);
+        if let Some(variable) = self.channel_arguments.get(&key).copied() {
+            return variable;
+        }
+        let variable = JOIN_CFA_CHANNEL_ARGUMENT_TAG | self.next_channel_argument;
+        self.next_channel_argument = self.next_channel_argument.saturating_add(1);
+        self.channel_arguments.insert(key, variable);
+        variable
+    }
+
     fn escape_variable(&mut self, variable: u64) {
-        self.add_fact(
-            variable,
-            JoinCfaFlowState::Foreground,
-            JoinCfaValue::Wildcard(JoinCfaSide::Outer),
-        );
+        self.escaped_variables.insert(variable);
+        self.widen_escaped_variable(variable);
+    }
+
+    fn widen_escaped_variable(&mut self, variable: u64) {
         let Some(values) = self.facts.get(&variable).cloned() else { return };
+        let has_non_primitive = values.iter().any(|(_, value)| {
+            !matches!(value, JoinCfaValue::Primitive | JoinCfaValue::Wildcard(JoinCfaSide::Primitive))
+        });
+        if !has_non_primitive {
+            return;
+        }
+        let outer = JoinCfaValue::Wildcard(JoinCfaSide::Outer);
+        let inserted = self
+            .facts
+            .entry(variable)
+            .or_default()
+            .insert((JoinCfaFlowState::Foreground, outer.clone()));
+        if inserted {
+            self.work.push_back(variable);
+        }
         for (state, value) in values {
             if matches!(
                 value,
@@ -2340,16 +2489,24 @@ impl JoinCfaContextualSolver {
             ) {
                 continue;
             }
-            if let JoinCfaValue::Closure { captures, .. } = value {
+            if let JoinCfaValue::Closure { ref captures, .. } = value {
                 for capture in captures.iter().copied() {
-                    self.add_fact(
-                        capture,
-                        JoinCfaFlowState::Foreground,
-                        JoinCfaValue::Wildcard(JoinCfaSide::Outer),
-                    );
+                    let inserted = self
+                        .facts
+                        .entry(capture)
+                        .or_default()
+                        .insert((JoinCfaFlowState::Foreground, outer.clone()));
+                    if inserted {
+                        self.work.push_back(capture);
+                    }
                 }
             }
-            self.add_fact(variable, state, JoinCfaValue::Wildcard(JoinCfaSide::Outer));
+            if !matches!(value, JoinCfaValue::Wildcard(JoinCfaSide::Outer)) {
+                let inserted = self.facts.entry(variable).or_default().insert((state, outer.clone()));
+                if inserted {
+                    self.work.push_back(variable);
+                }
+            }
         }
     }
 
@@ -2513,9 +2670,17 @@ impl JoinCfaContextualSolver {
                         .map(|input| self.map_static_variable(*input, owner, &constraint))
                         .collect::<Vec<_>>()
                         .into_boxed_slice();
+                    // `Emit` normally targets a global channel variable, but
+                    // source-level closure construction can also leave a
+                    // local continuation as the target. Apply the same
+                    // context substitution to both sides; keeping a local
+                    // target body-global would merge two call sites and lose
+                    // the fresh substitution that JCAM assigns to each
+                    // retained history.
+                    let target = self.map_static_variable(*target, owner, &constraint);
                     self.dynamic_constraints.push(JoinCfaDynamicConstraint::Emit {
                         inputs,
-                        target: *target,
+                        target,
                         history: history.clone(),
                         owner,
                     });
@@ -2536,6 +2701,15 @@ impl JoinCfaContextualSolver {
         owner: u32,
     ) {
         let target_values = self.facts.get(&target).cloned().unwrap_or_default();
+        let target_channels = target_values
+            .iter()
+            .filter_map(|(_, value)| match value {
+                JoinCfaValue::Channel { endpoint_def_id, channel_index } => {
+                    Some((*endpoint_def_id, *channel_index))
+                }
+                _ => None,
+            })
+            .collect::<FxHashSet<_>>();
         let target_endpoints = target_values
             .iter()
             .filter_map(|(_, value)| match value {
@@ -2600,6 +2774,22 @@ impl JoinCfaContextualSolver {
             }
         }
         let has_target_closure = !target_closures.is_empty();
+        // Dovetail's known closure emission feeds both the selected
+        // transition's foreground formals and the channel's background
+        // `gamma` variables.  Keep those variables distinct from ordinary
+        // `(body, local)` and context-qualified ids so later queue/escape
+        // proofs can inspect retention without conflating it with execution.
+        for (endpoint_def_id, channel_index) in target_channels {
+            for (position, input) in inputs.iter().copied().enumerate() {
+                let destination =
+                    self.channel_argument_variable(endpoint_def_id, channel_index, position as u32);
+                if let Some(input_values) = self.facts.get(&input).cloned() {
+                    for (_, value) in input_values {
+                        self.add_fact(destination, JoinCfaFlowState::Background, value);
+                    }
+                }
+            }
+        }
         for (body_def_id, captures, origin) in target_closures {
             let context = self.extend_context(&parent_context, history);
             let Some(instance) = self.ensure_instance(body_def_id, context, origin) else {
@@ -2721,6 +2911,13 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     .and_then(|operation| operation.channel_index),
                 rule_index: summary.rule_index,
                 role: summary.role,
+                primitive_locals: body
+                    .local_decls
+                    .iter_enumerated()
+                    .filter_map(|(local, declaration)| {
+                        join_cfa_is_primitive_type(declaration.ty).then_some(local.index() as u32)
+                    })
+                    .collect(),
                 value_flows: summary.value_flows.clone(),
                 closure_facts: summary.closure_facts.clone(),
                 call_edges: summary.call_edges.clone(),
@@ -2766,9 +2963,15 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
             unknown_effects: 0,
         };
         facts.visit_body(&body);
-        if facts.value_flows.is_empty() && facts.call_edges.is_empty() {
-            continue;
-        }
+        // Keep an otherwise empty local helper in the side table. It is not a
+        // graph root, but a join reaction may call it through an ordinary MIR
+        // edge. Dropping it here made the reachability walk report a missing
+        // callee and mark the whole endpoint incomplete, even when the helper
+        // had no values, calls, escapes, or effects to analyse. Retaining the
+        // empty record gives the fixed point an explicit leaf and distinguishes
+        // a known no-op helper from an unavailable or indirect callee. Only
+        // selected helpers are copied into `bodies`, so unrelated crate
+        // functions do not enter the join graph.
         // Ordinary callers are graph roots too.  Previously the crate graph
         // only started from join-associated bodies, which meant that the
         // constructor and seed emissions in `main` (or in an ordinary helper)
@@ -2797,6 +3000,13 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 channel_index: None,
                 rule_index: None,
                 role: JoinBodyRole::Ordinary,
+                primitive_locals: body
+                    .local_decls
+                    .iter_enumerated()
+                    .filter_map(|(local, declaration)| {
+                        join_cfa_is_primitive_type(declaration.ty).then_some(local.index() as u32)
+                    })
+                    .collect(),
                 value_flows: facts.value_flows,
                 closure_facts: facts
                     .closure_facts
@@ -3036,6 +3246,15 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     // must not be mistaken for a user-level handle escape.  Only ordinary
     // source bodies are roots for this whole-instance ownership proof.
     for record in &bodies {
+        // The generated endpoint bodies receive their handle through an ABI
+        // environment and may create further adapter temporaries. Those
+        // locals are not source-level aliases and are intentionally not part
+        // of the constructor/use proof. Counting them here turns a perfectly
+        // private unary endpoint into an incomplete instance merely because
+        // its wrapper receiver has no source constructor origin.
+        if record.role != JoinBodyRole::Ordinary {
+            continue;
+        }
         let Some(aliases) = aliases_by_body.get(&record.body_def_id) else { continue };
         for edge in &record.call_edges {
             if !matches!(edge.target, JoinCallTargetKind::Channel | JoinCallTargetKind::Dispatch) {
@@ -3748,8 +3967,14 @@ fn dump_crate_summary(
                 })
                 .collect::<Vec<_>>()
                 .join(",");
+            let primitive_locals = body
+                .primitive_locals
+                .iter()
+                .map(u32::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"flows\":[{}],\"closures\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"primitive_locals\":[{}],\"flows\":[{}],\"closures\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -3760,6 +3985,7 @@ fn dump_crate_summary(
                 body.rule_index
                     .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                 body.role,
+                primitive_locals,
                 value_flows,
                 closure_facts,
                 aliases,

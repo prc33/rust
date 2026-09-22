@@ -120,6 +120,36 @@ generated MIR, and preserve source-level multi-definition attributes. Only
 after that differential gate may the complete value solution drive fusion,
 queue bounds, or LLVM-visible lowering.
 
+### CFA precision corrections — 2026-09-22
+
+Three sources of avoidable conservatism are now removed. The crate graph keeps
+known local helpers even when their MIR has no join-relevant facts, so a leaf
+helper is not confused with an unavailable/indirect callee. Generated
+constructor/channel/dispatch/reaction wrappers are excluded from the
+source-level constructor/use alias proof; their ABI receiver temporaries do not
+create a second endpoint instance or invalidate a private unary proof. Finally,
+direct unary calls classified through the shared `Dispatch` identity recover
+the concrete generated `Channel` body and carry its channel coordinate into the
+`Channel` value, history, and background gamma variable. Local `Emit` targets
+are context-substituted as well, so separate retained histories cannot merge
+their continuation locals.
+
+The 19-fixture gate now reaches the strict constructor/use/value-CFA proof for
+18 examples (up from 9): all except `nqueens`. `nqueens` still has two source
+constructor allocations and is correctly rejected as non-unique. All 19 reach
+both bounded-history and value-CFA fixed points. The remaining negative
+state-token records (`MissingReemission`, loop/multiplicity, or competing-rule
+cases) are separate queue/token certificates, not failures of the value fixed
+point.
+
+This does not make the projection identical to Dovetail. Exact `inner_escape`
+and `outer_escape` sets are not yet first-class certificate fields; generated
+MIR still requires source rule/constructor identity to be reconstructed; and
+unknown non-scalar values at indirect, cross-crate, unsafe, or opaque
+boundaries remain `Outer` by design. Those are real information boundaries,
+not reasons to weaken the proof. They require typed source-level metadata or a
+sound interprocedural ownership model before they can be made more precise.
+
 ## Current gate status — 2026-09-20
 
 ### Typed strategy carrier on real MIR calls — 2026-09-21
