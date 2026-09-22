@@ -1,11 +1,11 @@
 # Join concurrency primitives: performance and optimisation status
 
-Updated 2026-09-21.
+Updated 2026-09-22.
 
 This is the compact performance and gap summary for the concurrency primitives
 used throughout the research prototype.  The detailed raw samples, confidence
 intervals, compiler provenance and CFA dump counts are in the
-[full benchmark report](../join-benchmarks/results/full-all-dispatch-20260919/benchmark-report.html)
+[full benchmark report](../join-benchmarks/results/full-20260922-callable-cfa/benchmark-report.html)
 and its [protocol matrix](../join-benchmarks/PROTOCOL-MATRIX.md).
 
 ## How to read the numbers
@@ -18,28 +18,27 @@ it does **not** mean that the complete thesis optimisation programme is
 implemented.  The ratio is optimized join time divided by the handwritten
 baseline, so values below 1.0 are lower elapsed time.
 
-The matrix was built from Rust `eefa709551299f553b585d234312feea58baabaf`
-and library `82f01e0f789ef36faaacb0a639700f73525f5087`.  The current Rust
-branch is newer (`ebd7c824df1`), and the fixed atomic-pair lowering plus
-bounded context CFA landed after this matrix, so the mutex follow-up remains
-reported separately below.
+The current matrix was built from Rust
+`488a7e554e55bf9a9df2e21f65f4c20366919237` and library
+`2c7633f80899ffc653fc0caca743e498c24ca12c`. The result archive records the
+working-tree status and stage-1 compiler provenance.
 
 ## Complete primitive matrix
 
 | Primitive | Native implementation | Joins — CFA off | Joins — CFA analyze | Joins — CFA optimize | Optimize / native |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Rendezvous | 21,287 ns/op | 589 | 596 | **588** | **0.03×** |
-| MPSC delivery | 80.1 ns/op | 685 | 720 | **681** | **8.50×** |
-| MPMC delivery | 680 ns/op | 695 | 705 | **679** | **1.00×** |
-| Condvar hand-off | 21,950 ns/op | 9,321 | 9,404 | **9,521** | **0.43×** |
-| Work/resource admission | 1,394 ns/op | 1,224 | 1,387 | **1,302** | **0.93×** |
-| Completion counter | 53.0 ns/op | 1,730 | 1,708 | **1,770** | **33.39×** |
-| Reusable barrier | 13,871 ns/op | 13,228 | 13,846 | **13,523** | **0.97×** |
-| Reader/writer admission probe | 42.8 ns/op | 4,096 | 3,802 | **3,276** | **76.53×** |
-| Mutex/counter | 30.0 ns/op | 1,004 | 1,008 | **976** | **32.51×** |
-| Scoped thread join | 66,890 ns/op | 65,809 | 68,028 | **64,970** | **0.97×** |
-| One-time initialization | 61,767 ns/op | 64,621 | 62,400 | **61,856** | **1.00×** |
-| Async request/reply | 407.6 ns/op (Tokio) | 49.8 | 50.1 | **49.4** | **0.12×** |
+| Rendezvous | 21,945 ns/op | 583.7 | 564.3 | **574.2** | **0.03×** |
+| MPSC delivery | 79.9 ns/op | 586.0 | 517.1 | **580.8** | **7.27×** |
+| MPMC delivery | 535.8 ns/op | 560.4 | 524.0 | **555.9** | **1.04×** |
+| Condvar hand-off | 19,328 ns/op | 9,725 | 10,294 | **11,081** | **0.57×** |
+| Work/resource admission | 1,243 ns/op | 1,322 | 1,322 | **1,418** | **1.14×** |
+| Completion counter | 56.3 ns/op | 1,837 | 1,883 | **1,963** | **34.87×** |
+| Reusable barrier | 14,516 ns/op | 16,573 | 15,192 | **14,070** | **0.97×** |
+| Reader/writer admission probe | 48.1 ns/op | 3,929 | 4,472 | **4,312** | **89.61×** |
+| Mutex/counter | 28.4 ns/op | 720.6 | 528.3 | **536.2** | **18.90×** |
+| Scoped thread join | 61,845 ns/op | 56,171 | 60,448 | **57,321** | **0.93×** |
+| One-time initialization | 55,833 ns/op | 60,959 | 61,470 | **60,890** | **1.09×** |
+| Async request/reply | 407.0 ns/op (Tokio) | 52.0 | 52.7 | **51.5** | **0.13×** |
 
 These are coordination microbenchmarks, not a claim that a join is a better
 implementation of every named standard primitive.  Their protocol definitions
@@ -63,10 +62,11 @@ matter:
 * **Thread join** and **once** include cold thread/initialisation setup, so their
   near-parity results do not establish hot-path equivalence.
 
-The near-parity rows are MPMC, work/resource, barrier, scoped thread join and
-once.  The material remaining gaps in this matrix are MPSC, completion,
-reader/writer admission and mutex.  The large apparent wins are the protocol
-comparisons called out above, not evidence that all joins are already faster.
+The near-parity rows are MPMC, barrier, scoped thread join and once; the
+work/resource row is modestly slower. The material remaining gaps in this
+matrix are MPSC, completion, reader/writer admission and mutex. The large
+apparent wins are the protocol comparisons called out above, not evidence that
+all joins are already faster.
 
 ## Newer mutex-only result
 
@@ -219,7 +219,8 @@ that have passed the corresponding semantic and benchmark gates.
 
 ## References and reproduction
 
-* [Complete 2026-09-19 HTML matrix](../join-benchmarks/results/full-all-dispatch-20260919/benchmark-report.html)
+* [Complete 2026-09-22 HTML matrix](../join-benchmarks/results/full-20260922-callable-cfa/benchmark-report.html)
+* [Committed 2026-09-22 matrix notes](../join-benchmarks/docs/full-20260922-callable-cfa.md)
 * [Protocol definitions and equivalence caveats](../join-benchmarks/PROTOCOL-MATRIX.md)
 * [Atomic-pair follow-up](../join-benchmarks/results/atomic-pair-20260920/README.md)
 * [Current perf attribution](../join-benchmarks/docs/perf-atomic-mutex-20260921.md)
