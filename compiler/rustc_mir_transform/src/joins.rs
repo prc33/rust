@@ -2120,6 +2120,7 @@ fn solve_join_cfa_contextual(
 
 struct JoinCfaContextualSolver {
     by_body: FxHashMap<u32, Vec<JoinCfaConstraint>>,
+    body_roles: FxHashMap<u32, JoinBodyRole>,
     body_ids: Vec<u32>,
     context_depth: u32,
     budget: u32,
@@ -2145,12 +2146,17 @@ impl JoinCfaContextualSolver {
         for constraint in constraints {
             by_body.entry(constraint.body_def_id).or_default().push(constraint.clone());
         }
+        let body_roles = bodies
+            .iter()
+            .map(|body| (body.body_def_id, body.role))
+            .collect::<FxHashMap<_, _>>();
         let mut body_ids = bodies.iter().map(|body| body.body_def_id).collect::<Vec<_>>();
         body_ids.extend(by_body.keys().copied());
         body_ids.sort_unstable();
         body_ids.dedup();
         Self {
             by_body,
+            body_roles,
             body_ids,
             context_depth,
             budget,
@@ -2436,6 +2442,18 @@ impl JoinCfaContextualSolver {
         callee.map_or(variable, |callee| join_cfa_context_variable(callee, local))
     }
 
+    fn payload_start(&self, body_def_id: u32) -> u32 {
+        match self.body_roles.get(&body_def_id) {
+            // Generated join methods and reaction closures carry the endpoint
+            // receiver/environment in local 1; their first source payload is
+            // local 2. Ordinary Rust closures have no join receiver.
+            Some(JoinBodyRole::Channel)
+            | Some(JoinBodyRole::Dispatch)
+            | Some(JoinBodyRole::ReactionBody) => 2,
+            _ => 1,
+        }
+    }
+
     fn instantiate_body(&mut self, owner: u32) {
         let Some(instance) = self.instances.get(owner as usize).cloned() else { return };
         let static_constraints =
@@ -2555,8 +2573,10 @@ impl JoinCfaContextualSolver {
                     self.ensure_instance(frame.callee_body_def_id, channel_context, target)
                 {
                     for (position, input) in inputs.iter().copied().enumerate() {
-                        let destination =
-                            join_cfa_context_variable(channel_instance, position as u32 + 1);
+                        let destination = join_cfa_context_variable(
+                            channel_instance,
+                            self.payload_start(frame.callee_body_def_id) + position as u32,
+                        );
                         if let Some(input_values) = self.facts.get(&input).cloned() {
                             for (_, value) in input_values {
                                 self.add_fact(destination, JoinCfaFlowState::Foreground, value);
@@ -2599,7 +2619,10 @@ impl JoinCfaContextualSolver {
                 }
             }
             for (position, input) in inputs.iter().copied().enumerate() {
-                let destination = join_cfa_context_variable(instance, position as u32 + 1);
+                let destination = join_cfa_context_variable(
+                    instance,
+                    self.payload_start(body_def_id) + position as u32,
+                );
                 if let Some(input_values) = self.facts.get(&input).cloned() {
                     for (_, value) in input_values {
                         // An emitted payload enters the nested transition on
