@@ -25,6 +25,7 @@ use rustc_middle::middle::joins::{
     JoinEndpointEscape, JoinEndpointEscapeKind, JoinFusionFact, JoinInstanceClosedness,
     JoinInstanceClosednessReason, JoinLocalFact, JoinLoweringStrategy, JoinMirOperation,
     JoinOccupancyFact, JoinOperationKind, JoinQueueBound, JoinStateTokenLowering,
+    JoinStateMachineProof, JoinStateMachineRule,
     JoinStateTokenProof, JoinStateTokenRejection, JoinStateTokenStatus, JoinStateTokenTransition,
     JoinStateTokenTransitionKind, JoinValueFlow, JoinValueFlowKind, JoinValueState,
 };
@@ -3534,6 +3535,12 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         tcx.sess.opts.unstable_opts.join_cfa_budget.min(u32::MAX as usize) as u32,
     );
     let state_tokens = prove_state_tokens(tcx, &bodies, &instances, &context);
+    // The state-token proof is intentionally local to one conserved channel.
+    // Run the endpoint-wide JCAM transition analysis as a separate query
+    // product: a finite matcher must account for every competing rule and
+    // every compiler-visible re-emission before it can replace per-channel
+    // queues with a status mask.
+    let state_machines = prove_endpoint_state_machines(tcx, &bodies, &instances);
     // Do not let analysis mode change runtime representation.  Optimize mode
     // consumes only positive certificates and records the selected storage
     // contract for the later LowerJoins/MIR-to-LLVM step.
@@ -3585,6 +3592,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
         instances,
         state_tokens,
         state_token_lowerings,
+        state_machines,
         context,
         cfa_constraints,
         cfa_solution,
@@ -3595,6 +3603,189 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
     };
     dump_crate_summary(tcx, &summary, &aliases_by_body);
     summary
+}
+
+/// Build an endpoint-wide finite-state certificate from the typed rule graph.
+///
+/// This is the small JCAM-style product that was missing from the previous
+/// per-body state-token pass.  A channel is a candidate persistent state bit
+/// only when a reaction re-emits it, it has no reply, and callers do not pass
+/// a payload to it.  Request/result channels remain queues.  The certificate
+/// therefore does not identify an MPSC-shaped protocol and is useful for any
+/// join definition with a finite set of conserved one-way state channels.
+///
+/// The runtime representation selected from this certificate keeps an
+/// overflow FIFO for duplicate admissions.  That makes the transition
+/// lowering semantics-preserving while the caller-sensitive multiplicity CFA
+/// is still being expanded; a later proof may remove that fallback entirely.
+#[allow(rustc::potential_query_instability)]
+fn prove_endpoint_state_machines(
+    tcx: TyCtxt<'_>,
+    bodies: &[JoinCfaBodyRecord],
+    instances: &[JoinCfaInstanceFact],
+) -> Vec<JoinStateMachineProof> {
+    let mut proofs = Vec::new();
+    for endpoint in &tcx.join_definitions(()).endpoints {
+        let Some(endpoint_def_id) = endpoint.endpoint_def_id.map(|id| id.index() as u32) else {
+            continue;
+        };
+        let mut rejection = None;
+        if endpoint.channels.len() > u64::BITS as usize {
+            rejection = Some(JoinStateTokenRejection::UnsupportedRuleShape);
+        }
+        let unique_instance = instances
+            .iter()
+            .filter(|instance| instance.endpoint_def_id == endpoint_def_id)
+            .filter(|instance| instance.status == JoinCfaInstanceStatus::Unique)
+            .count()
+            == 1;
+        if !unique_instance {
+            rejection.get_or_insert(JoinStateTokenRejection::NoUniqueInstance);
+        }
+
+        let mut reply_mask = 0u64;
+        for rule in &endpoint.rules {
+            for &channel in &rule.reply_channel_indices {
+                if channel < u64::BITS as u32 {
+                    reply_mask |= 1u64 << channel;
+                } else {
+                    rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+                }
+            }
+            if rule.is_async {
+                rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+            }
+            let mut seen = 0u64;
+            for &channel in &rule.channel_indices {
+                if channel >= u64::BITS as u32 || (seen & (1u64 << channel)) != 0 {
+                    rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+                } else {
+                    seen |= 1u64 << channel;
+                }
+            }
+        }
+
+        // A state bit has to be a unit/no-argument one-way channel.  This is
+        // checked from the resolved method signature, not from source names
+        // or a runtime matcher type.
+        let mut state_shape_mask = 0u64;
+        for channel in &endpoint.channels {
+            if channel.index >= u64::BITS as u32 || (reply_mask & (1u64 << channel.index)) != 0 {
+                continue;
+            }
+            let signature = tcx
+                .fn_sig(channel.method_def_id.to_def_id())
+                .instantiate_identity()
+                .skip_binder();
+            if signature.inputs().len() == 1 {
+                state_shape_mask |= 1u64 << channel.index;
+            }
+        }
+
+        let mut rules = Vec::with_capacity(endpoint.rules.len());
+        let mut produced_mask = 0u64;
+        for (rule_index, rule) in endpoint.rules.iter().enumerate() {
+            let mut consume_mask = 0u64;
+            for &channel in &rule.channel_indices {
+                if channel < u64::BITS as u32 && (state_shape_mask & (1u64 << channel)) != 0 {
+                    consume_mask |= 1u64 << channel;
+                }
+            }
+
+            // The generated reaction helper and any nested adapter carry the
+            // same source-rule coordinate. Follow their typed channel edges
+            // to recover re-emission transitions without scanning names.
+            let mut produce_mask_for_rule = 0u64;
+            let mut duplicate_producer = false;
+            for body in bodies.iter().filter(|body| {
+                body.endpoint_def_id == Some(endpoint_def_id)
+                    && body.rule_index == Some(rule_index as u32)
+            }) {
+                for edge in &body.call_edges {
+                    if edge.target != JoinCallTargetKind::Channel
+                        || edge.endpoint_def_id != Some(endpoint_def_id)
+                    {
+                        continue;
+                    }
+                    let Some(channel) = edge.channel_index else {
+                        rejection.get_or_insert(JoinStateTokenRejection::IncompleteAnalysis);
+                        continue;
+                    };
+                    if channel >= u64::BITS as u32 {
+                        rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+                        continue;
+                    }
+                    let bit = 1u64 << channel;
+                    if (reply_mask & bit) != 0 {
+                        // A result-bearing channel is a request, not a
+                        // persistent state token. Its ordinary reply path is
+                        // deliberately left untouched by this lowering.
+                        continue;
+                    }
+                    if (state_shape_mask & bit) == 0 {
+                        rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+                        continue;
+                    }
+                    if (produce_mask_for_rule & bit) != 0 {
+                        duplicate_producer = true;
+                    }
+                    produce_mask_for_rule |= bit;
+                }
+            }
+            if duplicate_producer {
+                rejection.get_or_insert(JoinStateTokenRejection::MultipleReemissions);
+            }
+            produced_mask |= produce_mask_for_rule;
+            let reply_for_rule = rule
+                .reply_channel_indices
+                .iter()
+                .filter_map(|channel| (*channel < u64::BITS as u32).then_some(1u64 << channel))
+                .fold(0u64, |mask, bit| mask | bit);
+            rules.push(JoinStateMachineRule {
+                rule_index: rule_index as u32,
+                consume_mask,
+                produce_mask: produce_mask_for_rule,
+                reply_mask: reply_for_rule,
+            });
+        }
+
+        // Only channels which are actually re-emitted are persistent state.
+        // One-way request channels (such as release messages) retain their
+        // ordinary FIFO, so this analysis cannot accidentally turn every
+        // one-way input into a capacity-one slot.
+        let state_mask = produced_mask & state_shape_mask;
+        if state_mask == 0 {
+            rejection.get_or_insert(JoinStateTokenRejection::MissingReemission);
+        }
+        if endpoint.rules.is_empty() || rules.len() != endpoint.rules.len() {
+            rejection.get_or_insert(JoinStateTokenRejection::IncompleteAnalysis);
+        }
+        let status = if rejection.is_none() {
+            JoinStateTokenStatus::Proven
+        } else {
+            JoinStateTokenStatus::Rejected
+        };
+        let mut hasher = FxHasher::default();
+        endpoint_def_id.hash(&mut hasher);
+        state_mask.hash(&mut hasher);
+        reply_mask.hash(&mut hasher);
+        for rule in &rules {
+            rule.rule_index.hash(&mut hasher);
+            rule.consume_mask.hash(&mut hasher);
+            rule.produce_mask.hash(&mut hasher);
+            rule.reply_mask.hash(&mut hasher);
+        }
+        proofs.push(JoinStateMachineProof {
+            endpoint_def_id,
+            state_mask,
+            rules,
+            status,
+            rejection,
+            certificate_id: hasher.finish(),
+        });
+    }
+    proofs.sort_by_key(|proof| proof.endpoint_def_id);
+    proofs
 }
 
 /// Check the first interprocedural state-token shape without making any
@@ -4317,6 +4508,35 @@ fn dump_crate_summary(
         })
         .collect::<Vec<_>>()
         .join(",");
+    let state_machines = summary
+        .state_machines
+        .iter()
+        .map(|machine| {
+            let rules = machine
+                .rules
+                .iter()
+                .map(|rule| {
+                    format!(
+                        "{{\"rule\":{},\"consume_mask\":{},\"produce_mask\":{},\"reply_mask\":{}}}",
+                        rule.rule_index, rule.consume_mask, rule.produce_mask, rule.reply_mask
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            format!(
+                "{{\"endpoint\":{},\"state_mask\":{},\"status\":\"{:?}\",\"rejection\":{},\"certificate\":{},\"rules\":[{}]}}",
+                machine.endpoint_def_id,
+                machine.state_mask,
+                machine.status,
+                machine
+                    .rejection
+                    .map_or_else(|| "null".to_string(), |reason| format!("\"{reason:?}\"")),
+                machine.certificate_id,
+                rules,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
     let context_instances = summary
         .context
         .instances
@@ -4459,12 +4679,13 @@ fn dump_crate_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"context\":{{\"depth\":{},\"transitions\":{},\"complete\":{},\"instances\":[{}]}},\"definitions\":[{}],\"cfa_constraints\":[{}],\"cfa_solution\":[{}],\"cfa_steps\":{},\"cfa_complete\":{},\"solver_steps\":{},\"complete\":{}}}\n",
+        "{{\"bodies\":{},\"body_records\":[{}],\"instances\":[{}],\"state_tokens\":[{}],\"state_token_lowerings\":[{}],\"state_machines\":[{}],\"context\":{{\"depth\":{},\"transitions\":{},\"complete\":{},\"instances\":[{}]}},\"definitions\":[{}],\"cfa_constraints\":[{}],\"cfa_solution\":[{}],\"cfa_steps\":{},\"cfa_complete\":{},\"solver_steps\":{},\"complete\":{}}}\n",
         summary.bodies.len(),
         body_records,
         instances,
         state_tokens,
         state_token_lowerings,
+        state_machines,
         summary.context.context_depth,
         summary.context.transitions,
         summary.context.complete,
@@ -5640,6 +5861,31 @@ fn validated_endpoint_lowering_plan(
         return None;
     }
 
+    // Endpoint-wide JCAM transition certificates take precedence over the
+    // older single-token proof. They describe a finite set of persistent
+    // one-way state bits while leaving result/request channels dynamic.
+    // The runtime representation retains a correctness-preserving overflow
+    // queue until caller-sensitive multiplicity is proved, so selecting this
+    // plan does not depend on recognizing a particular lock or queue library.
+    if let Some(machine) = summary.state_machines.iter().find(|machine| {
+        machine.endpoint_def_id == endpoint_def_id
+            && machine.status == JoinStateTokenStatus::Proven
+    }) {
+        let mut certificate = FxHasher::default();
+        endpoint_def_id.hash(&mut certificate);
+        instance.body_def_id.hash(&mut certificate);
+        instance.allocation_block.hash(&mut certificate);
+        instance.allocation_statement.hash(&mut certificate);
+        machine.certificate_id.hash(&mut certificate);
+        machine.state_mask.hash(&mut certificate);
+        return Some(JoinEndpointLoweringPlan {
+            endpoint_def_id,
+            inline_mask: machine.state_mask,
+            strategy: JoinLoweringStrategy::FiniteStateMask,
+            certificate_id: certificate.finish(),
+        });
+    }
+
     let mut lowerings = summary
         .state_token_lowerings
         .iter()
@@ -5720,6 +5966,45 @@ fn state_token_constructor_lowering<'tcx>(
     let endpoint_def_id = plan.endpoint_def_id;
     let constructor_def_id = endpoint.constructor_def_id?;
     let constructor_u32 = constructor_def_id.index() as u32;
+    if plan.strategy == JoinLoweringStrategy::FiniteStateMask {
+        // The endpoint-wide certificate has already validated the concrete
+        // instance.  Reuse the same constructor literal check as the older
+        // state-token path, but do not require a per-rule token record.
+        if endpoint.scoped_constructor_def_id == Some(constructor_def_id)
+            || endpoint.constructor_def_id != Some(constructor_def_id)
+        {
+            return None;
+        }
+        let typing_env = body.typing_env(tcx);
+        let expected_channels = endpoint.declared_channels as u64;
+        let matches = body
+            .basic_blocks
+            .iter_enumerated()
+            .filter(|(_, block_data)| {
+                let TerminatorKind::Call { func, args, .. } = &block_data.terminator().kind
+                else {
+                    return false;
+                };
+                let Some((callee, _)) = func.const_fn_def() else { return false };
+                if !is_join_mask_constructor(tcx, callee) || args.len() != 2 {
+                    return false;
+                }
+                let channels = args[0]
+                    .node
+                    .constant()
+                    .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+                let mask = args[1]
+                    .node
+                    .constant()
+                    .and_then(|constant| constant.const_.try_eval_target_usize(tcx, typing_env));
+                channels == Some(expected_channels) && mask == Some(0)
+            })
+            .count();
+        if matches != 1 {
+            return None;
+        }
+        return Some(plan);
+    }
     let lowerings = summary
         .state_token_lowerings
         .iter()
@@ -5821,6 +6106,42 @@ fn fixed_atomic_pair_constructor<'tcx>(
     generic_args: GenericArgsRef<'tcx>,
 ) -> Option<DefId> {
     fixed_pair_constructor_named(tcx, generic, generic_args, "new_with_fixed_atomic_u64_pair_mask")
+}
+
+/// Resolve the endpoint-wide finite-state constructor. Its ABI is identical
+/// to the generic dynamic constructor; only the runtime representation policy
+/// changes. Keeping this as an ABI-checked shim makes the proof consumer
+/// independent of the library's internal state layout.
+fn finite_state_constructor<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+) -> Option<DefId> {
+    if tcx.crate_name(generic.krate).as_str() != "joins_runtime"
+        || tcx.item_name(generic).as_str() != "new_with_channel_mask"
+    {
+        return None;
+    }
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_binder();
+    let ty::Adt(output, _) = signature.output().kind() else { return None };
+    if tcx.crate_name(output.did().krate).as_str() != "joins_runtime"
+        || tcx.item_name(output.did()).as_str() != "DynamicMatcher"
+    {
+        return None;
+    }
+    let mut containers = vec![tcx.parent(generic)];
+    containers.extend(tcx.inherent_impls(output.did()).iter().copied());
+    containers
+        .into_iter()
+        .flat_map(|container| {
+            tcx.associated_items(container).in_definition_order().filter(|item| item.is_fn())
+        })
+        .filter(|item| tcx.item_name(item.def_id).as_str() == "new_with_finite_state_mask")
+        .map(|item| item.def_id)
+        .find(|target| {
+            let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
+            same_join_abi(tcx, signature, target_signature)
+        })
 }
 
 fn fixed_pair_constructor_named<'tcx>(
@@ -5996,7 +6317,8 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             strategy,
             JoinLoweringStrategy::FixedPairMatcher | JoinLoweringStrategy::FixedAtomicU64Pair
         );
-        if !is_constructor && !pair_strategy {
+        let finite_state_strategy = strategy == JoinLoweringStrategy::FiniteStateMask;
+        if !is_constructor && !pair_strategy && !finite_state_strategy {
             return;
         }
         // The first fixed-pair runtime representation has an inline left
@@ -6063,6 +6385,11 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                         return;
                     };
                     Some(target)
+                } else if finite_state_strategy {
+                    let Some(target) = finite_state_constructor(tcx, callee, generic_args) else {
+                        return;
+                    };
+                    Some(target)
                 } else {
                     None
                 };
@@ -6078,6 +6405,44 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                 continue;
             }
 
+            // The finite-state policy is selected at the constructor. The
+            // ordinary DynamicMatcher entry points consult that policy and
+            // take the masked claim path; unlike the fixed-pair ABI they need
+            // no per-method shim or call-target rewrite. Still carry the
+            // proof on those real MIR calls, so a later typed claim lowering
+            // can consume the same endpoint certificate instead of recovering
+            // it from the constructor or a runtime symbol name.
+            if finite_state_strategy {
+                let item_symbol = tcx.item_name(callee);
+                let item_name = item_symbol.as_str();
+                let is_finite_operation = tcx.crate_name(callee.krate).as_str()
+                    == "joins_runtime"
+                    && matches!(
+                        item_name,
+                        "submit_at"
+                            | "submit_oneway_at"
+                            | "submit_and_dispatch_at"
+                            | "__join_dispatch_once_at"
+                            | "__join_dispatch_all_once_at"
+                    );
+                if is_finite_operation {
+                    let operation_kind = if item_name.starts_with("__join_dispatch") {
+                        JoinOperationKind::Match
+                    } else {
+                        JoinOperationKind::Register
+                    };
+                    planned.push((
+                        block,
+                        None,
+                        generic_args,
+                        span,
+                        None,
+                        operation_kind,
+                        channel_index,
+                    ));
+                }
+                continue;
+            }
             if !pair_strategy {
                 continue;
             }

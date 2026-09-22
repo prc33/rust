@@ -35,6 +35,7 @@ working-tree status and stage-1 compiler provenance.
 | Completion counter | 56.3 ns/op | 1,837 | 1,883 | **1,963** | **34.87×** |
 | Reusable barrier | 14,516 ns/op | 16,573 | 15,192 | **14,070** | **0.97×** |
 | Reader/writer admission probe | 48.1 ns/op | 3,929 | 4,472 | **4,312** | **89.61×** |
+| Reader/writer fair schedule | 14,953 ns/op | — | — | **15,375** | **1.03×** (pooled focused rerun; see below) |
 | Mutex/counter | 28.4 ns/op | 720.6 | 528.3 | **536.2** | **18.90×** |
 | Scoped thread join | 61,845 ns/op | 56,171 | 60,448 | **57,321** | **0.93×** |
 | One-time initialization | 55,833 ns/op | 60,959 | 61,470 | **60,890** | **1.09×** |
@@ -56,6 +57,9 @@ matter:
 * **Reader/writer** is explicitly an admission probe.  Its separate validation
   witness checks reader overlap, writer exclusion and the real payload update;
   the timed join row must not be presented as a full `RwLock` replacement.
+* **Reader/writer fair schedule** is a separate deterministic benchmark: three
+  readers complete before one writer in every round, with the same barriers in
+  both controls. It is the next apples-to-apples timing gate.
 * **Async request/reply** uses Tokio as the native control, while the isolated
   unary join is caller-driven and executor-free.  It demonstrates the ordinary
   async-shaped fast path, not shared-reaction scheduling parity.
@@ -67,6 +71,57 @@ work/resource row is modestly slower. The material remaining gaps in this
 matrix are MPSC, completion, reader/writer admission and mutex. The large
 apparent wins are the protocol comparisons called out above, not evidence that
 all joins are already faster.
+
+## Focused MPSC/RwLock follow-up — 2026-09-22
+
+After the archived matrix, the compiler/runtime changes were rebuilt and the
+two requested endpoints were rerun with 2,000 iterations, four warmups, 20
+timed samples and four worker threads. Every sample passed its checksum and
+operation-count checks.
+
+| Protocol | Native | Join, `-Zjoin-cfa=optimize` | Ratio | Relevant proof/lowering |
+| --- | ---: | ---: | ---: | --- |
+| MPSC delivery | **142.0 ns/op** | **391.9 ns/op** | **2.76×** | MPSC remains generic: its payload/multiple producers require FIFO storage, with no MPSC/name/API recognizer. Typed `PairMatcher` admission fusion reduced an old generic rerun of 950.0 ns/op to 391.9 ns/op. |
+| RwLock fair schedule | **14,953 ns/op** | **15,375 ns/op** | **1.03×** | Endpoint-wide CFA proved the three persistent slot bits (`0b111`) and lowered construction to `DynamicMatcher::new_with_finite_state_mask(11, 7)`. |
+
+The MPSC fusion is deliberately representation-generic: it checks only the
+already-typed pair matcher, preserves the older-left/FIFO condition, and falls
+back to ordinary submit-then-dispatch. The CFA dump rejects that endpoint for
+finite-state storage: its payload channel is not persistent unit state, and
+multiple producers require FIFO storage. The RwLock
+path is likewise generic JCAM transition storage: state bits and overflow
+queues share the existing matcher lock, so this is not a lock-library pattern
+match or a claim that the complete matcher is stack allocated. For context, the
+same focused builds measured approximately 426.2 ns/op for MPSC with CFA off
+and 15,818.8 ns/op for the fair RwLock with CFA off; the optimized RwLock path
+is about 2.8% faster than that off window. The optimized/native medians above
+pool two sequential 20-sample windows (40 observations per side) to reduce
+the visible host scheduling variance.
+
+The native and optimized fair runs were measured in separate processes on the
+same host; the 1.03× ratio is therefore a close comparison, not a claim of a
+statistically significant win. Raw focused samples and exact commands are
+recorded in [`docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md).
+
+## Completion/mutex follow-up — 2026-09-22
+
+The same current optimized binary was also compared with CFA-off and native
+controls (2,000 iterations, four warmups, 20 samples, four workers):
+
+| Protocol | Native | CFA off | CFA optimize | Optimize/native |
+| --- | ---: | ---: | ---: | ---: |
+| Completion | **113.6 ns/op** | 2,587.5 ns/op | **1,763.9 ns/op** | **15.5×** |
+| Mutex/counter | **42.4 ns/op** | 463.8 ns/op | **276.1 ns/op** | **6.5×** |
+
+Thus the new analysis/fusion work helps (about 32% and 40% over CFA off), but
+neither benchmark is competitive. Completion is rejected by the finite-state
+certificate because its reaction is async and still pays coroutine/executor,
+wake and scheduling costs. `JoinMutex` carries a `u64` value token, so the
+unit-state bit-mask lowering does not apply; its generic pair fusion still
+helps, but dynamic queue/reply and payload-transfer costs remain. Closing these
+gaps requires generic CFA-proven value-token lowering and direct/shared
+coroutine continuation fusion, not a matcher recognizer for mutex or counter
+APIs.
 
 ## Newer mutex-only result
 
@@ -121,6 +176,12 @@ The implemented slice is useful but deliberately narrow:
   representations and the exact-`u64` atomic pair path.  One-way emissions do
   not manufacture reply cells.  The runtime uses atomics/CAS where selected;
   no optimization recognizes or substitutes a particular lock library.
+* Endpoint-wide transition CFA now emits a generic JCAM-style state-machine
+  certificate. Persistent one-way channels re-emitted by reactions use a
+  bit-mask runtime path, while request/result channels retain their queues.
+  Duplicate state admissions retain a compatibility overflow queue until
+  caller-sensitive multiplicity proves that path unreachable. The lowering is
+  selected from typed rule/re-emission edges, never from an MPSC or lock API.
 * Isolated unary result-bearing rules can use the caller-driven ordinary-future
   shape.  Private forwarding/result fusion has a narrow validated witness, but
   it is not a general CFA-driven shared-join rewrite.

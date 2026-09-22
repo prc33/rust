@@ -948,8 +948,36 @@ fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> 
     } else {
         "self.matcher"
     };
+    // A single synchronous dynamic rule has a generic submit/dispatch fusion
+    // opportunity.  Keep the pattern as compiler-generated channel indices;
+    // no protocol name or library primitive is recognized here.  The runtime
+    // helper preserves FIFO, scope and re-entrancy by falling back to the
+    // ordinary two-step path whenever its proof-free fast-path preconditions
+    // are not met.
+    let fused_rule = if definition.rules.len() == 1 && !definition.rules[0].is_async {
+        let resolved = resolve_rule(definition, &definition.rules[0], 0)?;
+        let pattern = resolved
+            .iter()
+            .map(|(index, _, _)| index.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let channels = resolved.iter().map(|(index, _, _)| *index).collect::<Vec<_>>();
+        Some((pattern, channels))
+    } else {
+        None
+    };
     let methods = definition.channels.iter().enumerate().map(|(index, channel)| {
-        dynamic_channel_method(&visibility, index, channel, &dispatch_bounds, matcher)
+        let fused_pattern = fused_rule.as_ref().and_then(|(pattern, channels)| {
+            channels.contains(&index).then_some(pattern.as_str())
+        });
+        dynamic_channel_method(
+            &visibility,
+            index,
+            channel,
+            &dispatch_bounds,
+            matcher,
+            fused_pattern,
+        )
     }).collect::<Vec<_>>().join("\n\n    ");
     let matcher_type = if private_storage {
         "::core::option::Option<::joins_runtime::DynamicMatcher>"
@@ -1238,17 +1266,26 @@ fn dynamic_channel_method(
     channel: &Channel,
     dispatch_bounds: &str,
     matcher: &str,
+    fused_pattern: Option<&str>,
 ) -> String {
     let argument = channel_method_argument(channel);
     let value = channel_submit_value(channel);
     let input_type = channel_input_type(channel);
     let output_type = channel.reply.as_deref().unwrap_or("()");
     if channel.reply.is_some() {
-        format!(
-            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let reply = {matcher}.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
-            name = channel.name.name,
-            dispatch_bounds = dispatch_bounds,
-        )
+        if let Some(pattern) = fused_pattern {
+            format!(
+                "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let __join_endpoint = self.clone(); {matcher}.submit_and_dispatch_at::<{input_type}, {output_type}, _>({index}, {value}, &[{pattern}], ::joins_runtime::source_location(file!(), line!(), column!()), move |inputs| Self::__join_reaction_0(__join_endpoint, inputs)) }}",
+                name = channel.name.name,
+                dispatch_bounds = dispatch_bounds,
+            )
+        } else {
+            format!(
+                "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{output_type}>\n{dispatch_bounds}{{ let reply = {matcher}.submit_at::<{input_type}, {output_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); reply }}",
+                name = channel.name.name,
+                dispatch_bounds = dispatch_bounds,
+            )
+        }
     } else {
         format!(
             "{visibility}fn {name}(&self{argument})\n{dispatch_bounds}{{ {matcher}.submit_oneway_at::<{input_type}>({index}, {value}, ::joins_runtime::source_location(file!(), line!(), column!())); let _ = self.__join_dispatch_once(); }}",

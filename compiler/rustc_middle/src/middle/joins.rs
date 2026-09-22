@@ -456,6 +456,11 @@ pub enum JoinLoweringStrategy {
     DirectFuture,
     FixedUnarySlot,
     FixedPairMatcher,
+    /// Endpoint-wide finite-state storage selected from the JCAM transition
+    /// graph.  The runtime keeps a bit-mask for proven one-way state
+    /// channels and retains the ordinary queue as a correctness-preserving
+    /// overflow path until caller multiplicity is fully discharged.
+    FiniteStateMask,
     /// Safe atomic token storage for an exact `u64` one-way state channel.
     /// This is deliberately narrower than `FixedPairMatcher`; no generic
     /// payload is reinterpreted as an integer by the lowering.
@@ -997,6 +1002,34 @@ pub struct JoinStateTokenLowering {
     pub certificate_id: u64,
 }
 
+/// Endpoint-wide transition facts for a finite join state machine.
+///
+/// Unlike the older state-token proof, this certificate reasons about the
+/// complete rule graph: which persistent one-way state bits each rule claims
+/// and which bits it re-emits.  Result/request channels remain ordinary
+/// queues.  The certificate is deliberately independent of runtime matcher
+/// names and lock implementations; it is derived solely from typed channel
+/// and reaction identities retained in MIR.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinStateMachineRule {
+    pub rule_index: u32,
+    pub consume_mask: u64,
+    pub produce_mask: u64,
+    pub reply_mask: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinStateMachineProof {
+    pub endpoint_def_id: u32,
+    pub state_mask: u64,
+    pub rules: Vec<JoinStateMachineRule>,
+    pub status: JoinStateTokenStatus,
+    pub rejection: Option<JoinStateTokenRejection>,
+    pub certificate_id: u64,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 #[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
 pub enum JoinStateTokenStatus {
@@ -1014,6 +1047,10 @@ pub struct JoinCfaCrateSummary {
     pub instances: Vec<JoinCfaInstanceFact>,
     pub state_tokens: Vec<JoinStateTokenProof>,
     pub state_token_lowerings: Vec<JoinStateTokenLowering>,
+    /// Whole-endpoint JCAM transition certificates. These are separate from
+    /// per-token facts because a finite matcher must see competing rules and
+    /// all re-emission edges at once.
+    pub state_machines: Vec<JoinStateMachineProof>,
     pub context: JoinCfaContextSummary,
     /// The fixed-point JCAM value constraints and their solved facts.  These
     /// are deliberately separate from the effect/context summary above: a

@@ -9,6 +9,36 @@ provisional; a state-token bound does not establish a reply-queue bound.
 
 Date: 2026-09-20. **This is the next execution plan. Start here.**
 
+## Latest execution slice — 2026-09-22
+
+This slice is complete and is the new baseline for the next agent:
+
+* **MPSC:** keep the endpoint generic. Its CFA certificate is rejected for
+  finite-state storage because producer multiplicity is unbounded; no source
+  name, payload type, or `mpsc`-shaped protocol is recognized. The generated
+  typed pair operation now has a proof-free, FIFO-preserving admission fusion
+  (`submit_right_and_dispatch_at`) with an exact submit-then-dispatch fallback.
+  The focused rerun improved the join median from 950.0 to 401.0 ns/op, versus
+  130.3 ns/op for `std::mpsc`.
+* **RwLock:** the fair phase-controlled benchmark is now part of the matrix.
+  Endpoint-wide CFA follows all eight rules and re-emissions, proving the
+  persistent `slot_a/slot_b/slot_c` state mask (`0b111`). Optimized MIR lowers
+  the constructor to `new_with_finite_state_mask(11, 7)`; ordinary result
+  channels stay queue-backed and duplicate state admissions use a compatibility
+  overflow queue. The fair result is 14,935 ns/op for joins versus 14,684
+  ns/op for the native control.
+* **Representation boundary:** the finite-state path is a generic JCAM-style
+  transition product selected from typed rule/re-emission edges. It still uses
+  the existing matcher mutex and does not recognize or depend on a lock
+  implementation. The next optimization gate is to lower a proven claim and
+  completion transition into ordinary typed MIR locals/atomics, not to add
+  another named runtime helper.
+
+The detailed focused commands/results are in
+[`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)
+and the root summary is
+[`JOINS-PRIMITIVES-SUMMARY.md`](../JOINS-PRIMITIVES-SUMMARY.md).
+
 This plan follows the private forwarding work, state-token bridge at Rust
 `c3f548c89f5`, and all-channel dispatch benchmark at library `b547504`. It supersedes the immediate sequencing
 in `joins-private-storage-handover.md`, `joins-next-slice.md`, and older
@@ -21,6 +51,15 @@ Implement the missing chain in rustc:
 
 **channel/instance flow → closedness and occupancy proofs → specialized
 storage and matching → eligible transition fusion → ordinary MIR/LLVM optimization.**
+
+The next endpoint-wide slice also includes the JCAM-style finite transition
+product. It records, for every source rule, the persistent one-way channels
+claimed and re-emitted by that rule. A proven state mask may lower those
+channels to bit storage while request/result channels remain ordinary queues.
+This is a generic rule-graph optimization, not recognition of an MPSC or
+RwLock-shaped API. Until caller-sensitive multiplicity is complete, duplicate
+state admissions retain a compatibility overflow queue; the fast path itself
+does not depend on a library lock implementation.
 
 The first deliverable is a compiler-selected representation for a state-token
 counter protocol, with explicit proof and rejection records, equivalent behavior
