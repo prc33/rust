@@ -44,6 +44,9 @@ This slice is complete and is the new baseline for the next agent:
   path. The executable `joins_async` fixture runs the shape in off, analyze
   and optimize modes, and the optimize MIR dump shows
   `new_with_finite_state_mask(4, 8)` plus the certified async dispatch call.
+  Body records now retain `is_async` separately from value facts, so bounded
+  context CFA marks the reaction's `may_suspend` effect without making the
+  registration adapter itself look suspending.
 
 The detailed focused commands/results are in
 [`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)

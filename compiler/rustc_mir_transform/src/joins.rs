@@ -1370,7 +1370,11 @@ fn join_context_effects(left: JoinCfaEffects, right: JoinCfaEffects) -> JoinCfaE
 
 fn context_effects_for_body(body: &JoinCfaBodyRecord) -> JoinCfaEffects {
     let mut effects = JoinCfaEffects {
-        may_suspend: body.yields != 0,
+        // Async value flow is analysed exactly like synchronous value flow,
+        // but the reaction's continuation boundary remains an independent
+        // effect for optimizations that might otherwise inline/remove its
+        // executor or cancellation protocol.
+        may_suspend: body.is_async || body.yields != 0,
         // `unknown_effects` is a body-local extraction fallback.  It includes
         // ordinary projection/rvalue shapes and calls which are unrelated to
         // the join protocol, so treating the counter as an endpoint escape
@@ -3055,6 +3059,11 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     .and_then(|operation| operation.channel_index),
                 rule_index: summary.rule_index,
                 role: summary.role,
+                // Only the actual reaction body carries the suspension
+                // contract. A generated channel/dispatch adapter for an
+                // async endpoint still performs immediate registration; it
+                // must not make every caller context appear to suspend.
+                is_async: summary.role == JoinBodyRole::ReactionBody && summary.is_async,
                 primitive_locals: body
                     .local_decls
                     .iter_enumerated()
@@ -3154,6 +3163,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 channel_index: None,
                 rule_index: None,
                 role: JoinBodyRole::Ordinary,
+                is_async: false,
                 primitive_locals: body
                     .local_decls
                     .iter_enumerated()
@@ -4423,7 +4433,7 @@ fn dump_crate_summary(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"primitive_locals\":[{}],\"flows\":[{}],\"closures\":[{}],\"function_facts\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"is_async\":{},\"primitive_locals\":[{}],\"flows\":[{}],\"closures\":[{}],\"function_facts\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -4434,6 +4444,7 @@ fn dump_crate_summary(
                 body.rule_index
                     .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                 body.role,
+                body.is_async,
                 primitive_locals,
                 value_flows,
                 closure_facts,

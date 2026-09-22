@@ -673,6 +673,11 @@ pub struct JoinCfaBodyRecord {
     /// not enough to relate a re-emission to the rule that consumed it.
     pub rule_index: Option<u32>,
     pub role: JoinBodyRole,
+    /// Whether this record is the actual async reaction body. Asyncness is
+    /// kept separate from value-flow facts: it must not widen the JCAM value
+    /// solution, but it remains available to effects consumers deciding
+    /// whether a continuation/executor boundary may be removed.
+    pub is_async: bool,
     /// Locals whose MIR type is a scalar/primitive value.  Unknown calls may
     /// return such values without introducing a JCAM `Outer` closure fact;
     /// retaining this small type projection avoids widening the channel/value
