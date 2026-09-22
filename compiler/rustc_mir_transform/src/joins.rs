@@ -3652,9 +3652,15 @@ fn prove_endpoint_state_machines(
                     rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
                 }
             }
-            if rule.is_async {
-                rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
-            }
+            // Async reactions still participate in the value/re-emission
+            // graph.  Suspension changes when the body runs, but it does not
+            // change which typed channel values can flow through the rule.
+            // The existing coroutine/future lowering owns the claimed inputs
+            // until completion or cancellation, so finite-state storage can
+            // be selected from the same transition facts as for a synchronous
+            // reaction.  Optimizations which remove the executor or overflow
+            // storage require stronger proofs later; they are not prerequisites
+            // for this representation choice.
             let mut seen = 0u64;
             for &channel in &rule.channel_indices {
                 if channel >= u64::BITS as u32 || (seen & (1u64 << channel)) != 0 {
@@ -3723,7 +3729,16 @@ fn prove_endpoint_state_machines(
                         continue;
                     }
                     if (state_shape_mask & bit) == 0 {
-                        rejection.get_or_insert(JoinStateTokenRejection::UnsupportedRuleShape);
+                        // A one-way channel with a payload is still part of
+                        // the endpoint's transition graph, but it is not a
+                        // finite state bit.  Keep its FIFO representation and
+                        // let this certificate cover only the persistent unit
+                        // channels.  In particular, a state reaction may
+                        // consume and re-emit a payload token (for example a
+                        // counter) while its ready/ownership marker uses a
+                        // bit.  Rejecting the whole endpoint here would make
+                        // an otherwise valid product depend on the unrelated
+                        // queue-backed channel.
                         continue;
                     }
                     if (produce_mask_for_rule & bit) != 0 {

@@ -34,6 +34,17 @@ This slice is complete and is the new baseline for the next agent:
   completion transition into ordinary typed MIR locals/atomics, not to add
   another named runtime helper.
 
+* **Async reactions are now in the value/state CFA domain.** The endpoint
+  proof no longer rejects a rule merely because `rule.is_async`. It follows
+  the typed channel edges emitted by the async reaction, proves the
+  `AsyncStateMachine`/completion shape's unit `ready()` bit, and leaves the
+  payload-bearing `remaining(u64)` channel queue-backed. The existing
+  coroutine/future runtime retains claimed inputs across suspension and
+  cancellation; this change selects storage, not an executor-free execution
+  path. The executable `joins_async` fixture runs the shape in off, analyze
+  and optimize modes, and the optimize MIR dump shows
+  `new_with_finite_state_mask(4, 8)` plus the certified async dispatch call.
+
 The detailed focused commands/results are in
 [`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)
 and the root summary is
@@ -290,7 +301,9 @@ in CFA body records and rejects a state-token producer inside a loop with
 `LoopMultiplicity`. The loop witness is executable in
 `joins-library/compiler-tests/joins_state_token.rs`. The positive canonical
 mask-1 pair still lowers to `FixedPairMatcher`, while loop, competing-rule,
-scoped, reordered and async witnesses stay generic. The lowering pass plans
+scoped and reordered witnesses stay generic. Async reactions may now use the
+finite state-mask representation when their typed transition graph proves it,
+but their coroutine/executor work remains explicit. The lowering pass plans
 all recognized rewrites in a body before mutating MIR, and the three serialized
 native gates (`off`, `analyze`, `optimize`) pass with MIR validation.
 

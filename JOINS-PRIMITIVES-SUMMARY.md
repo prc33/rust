@@ -114,14 +114,41 @@ controls (2,000 iterations, four warmups, 20 samples, four workers):
 | Mutex/counter | **42.4 ns/op** | 463.8 ns/op | **276.1 ns/op** | **6.5×** |
 
 Thus the new analysis/fusion work helps (about 32% and 40% over CFA off), but
-neither benchmark is competitive. Completion is rejected by the finite-state
-certificate because its reaction is async and still pays coroutine/executor,
-wake and scheduling costs. `JoinMutex` carries a `u64` value token, so the
-unit-state bit-mask lowering does not apply; its generic pair fusion still
-helps, but dynamic queue/reply and payload-transfer costs remain. Closing these
-gaps requires generic CFA-proven value-token lowering and direct/shared
-coroutine continuation fusion, not a matcher recognizer for mutex or counter
-APIs.
+neither benchmark is competitive. Completion is now accepted by the
+finite-state certificate: the async reaction's `ready()` re-emission is
+represented by bit `0b1000`, while `remaining(u64)` stays on a FIFO and
+`done()`/`wait()` retain their ordinary channels. The runtime still pays the
+coroutine/executor, wake and scheduling costs, so selecting the bit mask did
+not make the completion row competitive by itself. `JoinMutex` carries a
+`u64` value token, so the unit-state bit-mask lowering does not apply; its
+generic pair fusion still helps, but dynamic queue/reply and payload-transfer
+costs remain. Closing these gaps requires generic CFA-proven value-token and
+reply-slot lowering plus direct/shared coroutine continuation fusion, not a
+matcher recognizer for mutex or counter APIs.
+
+The async state-machine fixture in `joins-library/compiler-tests/joins_async.rs`
+now executes this completion shape in all three CFA modes. In optimize mode
+the graph proves the endpoint-wide state mask and MIR carries the same
+`FiniteStateMask` certificate onto construction, registration and async
+dispatch; the coroutine body remains the normal Rust future.
+
+### Async state-mask smoke rerun — 2026-09-22
+
+After enabling the async proof, the completion row was rerun from freshly
+rebuilt binaries (2,000 iterations, five warmups, 30 samples, four workers;
+all checksums were `2000`). This is a separate serial window, so it is a
+regression signal rather than a replacement for the paired matrix above:
+
+| Variant | Median ns/op | Mean ns/op |
+| --- | ---: | ---: |
+| Handwritten control | **108.7** | 119.7 |
+| Joins, CFA off | 2,627.4 | 2,728.1 |
+| Joins, CFA optimize (async state mask) | **2,073.5** | 2,202.2 |
+
+The state-mask proof is therefore active and preserves semantics, but it does
+not remove the dominant async future/executor/reply work. The next useful
+optimization is direct/shared coroutine continuation and reply-slot lowering,
+not a broader unit-bit recognizer.
 
 ## Newer mutex-only result
 
