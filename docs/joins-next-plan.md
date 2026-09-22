@@ -851,3 +851,28 @@ Commit compiler changes and current results in `JOINS-SUMMARY.md` plus linked
 evidence, and push `rust` branch `joins` to `prc33`. Commit companion library
 changes locally (no remote is currently configured). Preserve unrelated
 worktree changes, including `AGENTS.md` deletion and `ph2`.
+## Completed callable-value slice — 2026-09-22
+
+The previously open function-value boundary is now wired through the first
+proof consumer. `FnDef` assignments and safe reification to `fn` pointers are
+recorded in MIR as typed `Function` facts; indirect call terminators retain the
+function local. A crate-level copy/move fixed point resolves a call only when
+one function body is possible, then reuses ordinary-local argument/return
+constraints and the existing context history. The state-token optimizer accepts
+one non-cyclic helper path and consumes the resolved edge when selecting
+`FixedPairMatcher`. An unknown/conflicting function value remains unknown; an
+unknown callable in an endpoint subgraph explicitly rejects fixed storage as
+`IncompleteAnalysis`.
+
+Verification is complete for this slice: the `joins_callable` fixture executes
+both a resolved and an opaque callable, and native `off`, `analyze`, and
+`optimize` suites pass. The serial 100k-operation benchmark (25 samples per
+cell, `-C opt-level=3`) records 590.48 → 379.56 ns/op for direct helpers and
+626.13 → 359.34 ns/op for typed indirect helpers when CFA selects fixed storage.
+See `../joins-library/docs/callable-cfa-benchmark.md` and the raw TSV.
+
+Remaining callable work is intentionally separate: propagate callable facts
+through ordinary helper parameters/returns, model closure/function captures,
+handle trait-object/foreign calls with cross-crate summaries, and expose the
+resolved fact to result-channel fusion once that transform has a sound
+ownership certificate. Do not treat this slice as general devirtualization.

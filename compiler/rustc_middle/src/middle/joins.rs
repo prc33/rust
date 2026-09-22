@@ -320,6 +320,22 @@ pub struct JoinCfaClosureFact {
     pub statement: u32,
 }
 
+/// A zero-capture function item which was materialized into a MIR local.
+///
+/// Function items and function pointers are not primitive payloads: the
+/// callee identity is part of the value-flow graph.  Keeping this fact
+/// separate from closure aggregates lets the compiler follow a reified
+/// `fn` value without pretending that a closure environment (or an opaque
+/// function pointer) is present.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(StableHash, TyEncodable, TyDecodable, TypeFoldable, TypeVisitable)]
+pub struct JoinCfaFunctionFact {
+    pub destination: u32,
+    pub body_def_id: u32,
+    pub block: u32,
+    pub statement: u32,
+}
+
 /// The intrabody value state used by the first compiler-native CFA solver.
 ///
 /// The lattice is deliberately small. `Internal` is the optimistic seed for
@@ -381,6 +397,11 @@ pub struct JoinCallEdge {
     /// preserving the slot is what lets the crate solver map a caller value
     /// to the callee's MIR argument local without guessing through types.
     pub argument_locals: Vec<Option<u32>>,
+    /// Base MIR local carrying an indirect callable value.  A `None` value is
+    /// either a direct constant `FnDef` or a non-place/opaque call target.
+    /// The crate CFA may replace an unknown edge with a typed local function
+    /// edge when this local has one unique `JoinCfaFunctionFact`.
+    pub function_local: Option<u32>,
 }
 
 /// Semantic target classification for a typed direct call edge.
@@ -590,6 +611,11 @@ pub struct JoinCfaSummary {
     pub operations: Vec<JoinMirOperation>,
     pub value_flows: Vec<JoinValueFlow>,
     pub closure_facts: Vec<JoinCfaClosureFact>,
+    pub function_facts: Vec<JoinCfaFunctionFact>,
+    /// Function-typed locals assigned by an opaque operation.  These locals
+    /// prevent a unique function-item fact elsewhere in the body from being
+    /// treated as path-insensitive proof at an indirect callsite.
+    pub unknown_function_locals: Vec<u32>,
     /// Monotone intrabody solution for the locals touched by the extracted
     /// value-flow edges. This is compiler-owned CFA state, not a second MIR.
     pub local_facts: Vec<JoinLocalFact>,
@@ -649,6 +675,8 @@ pub struct JoinCfaBodyRecord {
     pub primitive_locals: Vec<u32>,
     pub value_flows: Vec<JoinValueFlow>,
     pub closure_facts: Vec<JoinCfaClosureFact>,
+    pub function_facts: Vec<JoinCfaFunctionFact>,
+    pub unknown_function_locals: Vec<u32>,
     pub call_edges: Vec<JoinCallEdge>,
     /// Number of MIR call and yield events in this body.  Keeping these
     /// effects on the crate graph lets the context solver distinguish a
@@ -787,6 +815,14 @@ pub enum JoinCfaValue {
         /// history.  This origin keeps two otherwise identical zero-capture
         /// closures distinct until the bounded-context solver has decided
         /// that their histories may be merged.
+        origin: u64,
+    },
+    /// A statically identified function item or reified function pointer.
+    /// `origin` distinguishes callsites when bounded contexts merge values;
+    /// the body identity is the only executable target and captures are empty
+    /// for the initial safe slice.
+    Function {
+        body_def_id: u32,
         origin: u64,
     },
 }

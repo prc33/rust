@@ -484,3 +484,23 @@ immediate compiler implementation.
 Use focused checks, batch stage-1 builds and avoid broad DataFusion rebuilds
 until the compiler-generated optimisation gate passes. Record evidence and
 limitations here as each gate completes.
+
+## Typed callable CFA reaches storage lowering (2026-09-22)
+
+Function-item values are no longer classified as primitive. The MIR visitor
+records a typed `Function` fact and an indirect call's source local; the crate
+fixed point follows a unique copy/move chain and resolves that call to an
+ordinary-local edge. A unique, non-cyclic helper path can then participate in
+the existing state-token proof and `FixedPairMatcher` lowering. Opaque or
+conflicting function pointers remain unknown, and an unresolved indirect call
+in an endpoint subgraph now rejects fixed storage as `IncompleteAnalysis`.
+
+The companion library fixture `joins_callable.rs` proves both sides: the known
+callable selects a fixed-pair certificate and executes; a `black_box`-hidden
+callable executes but remains conservative. `off`, `analyze`, and `optimize`
+native suites all pass. The serial benchmark (25 × 100,000 operations per
+cell, optimized stage-1 code) reports 590.48 → 379.56 ns/op for direct helper
+calls (35.72% faster) and 626.13 → 359.34 ns/op for typed indirect calls
+(42.61% faster) when CFA changes the matcher from generic to fixed. Full raw
+samples and bootstrap intervals are in
+`../joins-library/docs/callable-cfa-benchmark.md`.

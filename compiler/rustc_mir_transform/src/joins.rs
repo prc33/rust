@@ -18,6 +18,7 @@ use rustc_middle::bug;
 use rustc_middle::middle::joins::{
     JoinBodyRole, JoinCall, JoinCallEdge, JoinCallTargetKind, JoinCfaBodyRecord,
     JoinCfaClosureFact, JoinCfaConstraint, JoinCfaConstraintKind, JoinCfaContextFrame,
+    JoinCfaFunctionFact,
     JoinCfaContextFrameKind, JoinCfaContextInstance, JoinCfaContextSummary, JoinCfaCrateSummary,
     JoinCfaEffects, JoinCfaFlowState, JoinCfaInstanceFact, JoinCfaInstanceStatus, JoinCfaRejection,
     JoinCfaSide, JoinCfaSummary, JoinCfaValue, JoinCfaValueFact, JoinChannelOccupancyFact,
@@ -30,10 +31,11 @@ use rustc_middle::middle::joins::{
 use rustc_middle::mir::interpret::Scalar;
 use rustc_middle::mir::visit::Visitor;
 use rustc_middle::mir::{
-    self, AggregateKind, Body, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE, Rvalue,
-    Statement, StatementKind, TerminatorKind,
+    self, AggregateKind, Body, CastKind, JoinIntrinsic, Location, Operand, Place, RETURN_PLACE,
+    Rvalue, Statement, StatementKind, TerminatorKind,
 };
 use rustc_middle::ty::{self, GenericArgsRef, Ty, TyCtxt};
+use rustc_middle::ty::adjustment::PointerCoercion;
 use rustc_session::config::JoinCfaMode;
 use rustc_span::Spanned;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -58,6 +60,24 @@ enum InstanceAlias {
     Unique { endpoint_def_id: u32, body_def_id: u32, block: u32, statement: u32 },
     Multiple,
     Unknown,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum FunctionAlias {
+    None,
+    Unique(u32),
+    Multiple,
+}
+
+impl FunctionAlias {
+    fn join(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::None, alias) | (alias, Self::None) => alias,
+            (Self::Unique(left), Self::Unique(right)) if left == right => self,
+            (Self::Multiple, _) | (_, Self::Multiple) => Self::Multiple,
+            (Self::Unique(_), Self::Unique(_)) => Self::Multiple,
+        }
+    }
 }
 
 impl InstanceAlias {
@@ -245,6 +265,8 @@ fn join_mir_fingerprint<'tcx>(
     body: &Body<'tcx>,
     operations: &[JoinMirOperation],
     value_flows: &[JoinValueFlow],
+    function_facts: &[JoinCfaFunctionFact],
+    unknown_function_locals: &[u32],
     call_edges: &[JoinCallEdge],
 ) -> u64 {
     let mut hasher = FxHasher::default();
@@ -261,6 +283,8 @@ fn join_mir_fingerprint<'tcx>(
     }
     operations.hash(&mut hasher);
     value_flows.hash(&mut hasher);
+    function_facts.hash(&mut hasher);
+    unknown_function_locals.hash(&mut hasher);
     call_edges.hash(&mut hasher);
     hasher.finish()
 }
@@ -274,6 +298,9 @@ struct JoinBodyFacts {
     operations: Vec<JoinMirOperation>,
     value_flows: Vec<JoinValueFlow>,
     closure_facts: Vec<(u32, Vec<u32>, u32, u32, u32)>,
+    function_facts: Vec<JoinCfaFunctionFact>,
+    unknown_function_locals: FxIndexSet<u32>,
+    callable_locals: Vec<bool>,
     call_edges: Vec<JoinCallEdge>,
     escapes: FxIndexSet<u32>,
     endpoint_escapes: FxIndexSet<JoinEndpointEscape>,
@@ -398,8 +425,14 @@ impl JoinBodyFacts {
         local_count: usize,
         solver_budget: usize,
     ) -> JoinCfaSummary {
-        let mir_fingerprint =
-            join_mir_fingerprint(body, &self.operations, &self.value_flows, &self.call_edges);
+        let mir_fingerprint = join_mir_fingerprint(
+            body,
+            &self.operations,
+            &self.value_flows,
+            &self.function_facts,
+            &self.unknown_function_locals.iter().copied().collect::<Vec<_>>(),
+            &self.call_edges,
+        );
         let endpoint_escapes = self.endpoint_escapes.iter().copied().collect::<Vec<_>>();
         let closure_facts = self
             .closure_facts
@@ -471,6 +504,8 @@ impl JoinBodyFacts {
             operations: self.operations,
             value_flows: self.value_flows,
             closure_facts,
+            function_facts: self.function_facts,
+            unknown_function_locals: self.unknown_function_locals.into_iter().collect(),
             local_facts,
             solver_steps,
             solver_complete,
@@ -537,6 +572,10 @@ fn join_cfa_is_primitive_type<'tcx>(ty: Ty<'tcx>) -> bool {
         ty::Array(element, _) => join_cfa_is_primitive_type(*element),
         _ => false,
     }
+}
+
+fn join_cfa_is_callable_type<'tcx>(ty: Ty<'tcx>) -> bool {
+    matches!(ty.kind(), ty::FnDef(..) | ty::FnPtr(..))
 }
 
 fn classify_instance_closedness(
@@ -977,6 +1016,8 @@ fn try_fuse_private_result<'tcx>(
             body,
             &summary.operations,
             &summary.value_flows,
+            &summary.function_facts,
+            &summary.unknown_function_locals,
             &summary.call_edges,
         )
     {
@@ -1881,6 +1922,27 @@ fn build_join_cfa_constraints(
             });
         }
 
+        for function in &record.function_facts {
+            constraints.push(JoinCfaConstraint {
+                body_def_id: record.body_def_id,
+                block: function.block,
+                statement: function.statement,
+                kind: JoinCfaConstraintKind::In {
+                    destination: variable(function.destination),
+                    state: JoinCfaFlowState::Foreground,
+                    value: JoinCfaValue::Function {
+                        body_def_id: function.body_def_id,
+                        origin: join_cfa_closure_origin(
+                            record.body_def_id,
+                            function.block,
+                            function.statement,
+                            function.body_def_id,
+                        ),
+                    },
+                },
+            });
+        }
+
         for escape in &record.endpoint_escapes {
             constraints.push(JoinCfaConstraint {
                 body_def_id: record.body_def_id,
@@ -2415,8 +2477,12 @@ impl JoinCfaContextualSolver {
                         incoming.insert(*body_def_id);
                     }
                     JoinCfaConstraintKind::In { value, .. } => {
-                        if let JoinCfaValue::Closure { body_def_id, .. } = value {
-                            incoming.insert(*body_def_id);
+                        match value {
+                            JoinCfaValue::Closure { body_def_id, .. }
+                            | JoinCfaValue::Function { body_def_id, .. } => {
+                                incoming.insert(*body_def_id);
+                            }
+                            _ => {}
                         }
                     }
                     JoinCfaConstraintKind::Emit { history, .. } => {
@@ -2449,6 +2515,10 @@ impl JoinCfaContextualSolver {
             JoinCfaValue::Closure { body_def_id, captures, origin } => JoinCfaValue::Closure {
                 body_def_id,
                 captures,
+                origin: if join_cfa_is_channel_variable(destination) { destination } else { origin },
+            },
+            JoinCfaValue::Function { body_def_id, origin } => JoinCfaValue::Function {
+                body_def_id,
                 origin: if join_cfa_is_channel_variable(destination) { destination } else { origin },
             },
             value => value,
@@ -2855,7 +2925,7 @@ impl JoinCfaContextualSolver {
                         JoinCfaValue::Channel { endpoint_def_id, .. } => {
                             target_endpoints.contains(&endpoint_def_id)
                         }
-                        JoinCfaValue::Closure { .. } => false,
+                        JoinCfaValue::Closure { .. } | JoinCfaValue::Function { .. } => false,
                         JoinCfaValue::Wildcard(JoinCfaSide::Inner) => !target_endpoints.is_empty(),
                         JoinCfaValue::Wildcard(JoinCfaSide::Outer) => false,
                         JoinCfaValue::Wildcard(JoinCfaSide::Primitive)
@@ -2868,6 +2938,68 @@ impl JoinCfaContextualSolver {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Resolve function-item values before any proof-consuming pass runs.  A
+/// local function value is precise only when one body identity reaches the
+/// callsite through copy/move edges; conflicting assignments remain unknown.
+/// This is intentionally a small forward fixed point rather than a pattern
+/// match on runtime function-pointer representations.
+fn resolve_function_value_edges(bodies: &mut [JoinCfaBodyRecord]) {
+    let mut aliases_by_body = FxHashMap::<u32, FxHashMap<u32, FunctionAlias>>::default();
+    for body in bodies.iter() {
+        let mut aliases = FxHashMap::default();
+        for fact in &body.function_facts {
+            let current = aliases.get(&fact.destination).copied().unwrap_or(FunctionAlias::None);
+            aliases.insert(fact.destination, current.join(FunctionAlias::Unique(fact.body_def_id)));
+        }
+        for local in &body.unknown_function_locals {
+            aliases.insert(*local, FunctionAlias::Multiple);
+        }
+        let mut changed = true;
+        let mut iterations = 0;
+        while changed && iterations < 1024 {
+            changed = false;
+            iterations += 1;
+            for flow in &body.value_flows {
+                if !matches!(flow.kind, JoinValueFlowKind::Copy | JoinValueFlowKind::Move) {
+                    continue;
+                }
+                let Some(source) = flow.source else { continue };
+                let incoming = aliases.get(&source).copied().unwrap_or(FunctionAlias::None);
+                if incoming == FunctionAlias::None {
+                    continue;
+                }
+                let current = aliases
+                    .get(&flow.destination)
+                    .copied()
+                    .unwrap_or(FunctionAlias::None);
+                let next = current.join(incoming);
+                if next != current {
+                    aliases.insert(flow.destination, next);
+                    changed = true;
+                }
+            }
+        }
+        aliases_by_body.insert(body.body_def_id, aliases);
+    }
+
+    for body in bodies.iter_mut() {
+        let Some(aliases) = aliases_by_body.get(&body.body_def_id) else { continue };
+        for edge in &mut body.call_edges {
+            if edge.target != JoinCallTargetKind::Unknown {
+                continue;
+            }
+            let Some(function_local) = edge.function_local else { continue };
+            let FunctionAlias::Unique(callee) =
+                aliases.get(&function_local).copied().unwrap_or(FunctionAlias::None)
+            else {
+                continue;
+            };
+            edge.callee = Some(callee);
+            edge.target = JoinCallTargetKind::OrdinaryLocal;
         }
     }
 }
@@ -2931,6 +3063,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     .collect(),
                 value_flows: summary.value_flows.clone(),
                 closure_facts: summary.closure_facts.clone(),
+                function_facts: summary.function_facts.clone(),
+                unknown_function_locals: summary.unknown_function_locals.clone(),
                 call_edges: summary.call_edges.clone(),
                 calls: summary.calls,
                 yields: summary.yields,
@@ -2945,6 +3079,7 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                     .filter(|edge| edge.target == JoinCallTargetKind::OrdinaryLocal)
                     .filter_map(|edge| edge.callee),
             );
+            pending_ordinary.extend(record.function_facts.iter().map(|fact| fact.body_def_id));
             bodies.push(record);
             continue;
         }
@@ -2963,6 +3098,13 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
             operations: Vec::new(),
             value_flows: Vec::new(),
             closure_facts: Vec::new(),
+            function_facts: Vec::new(),
+            unknown_function_locals: FxIndexSet::default(),
+            callable_locals: body
+                .local_decls
+                .iter()
+                .map(|decl| join_cfa_is_callable_type(decl.ty))
+                .collect(),
             call_edges: Vec::new(),
             escapes: FxIndexSet::default(),
             endpoint_escapes: FxIndexSet::default(),
@@ -3032,6 +3174,8 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                         }
                     })
                     .collect(),
+                function_facts: facts.function_facts,
+                unknown_function_locals: facts.unknown_function_locals.into_iter().collect(),
                 call_edges: facts.call_edges,
                 calls: facts.calls,
                 yields: facts.yields,
@@ -3062,9 +3206,11 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 .filter(|edge| edge.target == JoinCallTargetKind::OrdinaryLocal)
                 .filter_map(|edge| edge.callee),
         );
+        pending_ordinary.extend(record.function_facts.iter().map(|fact| fact.body_def_id));
         bodies.push(record);
     }
     bodies.sort_by_key(|record| record.body_def_id);
+    resolve_function_value_edges(&mut bodies);
 
     let mut instances = Vec::<JoinCfaInstanceFact>::new();
     let mut aliases_by_body = FxHashMap::<u32, FxHashMap<u32, InstanceAlias>>::default();
@@ -3612,6 +3758,11 @@ fn prove_state_tokens<'tcx>(
                     transitions.iter().any(|transition| {
                         transition.kind == JoinStateTokenTransitionKind::Seed
                             && transition.body_def_id != instance.body_def_id
+                            && !unique_ordinary_call_path(
+                                instance.body_def_id,
+                                transition.body_def_id,
+                                bodies,
+                            )
                     })
                 });
                 let endpoint_complete =
@@ -3688,6 +3839,58 @@ fn prove_state_tokens<'tcx>(
     }
     proofs.sort_by_key(|proof| (proof.endpoint_def_id, proof.rule_index, proof.channel_index));
     proofs
+}
+
+/// Return true only when one non-cyclic, compiler-resolved ordinary-call path
+/// reaches `target` from the constructor allocation body.  This is the
+/// interprocedural refinement of the original helper-multiplicity rejection:
+/// a single callable helper may participate in a fixed-slot proof, while two
+/// callsites, a loop, recursion, or an unresolved edge still reject it.
+fn unique_ordinary_call_path(
+    start: u32,
+    target: u32,
+    bodies: &[JoinCfaBodyRecord],
+) -> bool {
+    fn visit(
+        current: u32,
+        target: u32,
+        bodies: &FxHashMap<u32, &JoinCfaBodyRecord>,
+        stack: &mut FxHashSet<u32>,
+    ) -> u8 {
+        if current == target {
+            return 1;
+        }
+        if !stack.insert(current) {
+            return 0;
+        }
+        let Some(body) = bodies.get(&current).copied() else {
+            stack.remove(&current);
+            return 0;
+        };
+        let mut paths = 0u8;
+        for edge in &body.call_edges {
+            if edge.target != JoinCallTargetKind::OrdinaryLocal {
+                continue;
+            }
+            let Some(callee) = edge.callee else {
+                stack.remove(&current);
+                return 0;
+            };
+            if body.cyclic_blocks.contains(&edge.block) {
+                stack.remove(&current);
+                return 0;
+            }
+            paths = paths.saturating_add(visit(callee, target, bodies, stack));
+            if paths > 1 {
+                break;
+            }
+        }
+        stack.remove(&current);
+        paths
+    }
+
+    let by_id = bodies.iter().map(|body| (body.body_def_id, body)).collect::<FxHashMap<_, _>>();
+    visit(start, target, &by_id, &mut FxHashSet::default()) == 1
 }
 
 /// Check the context slice needed by a conserved state-token proof.
@@ -3819,6 +4022,22 @@ fn state_token_endpoint_complete(
         return false;
     }
 
+    // An unresolved indirect callable in the endpoint subgraph may invoke a
+    // channel method without leaving a typed Channel edge in the extracted
+    // graph.  Do not let the visible producers accidentally prove a fixed
+    // slot in that case; only a unique `Function` fact may make this edge an
+    // ordinary-local call before the proof reaches this boundary.
+    if relevant.iter().any(|body_def_id| {
+        by_id.get(body_def_id).is_some_and(|body| {
+            body.role == JoinBodyRole::Ordinary
+                && body.call_edges.iter().any(|edge| {
+                    edge.target == JoinCallTargetKind::Unknown && edge.function_local.is_some()
+                })
+        })
+    }) {
+        return false;
+    }
+
     // Follow ordinary helper calls from endpoint bodies. The graph builder
     // normally selects these roots already; retaining the check here makes a
     // missing body an explicit negative proof rather than an accidental
@@ -3896,7 +4115,7 @@ fn dump_crate_summary(
                         .collect::<Vec<_>>()
                         .join(",");
                     format!(
-                        "{{\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{},\"queue_bound\":\"{:?}\"}}",
+                        "{{\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"receiver\":{},\"destination\":{},\"function_local\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{},\"queue_bound\":\"{:?}\"}}",
                         edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
                         edge.target,
                         edge.endpoint_def_id
@@ -3904,6 +4123,8 @@ fn dump_crate_summary(
                         edge.receiver_local
                             .map_or_else(|| "null".to_string(), |local| local.to_string()),
                         edge.destination_local
+                            .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                        edge.function_local
                             .map_or_else(|| "null".to_string(), |local| local.to_string()),
                         arguments,
                         edge.group_def_id
@@ -3951,6 +4172,17 @@ fn dump_crate_summary(
                 })
                 .collect::<Vec<_>>()
                 .join(",");
+            let function_facts = body
+                .function_facts
+                .iter()
+                .map(|fact| {
+                    format!(
+                        "{{\"destination\":{},\"body\":{},\"block\":{},\"statement\":{}}}",
+                        fact.destination, fact.body_def_id, fact.block, fact.statement
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(",");
             let mut aliases = aliases_by_body
                 .get(&body.body_def_id)
                 .map(|aliases| aliases.iter().collect::<Vec<_>>())
@@ -3985,7 +4217,7 @@ fn dump_crate_summary(
                 .collect::<Vec<_>>()
                 .join(",");
             format!(
-                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"primitive_locals\":[{}],\"flows\":[{}],\"closures\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
+                "{{\"body\":{},\"parent\":{},\"endpoint\":{},\"channel_index\":{},\"rule_index\":{},\"role\":\"{:?}\",\"primitive_locals\":[{}],\"flows\":[{}],\"closures\":[{}],\"function_facts\":[{}],\"aliases\":[{}],\"cyclic_blocks\":[{}],\"calls_count\":{},\"yields\":{},\"unknown_effects\":{},\"endpoint_escapes\":[{}],\"calls\":[{}]}}",
                 body.body_def_id,
                 body.parent_body_def_id
                     .map_or_else(|| "null".to_string(), |parent| parent.to_string()),
@@ -3999,6 +4231,7 @@ fn dump_crate_summary(
                 primitive_locals,
                 value_flows,
                 closure_facts,
+                function_facts,
                 aliases,
                 cyclic_blocks,
                 body.calls,
@@ -4623,6 +4856,45 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             self.super_assign(place, rvalue, location);
             return;
         };
+        let destination_callable = self
+            .callable_locals
+            .get(destination.index())
+            .copied()
+            .unwrap_or(false);
+        // A function item is a zero-sized typed value in MIR, but it is not a
+        // primitive payload for join CFA. Preserve its statically known body
+        // identity when it is assigned to a local, including the explicit
+        // FnDef -> fn-pointer reification coercion. Later call edges can use
+        // this fact to turn an otherwise opaque indirect call into the same
+        // ordinary-local edge that a direct call already exposes.
+        let function_body_def_id = match rvalue {
+            Rvalue::Use(Operand::Constant(constant), _) => match *constant.const_.ty().kind() {
+                ty::FnDef(def_id, _) => def_id.as_local().map(|id| id.index() as u32),
+                _ => None,
+            },
+            Rvalue::Cast(
+                CastKind::PointerCoercion(
+                    PointerCoercion::ReifyFnPointer(_) | PointerCoercion::UnsafeFnPointer,
+                    _,
+                ),
+                operand,
+                _,
+            ) => operand
+                .const_fn_def()
+                .and_then(|(def_id, _)| def_id.as_local())
+                .map(|id| id.index() as u32),
+            _ => None,
+        };
+        if let Some(body_def_id) = function_body_def_id {
+            self.function_facts.push(JoinCfaFunctionFact {
+                destination: destination.index() as u32,
+                body_def_id,
+                block: location.block.index() as u32,
+                statement: location.statement_index as u32,
+            });
+            self.super_assign(place, rvalue, location);
+            return;
+        }
         let (kind, source) = match rvalue {
             Rvalue::Use(Operand::Copy(source), _) => {
                 // Keep the base local for projected copies. The projection is
@@ -4634,6 +4906,10 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
             Rvalue::Use(Operand::Move(source), _) => (JoinValueFlowKind::Move, Some(source.local)),
             Rvalue::Ref(_, _, source) | Rvalue::Reborrow(_, _, source) => {
                 (JoinValueFlowKind::Borrow, Some(source.local))
+            }
+            Rvalue::Cast(_, operand, _) => {
+                let source = operand.place().map(|place| place.local);
+                (JoinValueFlowKind::Copy, source)
             }
             Rvalue::Aggregate(kind, operands) => {
                 // A closure/coroutine may capture an endpoint handle without
@@ -4688,8 +4964,18 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 }
                 (JoinValueFlowKind::Aggregate, None)
             }
-            _ => return self.super_assign(place, rvalue, location),
+            _ => {
+                if destination_callable {
+                    self.unknown_function_locals.insert(destination.index() as u32);
+                }
+                return self.super_assign(place, rvalue, location);
+            }
         };
+        if destination_callable
+            && !matches!(kind, JoinValueFlowKind::Copy | JoinValueFlowKind::Move)
+        {
+            self.unknown_function_locals.insert(destination.index() as u32);
+        }
         self.value_flows.push(JoinValueFlow {
             destination: destination.index() as u32,
             source: source.map(|local| local.index() as u32),
@@ -4707,6 +4993,10 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                 self.calls += 1;
                 let callee_def_id = func.const_fn_def().and_then(|(def_id, _)| def_id.as_local());
                 let target = self.call_target(callee_def_id);
+                let function_local = func
+                    .place()
+                    .and_then(|place| place.as_local())
+                    .map(|local| local.index() as u32);
                 let receiver_local = matches!(
                     target.kind,
                     JoinCallTargetKind::Channel
@@ -4723,6 +5013,17 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     TerminatorKind::TailCall { .. } => None,
                     _ => None,
                 };
+                if destination_local.is_some_and(|local| {
+                    self.callable_locals.get(local as usize).copied().unwrap_or(false)
+                }) {
+                    // Returning a callable from a call is not yet tracked
+                    // interprocedurally. Keep the destination conservative;
+                    // a function-item fact from another path must not win
+                    // over this opaque assignment.
+                    if let Some(destination_local) = destination_local {
+                        self.unknown_function_locals.insert(destination_local);
+                    }
+                }
                 let argument_locals = args
                     .iter()
                     .map(|arg| arg.node.place().map(|place| place.local.index() as u32))
@@ -4794,6 +5095,7 @@ impl<'tcx> Visitor<'tcx> for JoinBodyFacts {
                     receiver_local,
                     destination_local,
                     argument_locals,
+                    function_local,
                 });
                 let preserves_endpoint = matches!(
                     target.kind,
@@ -4930,7 +5232,7 @@ fn dump_summary(
         .iter()
         .map(|edge| {
             format!(
-                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{},\"queue_bound\":\"{:?}\"}}",
+                "{{\"block\":{},\"statement\":{},\"callee\":{},\"target\":\"{:?}\",\"endpoint\":{},\"rule\":{},\"receiver\":{},\"destination\":{},\"function_local\":{},\"arguments\":[{}],\"group\":{},\"channel\":{},\"rule_index\":{},\"queue_bound\":\"{:?}\"}}",
                 edge.block,
                 edge.statement,
                 edge.callee.map_or_else(|| "null".to_string(), |callee| callee.to_string()),
@@ -4942,6 +5244,8 @@ fn dump_summary(
                 edge.receiver_local
                     .map_or_else(|| "null".to_string(), |local| local.to_string()),
                 edge.destination_local
+                    .map_or_else(|| "null".to_string(), |local| local.to_string()),
+                edge.function_local
                     .map_or_else(|| "null".to_string(), |local| local.to_string()),
                 edge.argument_locals
                     .iter()
@@ -4955,6 +5259,17 @@ fn dump_summary(
                 edge.rule_index
                     .map_or_else(|| "null".to_string(), |rule| rule.to_string()),
                 edge.queue_bound,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let function_facts = summary
+        .function_facts
+        .iter()
+        .map(|fact| {
+            format!(
+                "{{\"destination\":{},\"body\":{},\"block\":{},\"statement\":{}}}",
+                fact.destination, fact.body_def_id, fact.block, fact.statement
             )
         })
         .collect::<Vec<_>>()
@@ -5006,7 +5321,7 @@ fn dump_summary(
         .collect::<Vec<_>>()
         .join(",");
     let json = format!(
-        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"channel_occupancy\":[{}],\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"fusion_rejection\":{},\"rejection\":{}}}\n",
+        "{{\"def_id\":{},\"endpoint\":{},\"rule\":{},\"mir_fingerprint\":{},\"role\":\"{:?}\",\"arity\":{},\"is_async\":{},\"frontend_direct_unary\":{},\"queue_bound\":\"{:?}\",\"lowering\":\"{:?}\",\"occupancy\":{{\"proven_peak\":{},\"proven_final\":{},\"events\":{},\"complete\":{}}},\"channel_occupancy\":[{}],\"instance_closedness\":\"{:?}\",\"instance_closedness_reason\":\"{:?}\",\"mode\":\"{:?}\",\"calls\":{},\"call_edges\":[{}],\"function_facts\":[{}],\"yields\":{},\"unknown_effects\":{},\"solver_steps\":{},\"solver_complete\":{},\"locally_closed\":{},\"escapes\":[{}],\"endpoint_escapes\":[{}],\"value_flows\":[{}],\"local_facts\":[{}],\"operations\":[{}],\"direct_candidate\":{},\"fusion\":{},\"fusion_rejection\":{},\"rejection\":{}}}\n",
         local_def_id.index(),
         summary.endpoint_def_id,
         summary.rule_def_id,
@@ -5030,6 +5345,7 @@ fn dump_summary(
         mode,
         summary.calls,
         call_edges,
+        function_facts,
         summary.yields,
         summary.unknown_effects,
         summary.solver_steps,
@@ -5977,6 +6293,13 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
                 operations: Vec::new(),
                 value_flows: Vec::new(),
                 closure_facts: Vec::new(),
+                function_facts: Vec::new(),
+                unknown_function_locals: FxIndexSet::default(),
+                callable_locals: body
+                    .local_decls
+                    .iter()
+                    .map(|decl| join_cfa_is_callable_type(decl.ty))
+                    .collect(),
                 call_edges: Vec::new(),
                 escapes: FxIndexSet::default(),
                 endpoint_escapes: FxIndexSet::default(),
@@ -6001,6 +6324,13 @@ impl<'tcx> crate::MirPass<'tcx> for JoinSemanticOps {
             operations: Vec::new(),
             value_flows: Vec::new(),
             closure_facts: Vec::new(),
+            function_facts: Vec::new(),
+            unknown_function_locals: FxIndexSet::default(),
+            callable_locals: body
+                .local_decls
+                .iter()
+                .map(|decl| join_cfa_is_callable_type(decl.ty))
+                .collect(),
             call_edges: Vec::new(),
             escapes: FxIndexSet::default(),
             endpoint_escapes: FxIndexSet::default(),
