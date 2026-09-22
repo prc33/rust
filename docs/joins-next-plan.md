@@ -54,6 +54,13 @@ This slice is complete and is the new baseline for the next agent:
   This prevents a helper call from being treated as opaque for CFA while still
   preventing a local/closed execution proof from removing its coroutine
   boundary.
+  The isolated unary `async when` generator also now places the reaction body
+  directly in the caller-owned outer coroutine instead of spelling an async
+  block which is immediately awaited. The existing MIR pipeline already
+  collapses the old form in the tested fixture, so this is a representation
+  cleanup rather than a claimed benchmark win; the contract gate still checks
+  deferred execution, pending/ready polling, drop, panic and non-`Send` local
+  use.
 
 The detailed focused commands/results are in
 [`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)
