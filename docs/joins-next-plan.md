@@ -61,6 +61,18 @@ This slice is complete and is the new baseline for the next agent:
   cleanup rather than a claimed benchmark win; the contract gate still checks
   deferred execution, pending/ready polling, drop, panic and non-`Send` local
   use.
+* **First-poll continuation lowering is now executable.** For a finite-state
+  endpoint whose async reaction helper and nested coroutine bodies have no MIR
+  `Yield`, `JoinStorageLowering` resolves the ABI-checked runtime twin
+  `__join_dispatch_future_inline_at` and preserves the finite-state certificate
+  on that real MIR call. The runtime constructs/polls the ordinary Rust future
+  once on the claiming thread; `Pending` still transfers the owned future to
+  the configured executor. Re-entrant ready emissions are claimed atomically
+  and drained by a thread-local work queue, so a completion chain does not
+  recurse through the Rust stack or submit every ready step as a task. Bodies
+  with nested suspension remain on the generic future entry point. The
+  optimize MIR gate and a ten-token async fixture exercise both the selected
+  and non-selected paths; the runtime suite passes 79 tests.
 
 The detailed focused commands/results are in
 [`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)
@@ -419,6 +431,19 @@ async, and shared/executor-owned reactions must retain their owned boundary.
 The experiment is successful only if it preserves cancellation, unwind/drop,
 and checksum gates while removing the setup/drop symbols from the profile.
 
+### First-poll continuation checkpoint — 2026-09-22
+
+The async state-machine path is no longer only a certificate: optimized MIR
+now carries an ABI-checked call to the first-poll runtime twin for the
+non-suspending witness. The runtime work queue is the required re-entrancy
+boundary; without it, a ready `remaining -> remaining` chain overflowed the
+stack. This slice is intentionally limited to executor-owned shared
+reactions with ordinary `Send + 'static` captures. It does not claim borrowed
+shared reactions, arbitrary async bodies, or universal executor elimination.
+The focused completion run (50,000 iterations, 30 samples) measured 1,317 ns/op
+optimized versus 1,631 ns/op off and 32.4 ns/op for the handwritten control;
+the full result and bootstrap intervals are in `JOINS-PRIMITIVES-SUMMARY.md`.
+
 ## Next slice after the atomic gate
 
 1. **Commit a paired attribution artifact.** Re-run the mutex row with native,
@@ -431,11 +456,14 @@ and checksum gates while removing the setup/drop symbols from the profile.
    drop edges; lower the result FIFO only when CFA proves its bound. The
    fallback must remain the ordinary matcher, and no transformation may
    pattern-match a lock implementation.
-3. **Lower eligible reactions through ordinary coroutine MIR.** Keep the body
-   as the existing async/coroutine future, but make claim, completion and
-   cancellation explicit MIR operations before codegen. Verify optimized MIR
-   and LLVM contain no erased generic matcher calls for the selected witness;
-   verify all unsupported bodies retain them.
+3. **Lower claim/completion around the existing coroutine MIR.** The first-poll
+   entry point is now the runtime fallback boundary, not the final lowering.
+   Make the proven claim, typed reply-slot completion and cancellation edges
+   explicit MIR operations before coroutine/codegen lowering, while reusing
+   Rust's existing coroutine frame, poll and drop machinery. Verify optimized
+   MIR and LLVM contain no erased generic matcher calls on the selected ready
+   witness; verify pending, nested-suspending and unsupported bodies retain
+   the generic future path.
 4. **Add target and semantic regression coverage.** Cross-check the atomic
    target-width fallback, direct/async single-input equivalence, dropped
    unmatched requests, cancellation linearization, borrowed-state rejection,

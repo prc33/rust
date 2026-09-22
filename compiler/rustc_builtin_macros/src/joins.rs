@@ -501,9 +501,31 @@ fn generate_restricted_endpoint(
             "    #[doc(hidden)]\n    #[join_reaction(rule = 0)]\n    fn __join_reaction(__join_endpoint: Self, {left_binding}: {left_type}, {right_binding}: {right_type}) -> (::core::result::Result<{left_reply}, ::joins_runtime::JoinError>, ::core::result::Result<{right_reply}, ::joins_runtime::JoinError>)\n{scope_bounds}{{\n        {left_unpack}\n        {right_unpack}\n        let __join_result = {reaction};\n        match __join_result {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }}\n    }}"
         )
     }).unwrap_or_default();
+    // The normal callback owns an endpoint because it may be retained by an
+    // executor.  The exact atomic-token proof also has a caller-driven,
+    // synchronous branch. Keep a borrowed reaction helper beside the owned
+    // one so that branch can complete an inline reply without cloning the
+    // endpoint into a closure. The compiler/runtime ABI still falls back to
+    // `__join_reaction` whenever the proof does not select that branch.
+    let borrowed_reaction_helper = if !rule.is_async
+        && right.reply.is_some()
+        && left.reply.is_none()
+        && left_type == "u64"
+    {
+        Some(format!(
+            "    #[doc(hidden)]\n    fn __join_reaction_borrowed(__join_endpoint: &Self, {left_binding}: {left_type}, {right_binding}: {right_type}) -> (::core::result::Result<{left_reply}, ::joins_runtime::JoinError>, ::core::result::Result<{right_reply}, ::joins_runtime::JoinError>)\n{scope_bounds}{{\n        {left_unpack}\n        {right_unpack}\n        let __join_result = {reaction};\n        match __join_result {{ Ok((left, right)) => (Ok(left), Ok(right)), Err(error) => (Err(error.clone()), Err(error)) }}\n    }}"
+        ))
+    } else {
+        None
+    };
     let right_dispatch_body = (!rule.is_async && right.reply.is_some()).then(|| {
         format!(
             "move |{left_binding}, {right_binding}| Self::__join_reaction(__join_endpoint, {left_binding}, {right_binding})"
+        )
+    });
+    let borrowed_dispatch_body = borrowed_reaction_helper.as_ref().map(|_| {
+        format!(
+            "|{left_binding}, {right_binding}| Self::__join_reaction_borrowed(self, {left_binding}, {right_binding})"
         )
     });
     let left_method = channel_method(&visibility, left, "submit_left", left_reply, &scope_bounds);
@@ -514,6 +536,7 @@ fn generate_restricted_endpoint(
         right_reply,
         &scope_bounds,
         right_dispatch_body.as_deref(),
+        borrowed_dispatch_body.as_deref(),
     );
     let dispatch = if rule.is_async {
         format!(
@@ -553,6 +576,8 @@ impl {impl_generics}{impl_name} {{
 
     {right_method}
 
+    {borrowed_reaction_helper}
+
     {rule_metadata}
 
     fn __join_dispatch_once(&self) -> bool
@@ -576,6 +601,7 @@ impl {impl_generics}{impl_name} {{
         left_method = left_method,
         right_method = right_method,
         rule_metadata = rule_metadata,
+        borrowed_reaction_helper = borrowed_reaction_helper.unwrap_or_default(),
         dispatch = dispatch,
         endpoint_attribute = endpoint_attribute,
     ))
@@ -1518,6 +1544,7 @@ fn pair_channel_method(
     reply_type: &str,
     dispatch_bounds: &str,
     fused_body: Option<&str>,
+    borrowed_body: Option<&str>,
 ) -> String {
     let Some(body) = fused_body else {
         return channel_method(visibility, channel, submit, reply_type, dispatch_bounds);
@@ -1525,6 +1552,18 @@ fn pair_channel_method(
     debug_assert!(channel.reply.is_some());
     let argument = channel_method_argument(channel);
     let value = channel_submit_value(channel);
+    if let Some(borrowed_body) = borrowed_body {
+        // This method has the same fallback semantics as the ordinary fused
+        // admission call. The hidden runtime operation invokes the borrowed
+        // callback only for the compiler-proven atomic token representation;
+        // otherwise it lazily constructs the old owned callback path.
+        return format!(
+            "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{reply_type}>\n{dispatch_bounds}{{ self.matcher.__join_submit_right_atomic_u64_borrowed_at({value}, ::joins_runtime::source_location(file!(), line!(), column!()), {borrowed_body}, |value| {{ let __join_endpoint = self.clone(); self.matcher.{submit}_and_dispatch_at(value, ::joins_runtime::source_location(file!(), line!(), column!()), {body}) }}) }}",
+            name = channel.name.name,
+            dispatch_bounds = dispatch_bounds,
+            body = fused_body.expect("borrowed pair dispatch requires owned fallback"),
+        );
+    }
     format!(
         "{visibility}fn {name}(&self{argument}) -> ::joins_runtime::Reply<{reply_type}>\n{dispatch_bounds}{{ let __join_endpoint = self.clone(); self.matcher.{submit}_and_dispatch_at({value}, ::joins_runtime::source_location(file!(), line!(), column!()), {body}) }}",
         name = channel.name.name,

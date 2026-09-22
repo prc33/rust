@@ -3839,6 +3839,31 @@ fn prove_state_tokens<'tcx>(
     instances: &[JoinCfaInstanceFact],
     context: &JoinCfaContextSummary,
 ) -> Vec<JoinStateTokenProof> {
+    // The bounded callback ABI has a second compiler-generated helper which
+    // carries the same reaction body through a borrowed endpoint reference.
+    // Its nested closure contains the intentional state re-emission, but it
+    // is not a second source-level producer.  Keep that distinction in CFA
+    // rather than weakening the uniqueness proof for every ordinary nested
+    // closure.  The helper name is compiler-owned and emitted only by the
+    // restricted pair expansion; all user functions remain ordinary roots.
+    let is_borrowed_reaction_descendant = |body_def_id: u32| {
+        let Some(mut current) = tcx
+            .mir_keys(())
+            .iter()
+            .find(|def_id| def_id.index() as u32 == body_def_id)
+            .copied()
+            .map(LocalDefId::to_def_id)
+        else {
+            return false;
+        };
+        loop {
+            if tcx.opt_item_name(current).is_some_and(|name| name.as_str() == "__join_reaction_borrowed") {
+                return true;
+            }
+            let Some(parent) = tcx.opt_parent(current) else { return false };
+            current = parent;
+        }
+    };
     let mut proofs = Vec::new();
     for endpoint in &tcx.join_definitions(()).endpoints {
         let Some(endpoint_def_id) = endpoint.endpoint_def_id.map(|id| id.index() as u32) else {
@@ -3884,6 +3909,9 @@ fn prove_state_tokens<'tcx>(
                 };
 
                 for body in bodies.iter().filter(endpoint_body) {
+                    if is_borrowed_reaction_descendant(body.body_def_id) {
+                        continue;
+                    }
                     let reaction_for_rule = body.role == JoinBodyRole::ReactionBody
                         && body.rule_index == Some(rule_index as u32);
                     for edge in &body.call_edges {
@@ -6156,8 +6184,8 @@ fn finite_state_constructor<'tcx>(
     {
         return None;
     }
-    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_binder();
-    let ty::Adt(output, _) = signature.output().kind() else { return None };
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_norm_wip();
+    let ty::Adt(output, _) = signature.skip_binder().output().kind() else { return None };
     if tcx.crate_name(output.did().krate).as_str() != "joins_runtime"
         || tcx.item_name(output.did()).as_str() != "DynamicMatcher"
     {
@@ -6173,9 +6201,98 @@ fn finite_state_constructor<'tcx>(
         .filter(|item| tcx.item_name(item.def_id).as_str() == "new_with_finite_state_mask")
         .map(|item| item.def_id)
         .find(|target| {
-            let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
+            let target_signature =
+                tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_norm_wip();
             same_join_abi(tcx, signature, target_signature)
         })
+}
+
+/// Resolve the compiler/runtime twin which first-polls a proven async
+/// reaction on the claiming thread.  The method has the same instantiated
+/// ABI as the ordinary future dispatch operation; only its implementation
+/// tries one poll before falling back to the configured executor.  Restrict
+/// the lookup to `DynamicMatcher` and compare the complete function ABI so a
+/// source function with a similar name can never be selected accidentally.
+fn dynamic_future_method<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    generic: DefId,
+    generic_args: GenericArgsRef<'tcx>,
+    target_name: &str,
+) -> Option<DefId> {
+    if tcx.crate_name(generic.krate).as_str() != "joins_runtime"
+        || !matches!(
+            tcx.item_name(generic).as_str(),
+            "__join_dispatch_future_at" | "__join_dispatch_future_all_at"
+        )
+    {
+        return None;
+    }
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_norm_wip();
+    let receiver = signature.skip_binder().inputs().first()?.peel_refs().ty_adt_def()?;
+    if tcx.crate_name(receiver.did().krate).as_str() != "joins_runtime"
+        || tcx.item_name(receiver.did()).as_str() != "DynamicMatcher"
+    {
+        return None;
+    }
+    let mut containers = vec![tcx.parent(generic)];
+    containers.extend(tcx.inherent_impls(receiver.did()).iter().copied());
+    let candidates = containers
+        .into_iter()
+        .flat_map(|container| {
+            tcx.associated_items(container).in_definition_order().filter(|item| item.is_fn())
+        })
+        .filter(|item| tcx.item_name(item.def_id).as_str() == target_name)
+        .map(|item| item.def_id)
+        .find(|target| {
+            let target_signature =
+                tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_norm_wip();
+            same_join_abi(tcx, signature, target_signature)
+        });
+    candidates
+}
+
+/// The first-poll lowering is valid only when every async source reaction in
+/// the endpoint has no suspension point in its reaction helper or in any
+/// nested coroutine body. A missing body record is a rejection, not an
+/// optimistic assumption. Calls are allowed here: a synchronous call can be
+/// executed by the claiming thread just like an ordinary future's first
+/// poll. A recorded MIR yield is the boundary that requires executor-owned
+/// continuation state; later interprocedural effects can make this witness
+/// more precise without changing the conservative fallback.
+fn endpoint_async_reactions_inline_safe(
+    endpoint: &rustc_middle::middle::joins::JoinDefinition<'_>,
+    summary: &rustc_middle::middle::joins::JoinCfaCrateSummary,
+) -> bool {
+    let mut saw_async = false;
+    for rule in endpoint.rules.iter().filter(|rule| rule.is_async) {
+        saw_async = true;
+        let Some(body_def_id) = rule.reaction_method_def_id else {
+            return false;
+        };
+        let Some(body) = summary
+            .bodies
+            .iter()
+            .find(|body| body.body_def_id == body_def_id.index() as u32)
+        else {
+            return false;
+        };
+        if !body.is_async || body.yields != 0 {
+            return false;
+        }
+        for nested_def_id in rule.body_def_ids.iter() {
+            let Some(nested) = summary
+                .bodies
+                .iter()
+                .find(|nested| nested.body_def_id == nested_def_id.index() as u32)
+            else {
+                return false;
+            };
+            if nested.yields != 0 {
+                return false;
+            }
+        }
+    }
+    saw_async
 }
 
 fn fixed_pair_constructor_named<'tcx>(
@@ -6189,8 +6306,8 @@ fn fixed_pair_constructor_named<'tcx>(
     {
         return None;
     }
-    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_binder();
-    let ty::Adt(output, _) = signature.output().kind() else { return None };
+    let signature = tcx.fn_sig(generic).instantiate(tcx, generic_args).skip_norm_wip();
+    let ty::Adt(output, _) = signature.skip_binder().output().kind() else { return None };
     if tcx.crate_name(output.did().krate).as_str() != "joins_runtime"
         || tcx.item_name(output.did()).as_str() != "PairMatcher"
     {
@@ -6206,9 +6323,10 @@ fn fixed_pair_constructor_named<'tcx>(
         .filter(|item| tcx.item_name(item.def_id).as_str() == target_name)
         .map(|item| item.def_id)
         .find(|target| {
-            let target_signature = tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_binder();
+            let target_signature =
+                tcx.fn_sig(*target).instantiate(tcx, generic_args).skip_norm_wip();
             same_join_abi(tcx, signature, target_signature)
-                && matches!(target_signature.output().kind(), ty::Adt(..))
+                && matches!(target_signature.skip_binder().output().kind(), ty::Adt(..))
         })
 }
 
@@ -6219,7 +6337,17 @@ fn fixed_pair_constructor_named<'tcx>(
 /// still validated by MIR type checking after replacement, but this predicate
 /// is the proof gate that prevents a malformed or unrelated helper from being
 /// selected in the first place.
-fn same_join_abi<'tcx>(tcx: TyCtxt<'tcx>, lhs: ty::FnSig<'tcx>, rhs: ty::FnSig<'tcx>) -> bool {
+fn same_join_abi<'tcx>(
+    tcx: TyCtxt<'tcx>,
+    lhs: ty::PolyFnSig<'tcx>,
+    rhs: ty::PolyFnSig<'tcx>,
+) -> bool {
+    // `fn_sig` returns a separately bound signature for each method.  Erase
+    // those binders before comparing: their late-bound region identities are
+    // local to the method and are not part of the machine ABI, while the
+    // payload/future types and ABI flags remain fully checked.
+    let lhs = tcx.instantiate_bound_regions_with_erased(lhs);
+    let rhs = tcx.instantiate_bound_regions_with_erased(rhs);
     tcx.erase_and_anonymize_regions(lhs.inputs_and_output)
         == tcx.erase_and_anonymize_regions(rhs.inputs_and_output)
         && lhs.abi() == rhs.abi()
@@ -6352,6 +6480,9 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
             JoinLoweringStrategy::FixedPairMatcher | JoinLoweringStrategy::FixedAtomicU64Pair
         );
         let finite_state_strategy = strategy == JoinLoweringStrategy::FiniteStateMask;
+        let async_inline_safe = finite_state_strategy
+            && is_dispatch
+            && endpoint_async_reactions_inline_safe(endpoint, summary);
         if !is_constructor && !pair_strategy && !finite_state_strategy {
             return;
         }
@@ -6458,6 +6589,8 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                             | "submit_and_dispatch_at"
                             | "__join_dispatch_once_at"
                             | "__join_dispatch_all_once_at"
+                            | "__join_dispatch_future_at"
+                            | "__join_dispatch_future_all_at"
                     );
                 if is_finite_operation {
                     let operation_kind = if item_name.starts_with("__join_dispatch") {
@@ -6465,9 +6598,28 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                     } else {
                         JoinOperationKind::Register
                     };
+                    let target = if async_inline_safe {
+                        match item_name {
+                            "__join_dispatch_future_at" => dynamic_future_method(
+                                tcx,
+                                callee,
+                                generic_args,
+                                "__join_dispatch_future_inline_at",
+                            ),
+                            "__join_dispatch_future_all_at" => dynamic_future_method(
+                                tcx,
+                                callee,
+                                generic_args,
+                                "__join_dispatch_future_inline_all_at",
+                            ),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
                     planned.push((
                         block,
-                        None,
+                        target,
                         generic_args,
                         span,
                         None,
@@ -6493,11 +6645,32 @@ impl<'tcx> crate::MirPass<'tcx> for JoinStorageLowering {
                         | "submit_right_oneway_at"
                         | "__join_dispatch_once_at"
                 );
+            // The exact-u64 right admission has a second compiler-owned
+            // entry point which accepts a borrowed inline callback and a
+            // lazy generic fallback. It is already the fixed ABI selected by
+            // the frontend, so this pass only attaches the endpoint proof;
+            // there is no alternate symbol to retarget.
+            let is_atomic_borrowed_operation = strategy
+                == JoinLoweringStrategy::FixedAtomicU64Pair
+                && item_name == "__join_submit_right_atomic_u64_borrowed_at"
+                && tcx.crate_name(callee.krate).as_str() == "joins_runtime";
             // Channel/dispatch bodies contain ordinary helper calls (for
             // example source-location construction) which are not part of
             // the fixed ABI.  Only a recognized generic runtime operation
             // enters the all-or-nothing shim preflight below.
-            if !is_generic_fixed_operation {
+            if !is_generic_fixed_operation && !is_atomic_borrowed_operation {
+                continue;
+            }
+            if is_atomic_borrowed_operation {
+                planned.push((
+                    block,
+                    None,
+                    generic_args,
+                    span,
+                    None,
+                    JoinOperationKind::Register,
+                    channel_index,
+                ));
                 continue;
             }
             let fixed_name = if is_dispatch && item_name == "__join_dispatch_once_at" {

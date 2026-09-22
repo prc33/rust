@@ -158,6 +158,44 @@ not remove the dominant async future/executor/reply work. The next useful
 optimization is direct/shared coroutine continuation and reply-slot lowering,
 not a broader unit-bit recognizer.
 
+## Async first-poll continuation slice — 2026-09-22
+
+The finite-state async lowering is now consumed by MIR for a reaction whose
+reaction helper and nested coroutine bodies have no recorded `Yield`.  The
+pass resolves the compiler-owned `DynamicMatcher::__join_dispatch_future_at`
+ABI twin to `__join_dispatch_future_inline_at` only after checking the complete
+instantiated signature (including erased late-bound receiver regions), the
+endpoint-wide finite-state certificate, and the nested-body suspension facts.
+Async bodies with a real suspension remain on the ordinary future/executor
+entry point.  No lock or named-primitive recognizer is involved.
+
+The runtime first constructs and polls a proven-ready future on the claiming
+thread.  A `Pending` result transfers the still-owned future to the configured
+executor.  Re-entrant ready state-token emissions are claimed atomically and
+drained by a thread-local work queue, preventing recursive stack growth while
+avoiding an executor submission for every ready transition.  The compiler
+fixture exercises a ten-token completion chain, and the runtime suite now
+passes 79 tests.
+
+A serial focused completion window used 50,000 iterations, five warmups, 30
+samples and four workers per variant (all checksums were `50000`; bootstrap
+intervals use 10,000 resamples):
+
+| Variant | Median ns/op | Bootstrap 95% interval |
+| --- | ---: | ---: |
+| Handwritten completion counter | **32.44** | 30.11–35.38 |
+| Joins, CFA off | 1,630.85 | 1,599.20–1,661.42 |
+| Joins, CFA analyze | 2,345.03 | 2,235.75–2,461.34 |
+| Joins, CFA optimize (inline continuation) | **1,317.31** | 1,285.16–1,394.22 |
+
+The optimized join is 0.81× the CFA-off window (bootstrap ratio 0.78–0.86)
+but remains 41.1× the handwritten counter (ratio 37.4–45.0).  A smaller
+10,000-iteration window was visibly scheduler-noisy and is not used for the
+claim.  The remaining gap is now shared-reaction admission/reply completion
+and the finite-state transition work, rather than the avoidable first poll;
+typed claim/completion lowering in ordinary MIR remains the next structural
+step.
+
 ## Newer mutex-only result
 
 The compiler-selected `FixedAtomicU64Pair` lowering was measured after the
