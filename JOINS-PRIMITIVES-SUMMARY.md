@@ -131,6 +131,9 @@ now executes this completion shape in all three CFA modes. In optimize mode
 the graph proves the endpoint-wide state mask and MIR carries the same
 `FiniteStateMask` certificate onto construction, registration and async
 dispatch; the coroutine body remains the normal Rust future.
+The CFA body record carries asyncness separately as a suspension effect, so
+value-flow facts remain eligible for this representation while executor/
+continuation-removal proofs still see `may_suspend`.
 
 ### Async state-mask smoke rerun — 2026-09-22
 
