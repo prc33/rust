@@ -620,7 +620,17 @@ fn generate_unary_endpoint(
     // body from the generated outer future so the isolated case has the same
     // construction and first-poll contract as an `async fn`.
     let direct_reaction = if rule.is_async {
-        format!("({reaction}).await")
+        if use_direct_unary {
+            // The outer method future is already the caller-owned coroutine.
+            // Do not construct a second async block and immediately await it:
+            // that adds a nested coroutine frame and an extra poll boundary
+            // while having exactly the same value-flow and cancellation
+            // semantics.  Keep the reaction's body directly in the outer
+            // future, just as an ordinary `async fn` does.
+            reaction_value_body_contents(aliases, prefix, &result)
+        } else {
+            format!("({reaction}).await")
+        }
     } else {
         reaction.clone()
     };
@@ -786,12 +796,14 @@ fn reaction_result_body(
 /// `async fn` with the equivalent body.
 fn reaction_value_body(aliases: &str, prefix: &str, value: &str, is_async: bool) -> String {
     if is_async {
-        format!(
-            "async move {{\n{aliases}{prefix}\n{value}\n}}"
-        )
+        format!("async move {{\n{}\n}}", reaction_value_body_contents(aliases, prefix, value))
     } else {
-        format!("{{\n{aliases}{prefix}\n{value}\n}}")
+        format!("{{\n{}\n}}", reaction_value_body_contents(aliases, prefix, value))
     }
+}
+
+fn reaction_value_body_contents(aliases: &str, prefix: &str, value: &str) -> String {
+    format!("{aliases}{prefix}\n{value}")
 }
 
 fn generate_dynamic_endpoint(definition: &Definition) -> Result<String, String> {

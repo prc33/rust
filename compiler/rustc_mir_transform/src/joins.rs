@@ -3163,7 +3163,15 @@ pub(crate) fn join_cfa_crate_summary(tcx: TyCtxt<'_>, _: ()) -> JoinCfaCrateSumm
                 channel_index: None,
                 rule_index: None,
                 role: JoinBodyRole::Ordinary,
-                is_async: false,
+                // Ordinary async functions are part of the same value-flow
+                // graph as synchronous helpers: their arguments and return
+                // values are propagated through the same MIR edges.  Keep
+                // the coroutine boundary as a separate effect, however, so
+                // a caller cannot accidentally qualify for a closed/local
+                // lowering merely because the callee was otherwise known.
+                // `Body::coroutine` also covers async blocks/closures whose
+                // HIR owner is not an `async fn` item.
+                is_async: tcx.asyncness(def_id).is_async() || body.coroutine.is_some(),
                 primitive_locals: body
                     .local_decls
                     .iter_enumerated()

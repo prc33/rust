@@ -47,6 +47,13 @@ This slice is complete and is the new baseline for the next agent:
   Body records now retain `is_async` separately from value facts, so bounded
   context CFA marks the reaction's `may_suspend` effect without making the
   registration adapter itself look suspending.
+  The same split now applies to ordinary async helper bodies: a direct async
+  call remains an ordinary value-flow edge (arguments, aliases and return
+  values are solved by the existing MIR transfer), while the helper record is
+  marked `is_async` and contributes `may_suspend` to its reachable contexts.
+  This prevents a helper call from being treated as opaque for CFA while still
+  preventing a local/closed execution proof from removing its coroutine
+  boundary.
 
 The detailed focused commands/results are in
 [`join-benchmarks/docs/focused-20260922-rwlock-mpsc.md`](../join-benchmarks/docs/focused-20260922-rwlock-mpsc.md)

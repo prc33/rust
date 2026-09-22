@@ -134,6 +134,11 @@ dispatch; the coroutine body remains the normal Rust future.
 The CFA body record carries asyncness separately as a suspension effect, so
 value-flow facts remain eligible for this representation while executor/
 continuation-removal proofs still see `may_suspend`.
+This now includes ordinary `async fn` helpers called by a reaction: their
+typed MIR call edges participate in the same value-flow solution, while the
+helper body is independently marked `is_async` and widens reachable contexts
+with `may_suspend`. No helper is made opaque merely because it returns a
+future.
 
 ### Async state-mask smoke rerun — 2026-09-22
 
