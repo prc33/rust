@@ -104,13 +104,21 @@ ports now all pass `context.complete` and `cfa_complete`, and the corpus gate
 checks that closure bodies exist in the graph and closure values occur in the
 solution.
 
-This fixes the “opaque stand-in” failure, but it is not a claim of exact
-Dovetail parity yet. The remaining implementation is explicit: replace the
-current merged static-body propagation with fresh context-qualified variables
-and substitutions for each retained `Emit` history (including `JoinCreate` and
-`JoinRegister`), then compare `Foreground`/`Background` and inner/outer escape
-sets against the original JCAM solver on the 19 ports. Only after that gate may
-the value solution drive fusion, queue bounds, or LLVM-visible lowering.
+The merged-static-body failure is now fixed in the value solver. Each retained
+`Emit` history and closure creation site gets a context-qualified body
+instance; the typed constraint slice for that body is instantiated under the
+instance rather than entered once per `body_def_id`. Ordinary Rust-call edges
+receive the same bounded treatment, and known closure targets consume their
+payloads as foreground arguments instead of widening them to `Outer` by
+default. The port validator requires context-qualified solution variables and
+closure creation origins, so a body-global fixed point cannot satisfy the gate.
+
+This is still not a claim of exact Dovetail result parity. The remaining
+precision work is to export and compare exact inner/outer escape sets, retain
+constructor and rule transition identities instead of reconstructing them from
+generated MIR, and preserve source-level multi-definition attributes. Only
+after that differential gate may the complete value solution drive fusion,
+queue bounds, or LLVM-visible lowering.
 
 ## Current gate status — 2026-09-20
 

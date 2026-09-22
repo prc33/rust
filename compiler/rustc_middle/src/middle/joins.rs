@@ -776,6 +776,13 @@ pub enum JoinCfaValue {
         /// closure preserves the substitution inputs; the solver uses them
         /// when entering the nested body at an Emit site.
         captures: Box<[u64]>,
+        /// The context-qualified creation site of this closure value.  A
+        /// body identity alone is not enough: Dovetail's `Closure(f, cs, is)`
+        /// value is instantiated separately for each retained emission
+        /// history.  This origin keeps two otherwise identical zero-capture
+        /// closures distinct until the bounded-context solver has decided
+        /// that their histories may be merged.
+        origin: u64,
     },
 }
 
