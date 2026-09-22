@@ -150,6 +150,12 @@ boundaries remain `Outer` by design. Those are real information boundaries,
 not reasons to weaken the proof. They require typed source-level metadata or a
 sound interprocedural ownership model before they can be made more precise.
 
+Scalar tuples and arrays are projected recursively as `Prim`. Function items
+and function pointers deliberately are not: a stateless code pointer carries
+no endpoint capture, but an indirect call still needs a target-sensitive edge.
+Until a typed function-value fact follows that edge, treating it as primitive
+would erase control-flow information and make the CFA claim less precise.
+
 ## Current gate status — 2026-09-20
 
 ### Typed strategy carrier on real MIR calls — 2026-09-21

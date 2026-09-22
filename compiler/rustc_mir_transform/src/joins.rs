@@ -518,14 +518,25 @@ fn is_endpoint_type<'tcx>(endpoint_def_id: LocalDefId, ty: Ty<'tcx>) -> bool {
 /// Return whether a local can only carry a scalar value in the abstract
 /// join domain.  Unknown Rust calls are common in lowered arithmetic and
 /// bookkeeping paths; treating every result as an escaping closure is much
-/// less precise than JCAM's `Prim` wildcard.  References, ADTs, tuples and
-/// aggregates deliberately stay non-primitive until a richer typed projection
-/// is available.
+/// less precise than JCAM's `Prim` wildcard.  Composite values are scalar-like
+/// only when their complete static shape is scalar-like: this covers the
+/// tuple/array bookkeeping that Dovetail treats as primitive while still
+/// rejecting references, ADTs, closures, function values, and aggregates which
+/// may hide a join handle or callable value. Function items are stateless, but
+/// an indirect call through one still needs a target-sensitive CFA edge rather
+/// than being erased as an unrelated primitive.
 fn join_cfa_is_primitive_type<'tcx>(ty: Ty<'tcx>) -> bool {
-    matches!(
-        ty.kind(),
-        ty::Bool | ty::Char | ty::Int(..) | ty::Uint(..) | ty::Float(..) | ty::Never
-    )
+    match ty.kind() {
+        ty::Bool
+        | ty::Char
+        | ty::Int(..)
+        | ty::Uint(..)
+        | ty::Float(..)
+        | ty::Never => true,
+        ty::Tuple(fields) => fields.iter().all(join_cfa_is_primitive_type),
+        ty::Array(element, _) => join_cfa_is_primitive_type(*element),
+        _ => false,
+    }
 }
 
 fn classify_instance_closedness(

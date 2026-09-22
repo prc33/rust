@@ -39,6 +39,11 @@ correctly non-unique. This is a precision correction, not a runtime benchmark
 claim: the richer certificate is not yet consumed by general queue/fusion or
 LLVM lowering.
 
+The `Prim` projection now includes recursively scalar tuples/arrays, matching
+Dovetail’s bookkeeping treatment. Function items and function pointers remain
+non-primitive until a typed function-value edge can follow indirect calls;
+stateless code pointers are not permission to erase their control-flow target.
+
 The remaining difference from Dovetail is explicit: Rust does not yet export
 first-class `inner_escape`/`outer_escape` sets, source constructor/rule
 identities are reconstructed from generated MIR, and unknown non-scalar values
