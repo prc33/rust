@@ -23,6 +23,35 @@ The current matrix was built from Rust
 `2c7633f80899ffc653fc0caca743e498c24ca12c`. The result archive records the
 working-tree status and stage-1 compiler provenance.
 
+## Current full-matrix rerun — 2026-09-23
+
+The complete suite has now been rerun on Rust `cf8ddcf93c3` and
+joins-library `f7e01a1` with the same 5,000-iteration, 30-block protocol.
+The full four-mode table is in
+[`join-benchmarks/docs/full-20260923-current.md`](../join-benchmarks/docs/full-20260923-current.md).
+
+| Primitive | Native | Joins — CFA optimize | Optimize / native |
+| --- | ---: | ---: | ---: |
+| Rendezvous | 17,329 ns/op | 413.8 ns/op | 0.02× |
+| MPSC delivery | 73.1 | 396.2 | 5.42× |
+| MPMC delivery | 575.1 | 387.9 | 0.67× |
+| Condvar hand-off | 17,351 | 9,648 | 0.56× |
+| Work/resource admission | 861.4 | 808.8 | 0.94× |
+| Completion counter | 51.4 | 1,483 | 28.85× |
+| Reusable barrier | 13,692 | 13,016 | 0.95× |
+| Reader/writer admission probe | 46.0 | 3,921 | 85.26× |
+| Reader/writer fair schedule | 12,793 | 16,624 | 1.30× |
+| Mutex/counter | 29.5 | 271.6 | 9.21× |
+| Scoped thread join | 58,102 | 57,245 | 0.99× |
+| One-time initialization | 52,929 | 55,996 | 1.06× |
+| Async request/reply | 410.2 ns (Tokio) | 50.1 ns | 0.12× |
+
+Every sample passed validation. This run's optimize dump has 155 CFA records
+and 56 reaction bodies, with three direct-unary candidates and no
+multi-input `state_token_lowerings` certificates in the combined suite. The
+full-suite numbers therefore measure the current direct-unary path plus the
+generic shared matcher; focused state-machine witnesses remain separate.
+
 ## Complete primitive matrix
 
 | Primitive | Native implementation | Joins — CFA off | Joins — CFA analyze | Joins — CFA optimize | Optimize / native |
